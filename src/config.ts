@@ -9,6 +9,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  GOOGLE_CLIENT_ID: z.string().min(1),
+  GOOGLE_CLIENT_SECRET: z.string().min(1),
+  GOOGLE_REDIRECT_URI: z.string(),
+  JWT_SECRET: z.string().min(16),
+  JWT_EXPIRES_IN: z.string().default('15m'),
+  REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().default(7),
 })
 
 export interface AppConfig {
@@ -17,6 +23,12 @@ export interface AppConfig {
   port: number
   nodeEnv: 'development' | 'production' | 'test'
   corsOrigin: string
+  googleClientId: string
+  googleClientSecret: string
+  googleRedirectUri: string
+  jwtSecret: string
+  jwtExpiresIn: string
+  refreshTokenExpiresDays: number
 }
 
 export function loadConfig(): AppConfig {
@@ -27,5 +39,11 @@ export function loadConfig(): AppConfig {
     port: parsed.PORT,
     nodeEnv: parsed.NODE_ENV,
     corsOrigin: parsed.CORS_ORIGIN,
+    googleClientId: parsed.GOOGLE_CLIENT_ID,
+    googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
+    googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
+    jwtSecret: parsed.JWT_SECRET,
+    jwtExpiresIn: parsed.JWT_EXPIRES_IN,
+    refreshTokenExpiresDays: parsed.REFRESH_TOKEN_EXPIRES_DAYS,
   }
 }

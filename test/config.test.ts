@@ -10,6 +10,10 @@ describe('config', () => {
     process.env.PORT = '3000'
     process.env.NODE_ENV = 'development'
     process.env.CORS_ORIGIN = 'http://localhost:5173'
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id'
+    process.env.GOOGLE_CLIENT_SECRET = 'test-client-secret'
+    process.env.GOOGLE_REDIRECT_URI = 'http://localhost:3000/auth/callback'
+    process.env.JWT_SECRET = 'test-jwt-secret-min16chars'
   })
 
   afterEach(() => {
