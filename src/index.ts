@@ -11,6 +11,7 @@ import { createWorkspaceService } from './services/workspace.service.js'
 import { createBoardService } from './services/board.service.js'
 import { createBoardStateService } from './services/board-state.service.js'
 import { createMutationProcessor } from './mutations/processor.js'
+import { createCompactionService } from './mutations/compaction.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { healthRoute } from './routes/health.js'
 import { createAuthRouter } from './routes/auth.js'
@@ -42,9 +43,13 @@ app.use('/users', createUserRouter(userService, authMiddleware))
 app.use('/', createWorkspaceRouter(workspaceService, authMiddleware))
 app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor))
 
+const compactionService = createCompactionService(db, redis)
+
 const server = app.listen(config.port, () => {
   console.log(`[Server] Listening on port ${config.port}`)
   console.log(`[Server] Environment: ${config.nodeEnv}`)
 })
 
-export { app, server, db, redis }
+const compactionTimer = compactionService.startCompactionInterval()
+
+export { app, server, db, redis, compactionTimer }
