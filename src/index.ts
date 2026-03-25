@@ -7,10 +7,14 @@ import { createRedisClient } from './redis/client.js'
 import { createCorsMiddleware } from './middleware/cors.js'
 import { createAuthService } from './services/auth.service.js'
 import { createUserService } from './services/user.service.js'
+import { createWorkspaceService } from './services/workspace.service.js'
+import { createBoardService } from './services/board.service.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { healthRoute } from './routes/health.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUserRouter } from './routes/users.js'
+import { createWorkspaceRouter } from './routes/workspaces.js'
+import { createBoardRouter } from './routes/boards.js'
 
 const config = loadConfig()
 const db = createDb(config.databaseUrl)
@@ -18,6 +22,8 @@ const redis = createRedisClient(config.redisUrl)
 
 const authService = createAuthService(config)
 const userService = createUserService(db)
+const workspaceService = createWorkspaceService(db)
+const boardService = createBoardService(db)
 const authMiddleware = createAuthMiddleware(authService)
 
 const app = express()
@@ -29,6 +35,8 @@ app.use(cookieParser())
 app.get('/health', healthRoute(db, redis))
 app.use('/auth', createAuthRouter(config, authService, userService, db))
 app.use('/users', createUserRouter(userService, authMiddleware))
+app.use('/', createWorkspaceRouter(workspaceService, authMiddleware))
+app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware))
 
 const server = app.listen(config.port, () => {
   console.log(`[Server] Listening on port ${config.port}`)
