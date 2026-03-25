@@ -2,11 +2,15 @@ import { Router } from 'express'
 import type { RequestHandler } from 'express'
 import type { BoardService } from '../services/board.service.js'
 import type { WorkspaceService } from '../services/workspace.service.js'
+import type { BoardStateService } from '../services/board-state.service.js'
+import type { MutationProcessor } from '../mutations/processor.js'
 
 export function createBoardRouter(
   boardService: BoardService,
   workspaceService: WorkspaceService,
   authMiddleware: RequestHandler,
+  boardStateService: BoardStateService,
+  mutationProcessor: MutationProcessor,
 ) {
   const router = Router()
 
@@ -68,8 +72,30 @@ export function createBoardRouter(
       return
     }
 
-    const elementMap = await boardService.getBoardElements(id)
-    res.json({ elements: elementMap, lastSequence: 0 })
+    await boardStateService.loadBoard(id)
+    const elements = await boardStateService.getElements(id)
+    res.json({ elements, lastSequence: 0 })
+  })
+
+  router.post('/boards/:id/mutations', authMiddleware, async (req, res) => {
+    const boardId = req.params['id'] as string
+    const { mutations } = req.body
+
+    if (!Array.isArray(mutations) || mutations.length === 0 || mutations.length > 100) {
+      res.status(400).json({ error: 'mutations must be an array of 1-100 items' })
+      return
+    }
+
+    const access = await boardService.checkBoardAccess(boardId, req.userId!)
+    if (!access.hasAccess || access.permission !== 'edit') {
+      res.status(403).json({ error: 'No edit access to this board' })
+      return
+    }
+
+    await boardStateService.loadBoard(boardId)
+    const results = await mutationProcessor.processBatch(mutations, req.userId!)
+
+    res.json({ results })
   })
 
   router.get('/boards/:id/active-users', authMiddleware, async (req, res) => {

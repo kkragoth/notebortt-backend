@@ -9,6 +9,8 @@ import { createAuthService } from './services/auth.service.js'
 import { createUserService } from './services/user.service.js'
 import { createWorkspaceService } from './services/workspace.service.js'
 import { createBoardService } from './services/board.service.js'
+import { createBoardStateService } from './services/board-state.service.js'
+import { createMutationProcessor } from './mutations/processor.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { healthRoute } from './routes/health.js'
 import { createAuthRouter } from './routes/auth.js'
@@ -24,6 +26,8 @@ const authService = createAuthService(config)
 const userService = createUserService(db)
 const workspaceService = createWorkspaceService(db)
 const boardService = createBoardService(db)
+const boardStateService = createBoardStateService(redis, db)
+const mutationProcessor = createMutationProcessor(boardStateService, db)
 const authMiddleware = createAuthMiddleware(authService)
 
 const app = express()
@@ -36,7 +40,7 @@ app.get('/health', healthRoute(db, redis))
 app.use('/auth', createAuthRouter(config, authService, userService, db))
 app.use('/users', createUserRouter(userService, authMiddleware))
 app.use('/', createWorkspaceRouter(workspaceService, authMiddleware))
-app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware))
+app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor))
 
 const server = app.listen(config.port, () => {
   console.log(`[Server] Listening on port ${config.port}`)
