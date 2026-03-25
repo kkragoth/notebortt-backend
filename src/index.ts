@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cookieParser from 'cookie-parser'
+import { WebSocketServer } from 'ws'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
 import { createRedisClient } from './redis/client.js'
@@ -18,10 +19,15 @@ import { createAuthRouter } from './routes/auth.js'
 import { createUserRouter } from './routes/users.js'
 import { createWorkspaceRouter } from './routes/workspaces.js'
 import { createBoardRouter } from './routes/boards.js'
+import { createBoardRoomManager } from './ws/room.js'
+import { createHeartbeatService } from './ws/heartbeat.js'
+import { createUpgradeHandler } from './ws/upgrade.js'
+import { createWebSocketHandler } from './ws/handler.js'
 
 const config = loadConfig()
 const db = createDb(config.databaseUrl)
 const redis = createRedisClient(config.redisUrl)
+const pubRedis = createRedisClient(config.redisUrl)
 
 const authService = createAuthService(config)
 const userService = createUserService(db)
@@ -45,11 +51,23 @@ app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, b
 
 const compactionService = createCompactionService(db, redis)
 
+const wss = new WebSocketServer({ noServer: true })
+const roomManager = createBoardRoomManager()
+const heartbeat = createHeartbeatService(roomManager)
+const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, db, pubRedis)
+
 const server = app.listen(config.port, () => {
   console.log(`[Server] Listening on port ${config.port}`)
   console.log(`[Server] Environment: ${config.nodeEnv}`)
 })
 
+server.on('upgrade', createUpgradeHandler(wss, authService, userService))
+
+wss.on('connection', (ws, request) => {
+  wsHandler.onConnection(ws, request)
+})
+
 const compactionTimer = compactionService.startCompactionInterval()
+heartbeat.startHeartbeat()
 
 export { app, server, db, redis, compactionTimer }
