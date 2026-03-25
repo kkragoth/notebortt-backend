@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken'
-import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import type { AppConfig } from '../config.js'
 
@@ -16,12 +15,12 @@ export function createAuthService(config: Pick<AppConfig, 'jwtSecret' | 'jwtExpi
     return crypto.randomBytes(40).toString('hex')
   }
 
-  async function hashRefreshToken(token: string): Promise<string> {
-    return bcrypt.hash(token, 10)
+  function hashRefreshToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex')
   }
 
-  async function verifyRefreshToken(token: string, hash: string): Promise<boolean> {
-    return bcrypt.compare(token, hash)
+  function verifyRefreshToken(token: string, hash: string): boolean {
+    return hashRefreshToken(token) === hash
   }
 
   return { generateAccessToken, verifyAccessToken, generateRefreshToken, hashRefreshToken, verifyRefreshToken }
