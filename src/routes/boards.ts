@@ -108,7 +108,8 @@ export function createBoardRouter(
       return
     }
 
-    res.json({ count: 0 })
+    const count = await boardStateService.getClientCount(id)
+    res.json({ count })
   })
 
   router.post('/boards/:id/shares', authMiddleware, async (req, res) => {
