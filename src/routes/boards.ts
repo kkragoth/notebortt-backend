@@ -1,9 +1,10 @@
 import { Router } from 'express'
-import type { RequestHandler } from 'express'
+import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import type { BoardService } from '../services/board.service.js'
 import type { WorkspaceService } from '../services/workspace.service.js'
 import type { BoardStateService } from '../services/board-state.service.js'
 import type { MutationProcessor } from '../mutations/processor.js'
+import type { AuthService } from '../services/auth.service.js'
 
 export function createBoardRouter(
   boardService: BoardService,
@@ -11,8 +12,22 @@ export function createBoardRouter(
   authMiddleware: RequestHandler,
   boardStateService: BoardStateService,
   mutationProcessor: MutationProcessor,
+  authService: AuthService,
 ) {
   const router = Router()
+
+  const optionalAuth = (req: Request, _res: Response, next: NextFunction) => {
+    const header = req.headers.authorization
+    if (header?.startsWith('Bearer ')) {
+      try {
+        const payload = authService.verifyAccessToken(header.slice(7))
+        req.userId = payload.sub
+      } catch {
+        // Token invalid — continue as unauthenticated
+      }
+    }
+    next()
+  }
 
   router.get('/workspaces/:wid/boards', authMiddleware, async (req, res) => {
     const userId = req.userId!
@@ -48,11 +63,12 @@ export function createBoardRouter(
     res.status(201).json(board)
   })
 
-  router.get('/boards/:id', authMiddleware, async (req, res) => {
-    const userId = req.userId!
+  router.get('/boards/:id', optionalAuth, async (req, res) => {
+    const userId = req.userId
     const id = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId)
+    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
       res.status(403).json({ error: 'Forbidden' })
       return
@@ -62,11 +78,12 @@ export function createBoardRouter(
     res.json(board)
   })
 
-  router.get('/boards/:id/elements', authMiddleware, async (req, res) => {
-    const userId = req.userId!
+  router.get('/boards/:id/elements', optionalAuth, async (req, res) => {
+    const userId = req.userId
     const id = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId)
+    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
       res.status(403).json({ error: 'Forbidden' })
       return
@@ -77,8 +94,9 @@ export function createBoardRouter(
     res.json({ elements, lastSequence: 0 })
   })
 
-  router.post('/boards/:id/mutations', authMiddleware, async (req, res) => {
+  router.post('/boards/:id/mutations', optionalAuth, async (req, res) => {
     const boardId = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
     const { mutations } = req.body
 
     if (!Array.isArray(mutations) || mutations.length === 0 || mutations.length > 100) {
@@ -86,7 +104,7 @@ export function createBoardRouter(
       return
     }
 
-    const access = await boardService.checkBoardAccess(boardId, req.userId!)
+    const access = await boardService.checkBoardAccess(boardId, req.userId, shareToken)
     if (!access.hasAccess || access.permission !== 'edit') {
       res.status(403).json({ error: 'No edit access to this board' })
       return
@@ -98,11 +116,12 @@ export function createBoardRouter(
     res.json({ results })
   })
 
-  router.get('/boards/:id/active-users', authMiddleware, async (req, res) => {
-    const userId = req.userId!
+  router.get('/boards/:id/active-users', optionalAuth, async (req, res) => {
+    const userId = req.userId
     const id = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId)
+    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
       res.status(403).json({ error: 'Forbidden' })
       return
@@ -115,7 +134,7 @@ export function createBoardRouter(
   router.post('/boards/:id/shares', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const id = req.params['id'] as string
-    const { userId: shareUserId, permission, token } = req.body
+    const { userId: shareUserId, permission } = req.body
 
     const { hasAccess, permission: userPermission } = await boardService.checkBoardAccess(id, userId)
     if (!hasAccess || userPermission !== 'edit') {
@@ -123,7 +142,7 @@ export function createBoardRouter(
       return
     }
 
-    const share = await boardService.createBoardShare(id, shareUserId, permission ?? 'view', token)
+    const share = await boardService.createBoardShare(id, shareUserId, permission ?? 'view')
     res.status(201).json(share)
   })
 
@@ -139,6 +158,18 @@ export function createBoardRouter(
 
     const shares = await boardService.getBoardShares(id)
     res.json(shares)
+  })
+
+  router.get('/shared/:token', async (req, res) => {
+    const token = req.params['token'] as string
+    const share = await boardService.getShareByToken(token)
+
+    if (!share) {
+      res.status(404).json({ error: 'Share link not found or expired' })
+      return
+    }
+
+    res.json({ boardId: share.boardId, permission: share.permission })
   })
 
   router.delete('/boards/:id/shares/:shareId', authMiddleware, async (req, res) => {

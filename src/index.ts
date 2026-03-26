@@ -47,7 +47,7 @@ app.get('/health', healthRoute(db, redis))
 app.use('/auth', createAuthRouter(config, authService, userService, db))
 app.use('/users', createUserRouter(userService, authMiddleware))
 app.use('/', createWorkspaceRouter(workspaceService, authMiddleware))
-app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor))
+app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor, authService))
 
 const compactionService = createCompactionService(db, redis)
 
