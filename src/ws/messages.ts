@@ -12,7 +12,7 @@ export type ServerMessage =
   | { type: 'CATCH_UP'; mutations: MutationCatchUp[] }
   | { type: 'CATCH_UP_FAILED'; reason: string }
   | { type: 'SNAPSHOT'; elements: Record<string, BoardElement>; lastSequence: number }
-  | { type: 'PRESENCE'; userId: string; data: PresenceData }
+  | { type: 'PRESENCE'; userId: string; cursor: { x: number; y: number } | null; selectedIds: string[]; userName: string; avatarUrl: string | null; color: string }
   | { type: 'USER_JOINED'; userId: string; userName: string; color: string }
   | { type: 'USER_LEFT'; userId: string }
   | { type: 'UPGRADE'; message: string }
