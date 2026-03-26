@@ -137,6 +137,36 @@ export function createAuthRouter(
     res.json({ accessToken: newAccessToken })
   })
 
+  router.post('/dev-login', async (req, res) => {
+    if (config.nodeEnv !== 'development') {
+      res.status(404).json({ error: 'Not found' })
+      return
+    }
+
+    const { email } = req.body as { email?: string }
+    if (!email) {
+      res.status(400).json({ error: 'email required' })
+      return
+    }
+
+    const user = await userService.getUserByEmail(email)
+    if (!user) {
+      res.status(404).json({ error: 'User not found. Run: just db-seed' })
+      return
+    }
+
+    const accessToken = authService.generateAccessToken(user.id)
+    const refreshToken = authService.generateRefreshToken()
+    const tokenHash = authService.hashRefreshToken(refreshToken)
+    const expiresAt = buildRefreshTokenExpiry(config.refreshTokenExpiresDays)
+
+    await db.insert(refreshTokens).values({ userId: user.id, tokenHash, expiresAt })
+
+    const cookieOptions = buildRefreshTokenCookieOptions(config)
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, cookieOptions)
+    res.json({ accessToken, user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } })
+  })
+
   router.post('/logout', async (req, res) => {
     const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
 
