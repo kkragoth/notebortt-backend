@@ -231,7 +231,6 @@ export function createWebSocketHandler(
       }
 
       if (message.type === 'PRESENCE') {
-        console.log('[WS] PRESENCE in:', JSON.stringify({ cursor: message.cursor, selectedIds: message.selectedIds }))
         roomManager.broadcastToRoom(boardId, {
           type: 'PRESENCE',
           userId,

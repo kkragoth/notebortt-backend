@@ -24,7 +24,6 @@ function parseLastSequence(raw: string | null): number {
 export function createUpgradeHandler(wss: WebSocketServer, authService: AuthService, userService: UserService) {
   return async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
     try {
-      console.log('[WS Upgrade] Request:', request.url)
       const url = new URL(request.url!, `http://${request.headers.host}`)
 
       const boardId = parseBoardIdFromPath(url.pathname)
