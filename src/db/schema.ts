@@ -85,7 +85,7 @@ export const boardShares = pgTable('board_shares', {
 ])
 
 export const elements = pgTable('elements', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: text('id').primaryKey(),
   boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
   type: text('type').notNull(),
   data: jsonb('data').notNull(),
@@ -96,7 +96,7 @@ export const elements = pgTable('elements', {
 ])
 
 export const mutations = pgTable('mutations', {
-  id: uuid('id').primaryKey(),
+  id: text('id').primaryKey(),
   boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
   sequence: bigint('sequence', { mode: 'number' }).notNull(),
   operationType: text('operation_type').notNull(),

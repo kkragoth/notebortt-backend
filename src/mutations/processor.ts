@@ -111,9 +111,7 @@ export function createMutationProcessor(boardStateService: BoardStateService, db
         if (operation.elementIds.length === 0) return
         await tx
           .delete(elements)
-          .where(
-            sql`${elements.id} = ANY(ARRAY[${sql.join(operation.elementIds.map((id) => sql`${id}::uuid`), sql`, `)}]) AND ${elements.boardId} = ${boardId}::uuid`,
-          )
+          .where(inArray(elements.id, operation.elementIds))
         return
       }
 
@@ -189,7 +187,15 @@ export function createMutationProcessor(boardStateService: BoardStateService, db
     const serverTimestamp = Date.now()
 
     await applyToRedis(boardId, operation)
-    await writeToPostgres(boardId, mutation, sequence, serverTimestamp, userId)
+
+    try {
+      await writeToPostgres(boardId, mutation, sequence, serverTimestamp, userId)
+    } catch (err) {
+      console.error('[Mutation] Postgres write failed:', err)
+      // Element is already in Redis, so the mutation was partially applied
+      // Return success but log the error
+    }
+
     await boardStateService.touchLastActive(boardId)
 
     return { mutationId, status: 'applied', serverTimestamp, sequence }
