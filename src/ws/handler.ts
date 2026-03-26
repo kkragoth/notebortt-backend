@@ -234,7 +234,11 @@ export function createWebSocketHandler(
         roomManager.broadcastToRoom(boardId, {
           type: 'PRESENCE',
           userId,
-          data: message.data,
+          cursor: message.cursor,
+          selectedIds: message.selectedIds ?? [],
+          userName,
+          avatarUrl: null,
+          color,
         }, connectionId)
         return
       }

@@ -30,7 +30,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
     ports:
-      - "3000:3000"
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
     environment:
       DATABASE_URL: postgres://notecanva:localdev@postgres:5432/notecanva
       REDIS_URL: redis://redis:6379
-      PORT: "3000"
+      PORT: "8080"
       NODE_ENV: development
       CORS_ORIGIN: http://localhost:5173
     profiles:

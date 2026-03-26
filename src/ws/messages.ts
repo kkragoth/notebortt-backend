@@ -3,7 +3,7 @@ import type { Mutation, MutationResult, BoardElement } from '../mutations/types.
 // Client → Server
 export type ClientMessage =
   | { type: 'MUTATION'; mutation: Mutation }
-  | { type: 'PRESENCE'; data: PresenceData }
+  | { type: 'PRESENCE'; cursor: { x: number; y: number } | null; selectedIds?: string[] }
   | { type: 'PONG' }
 
 // Server → Client

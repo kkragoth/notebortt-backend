@@ -31,7 +31,7 @@ db-seed:
 
 db-reset:
     docker compose -f deploy/docker/docker-compose.yml exec postgres \
-        psql -U notecanva -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+        psql -U notecanva -c "DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
     just db-migrate
     just db-seed
 
@@ -42,7 +42,7 @@ test-watch:
     npx vitest
 
 health:
-    @curl -s http://localhost:3000/health | python3 -m json.tool
+    @curl -s http://localhost:8080/health | python3 -m json.tool
 
 logs:
     docker compose -f deploy/docker/docker-compose.yml logs -f
