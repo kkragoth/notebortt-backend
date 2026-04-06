@@ -1,5 +1,8 @@
 import { Router } from 'express'
-import type { Request, Response, NextFunction, RequestHandler } from 'express'
+import type { RequestHandler } from 'express'
+import { createOptionalAuth, sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
+import { parseWithSchema } from '../lib/validation.js'
+import { createBoardBodySchema, createBoardInviteBodySchema, updateBoardSharePermissionBodySchema } from '../openapi/schemas.js'
 import type { BoardService } from '../services/board.service.js'
 import type { WorkspaceService } from '../services/workspace.service.js'
 import type { BoardStateService } from '../services/board-state.service.js'
@@ -18,10 +21,6 @@ export function createBoardRouter(
 ) {
   const router = Router()
 
-  function toRecord<T extends { id: string }>(rows: T[]): Record<string, T> {
-    return Object.fromEntries(rows.map((row) => [row.id, row]))
-  }
-
   async function canAdminBoard(boardId: string, userId: string): Promise<boolean> {
     const board = await boardService.getBoard(boardId)
     if (!board) {
@@ -31,17 +30,14 @@ export function createBoardRouter(
     return workspaceService.isWorkspaceMember(board.workspaceId, userId)
   }
 
-  const optionalAuth = (req: Request, _res: Response, next: NextFunction) => {
-    const header = req.headers.authorization
-    if (header?.startsWith('Bearer ')) {
-      try {
-        const payload = authService.verifyAccessToken(header.slice(7))
-        req.userId = payload.sub
-      } catch {
-        // Token invalid — continue as unauthenticated
-      }
-    }
-    next()
+  const optionalAuth = createOptionalAuth(authService)
+
+  async function requireBoardAccess(
+    boardId: string,
+    userId: string | undefined,
+    shareToken?: string,
+  ) {
+    return boardService.checkBoardAccess(boardId, userId, shareToken)
   }
 
   router.get('/workspaces/:wid/boards', authMiddleware, async (req, res) => {
@@ -50,7 +46,7 @@ export function createBoardRouter(
 
     const isMember = await workspaceService.isWorkspaceMember(wid, userId)
     if (!isMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -67,20 +63,20 @@ export function createBoardRouter(
   router.post('/workspaces/:wid/boards', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const wid = req.params['wid'] as string
-    const { name } = req.body
+    const parsed = parseWithSchema(createBoardBodySchema, req.body)
 
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name is required' })
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
     const isMember = await workspaceService.isWorkspaceMember(wid, userId)
     if (!isMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
-    const board = await boardService.createBoard(wid, name)
+    const board = await boardService.createBoard(wid, parsed.data.name)
     res.status(201).json(board)
   })
 
@@ -89,15 +85,15 @@ export function createBoardRouter(
     const id = req.params['id'] as string
     const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
+    const { hasAccess } = await requireBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
     const board = await boardService.getBoard(id)
     if (!board) {
-      res.status(404).json({ error: 'Board not found' })
+      sendNotFound(res, 'Board not found')
       return
     }
     res.json(board)
@@ -108,9 +104,9 @@ export function createBoardRouter(
     const id = req.params['id'] as string
     const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
+    const { hasAccess } = await requireBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -126,13 +122,13 @@ export function createBoardRouter(
     const { mutations } = req.body
 
     if (!Array.isArray(mutations) || mutations.length === 0 || mutations.length > 100) {
-      res.status(400).json({ error: 'mutations must be an array of 1-100 items' })
+      sendBadRequest(res, 'mutations must be an array of 1-100 items')
       return
     }
 
-    const access = await boardService.checkBoardAccess(boardId, req.userId, shareToken)
+    const access = await requireBoardAccess(boardId, req.userId, shareToken)
     if (!access.hasAccess || access.permission !== 'edit') {
-      res.status(403).json({ error: 'No edit access to this board' })
+      sendForbidden(res, 'No edit access to this board')
       return
     }
 
@@ -148,9 +144,9 @@ export function createBoardRouter(
   router.post('/boards/:id/preview-jobs', optionalAuth, async (req, res) => {
     const boardId = req.params['id'] as string
     const shareToken = req.query['shareToken'] as string | undefined
-    const access = await boardService.checkBoardAccess(boardId, req.userId, shareToken)
+    const access = await requireBoardAccess(boardId, req.userId, shareToken)
     if (!access.hasAccess) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -165,22 +161,22 @@ export function createBoardRouter(
   router.patch('/boards/:id', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const boardId = req.params['id'] as string
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
+    const parsed = parseWithSchema(createBoardBodySchema, req.body)
 
-    if (!name) {
-      res.status(400).json({ error: 'name is required' })
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
-    const board = await boardService.renameBoard(boardId, name)
+    const board = await boardService.renameBoard(boardId, parsed.data.name)
     if (!board) {
-      res.status(404).json({ error: 'Board not found' })
+      sendNotFound(res, 'Board not found')
       return
     }
 
@@ -192,13 +188,13 @@ export function createBoardRouter(
     const boardId = req.params['id'] as string
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
     const duplicate = await boardService.duplicateBoard(boardId)
     if (!duplicate) {
-      res.status(404).json({ error: 'Board not found' })
+      sendNotFound(res, 'Board not found')
       return
     }
 
@@ -210,7 +206,7 @@ export function createBoardRouter(
     const boardId = req.params['id'] as string
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -223,7 +219,7 @@ export function createBoardRouter(
     const boardId = req.params['id'] as string
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (isWorkspaceMember) {
-      res.status(400).json({ error: 'Workspace members cannot leave board access via this endpoint' })
+      sendBadRequest(res, 'Workspace members cannot leave board access via this endpoint')
       return
     }
 
@@ -236,9 +232,9 @@ export function createBoardRouter(
     const id = req.params['id'] as string
     const shareToken = req.query['shareToken'] as string | undefined
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId, shareToken)
+    const { hasAccess } = await requireBoardAccess(id, userId, shareToken)
     if (!hasAccess) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -253,7 +249,7 @@ export function createBoardRouter(
 
     const isWorkspaceMember = await canAdminBoard(id, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -264,21 +260,21 @@ export function createBoardRouter(
   router.post('/boards/:id/invites', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const id = req.params['id'] as string
-    const { email, role } = req.body
+    const parsed = parseWithSchema(createBoardInviteBodySchema, req.body)
 
-    if (!email || typeof email !== 'string') {
-      res.status(400).json({ error: 'email is required' })
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
-    const inviteRole = role === 'editor' ? 'editor' : 'viewer'
+    const inviteRole = parsed.data.role === 'editor' ? 'editor' : 'viewer'
     const isWorkspaceMember = await canAdminBoard(id, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
-    const invitation = await boardService.createBoardInvitation(id, userId, email, inviteRole)
+    const invitation = await boardService.createBoardInvitation(id, userId, parsed.data.email, inviteRole)
     res.status(201).json(invitation)
   })
 
@@ -291,7 +287,7 @@ export function createBoardRouter(
       await boardService.acceptBoardInvitation(boardId, inviteId, userId)
       res.sendStatus(204)
     } catch (error) {
-      res.status(404).json({ error: error instanceof Error ? error.message : 'Invitation not found' })
+      sendNotFound(res, error instanceof Error ? error.message : 'Invitation not found')
     }
   })
 
@@ -306,7 +302,7 @@ export function createBoardRouter(
     const boardId = req.params['id'] as string
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -320,7 +316,7 @@ export function createBoardRouter(
     const linkId = req.params['linkId'] as string
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -332,9 +328,9 @@ export function createBoardRouter(
     const userId = req.userId!
     const id = req.params['id'] as string
 
-    const { hasAccess } = await boardService.checkBoardAccess(id, userId)
+    const { hasAccess } = await requireBoardAccess(id, userId)
     if (!hasAccess) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -346,19 +342,19 @@ export function createBoardRouter(
     const userId = req.userId!
     const boardId = req.params['id'] as string
     const shareId = req.params['shareId'] as string
-    const permission = req.body?.permission === 'edit' ? 'edit' : req.body?.permission === 'view' ? 'view' : null
-    if (!permission) {
-      res.status(400).json({ error: 'permission must be view or edit' })
+    const parsed = parseWithSchema(updateBoardSharePermissionBodySchema, req.body)
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
-    await boardService.updateBoardSharePermission(boardId, shareId, permission)
+    await boardService.updateBoardSharePermission(boardId, shareId, parsed.data.permission)
     res.sendStatus(204)
   })
 
@@ -367,7 +363,7 @@ export function createBoardRouter(
     const share = await boardService.getShareByToken(token)
 
     if (!share) {
-      res.status(404).json({ error: 'Share link not found or expired' })
+      sendNotFound(res, 'Share link not found or expired')
       return
     }
 
@@ -381,7 +377,7 @@ export function createBoardRouter(
 
     const isWorkspaceMember = await canAdminBoard(id, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 
@@ -396,7 +392,7 @@ export function createBoardRouter(
 
     const isWorkspaceMember = await canAdminBoard(boardId, userId)
     if (!isWorkspaceMember) {
-      res.status(403).json({ error: 'Forbidden' })
+      sendForbidden(res)
       return
     }
 

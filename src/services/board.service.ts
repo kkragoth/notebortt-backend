@@ -1,79 +1,55 @@
-import { randomBytes, randomUUID } from 'crypto'
+import { randomBytes } from 'crypto'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { boards, boardInvitations, boardShares, elements, users, workspaceMembers } from '../db/schema.js'
-
-const BOARD_PERMISSION_VIEW = 'view'
-const BOARD_PERMISSION_EDIT = 'edit'
-const BOARD_ROLE_EDITOR = 'editor'
-const BOARD_ROLE_VIEWER = 'viewer'
-const INVITATION_STATUS_PENDING = 'pending'
-const INVITATION_STATUS_ACCEPTED = 'accepted'
-const INVITATION_STATUS_REVOKED = 'revoked'
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase()
-}
-
-function roleToPermission(role: string): 'view' | 'edit' {
-  return role === BOARD_ROLE_EDITOR ? BOARD_PERMISSION_EDIT : BOARD_PERMISSION_VIEW
-}
-
-const REMAPPABLE_ID_KEYS = new Set([
-  'id',
-  'elementId',
-  'parentId',
-  'sourceId',
-  'targetId',
-  'startElementId',
-  'endElementId',
-  'containerId',
-  'containedById',
-  'columnId',
-  'metaColumnId',
-  'gridId',
-  'noteId',
-  'arrowId',
-  'shapeId',
-  'textId',
-  'drawingId',
-  'imageId',
-  'linkPreviewId',
-  'childId',
-  'itemId',
-])
-
-function remapElementData(value: unknown, idMap: Map<string, string>, keyHint = ''): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => remapElementData(item, idMap, keyHint))
-  }
-
-  if (value && typeof value === 'object') {
-    const result: Record<string, unknown> = {}
-    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-      result[key] = remapElementData(nestedValue, idMap, key)
-    }
-    return result
-  }
-
-  if (typeof value === 'string') {
-    const remapped = idMap.get(value)
-    if (!remapped) {
-      return value
-    }
-
-    if (REMAPPABLE_ID_KEYS.has(keyHint) || keyHint.toLowerCase().includes('id')) {
-      return remapped
-    }
-  }
-
-  return value
-}
+import {
+  BOARD_PERMISSION_EDIT,
+  INVITATION_STATUS_ACCEPTED,
+  INVITATION_STATUS_PENDING,
+  INVITATION_STATUS_REVOKED,
+  type BoardPermission,
+} from './board.service.constants.js'
+import { buildDuplicatedElements, normalizeEmail, roleToPermission } from './board.service.utils.js'
 
 export function createBoardService(db: Database) {
   type AccessibleBoard = typeof boards.$inferSelect & {
-    permission: 'view' | 'edit'
+    permission: BoardPermission
     accessSource: 'workspace' | 'share'
+  }
+
+  async function getBoard(boardId: string) {
+    const result = await db.select().from(boards).where(eq(boards.id, boardId)).limit(1)
+    return result[0] ?? null
+  }
+
+  async function getBoardUserShare(boardId: string, userId: string) {
+    const rows = await db
+      .select({ permission: boardShares.permission })
+      .from(boardShares)
+      .where(and(eq(boardShares.boardId, boardId), eq(boardShares.userId, userId)))
+      .limit(1)
+
+    return rows[0] ?? null
+  }
+
+  async function getWorkspaceBoardMembershipPermission(workspaceId: string, userId: string): Promise<BoardPermission | null> {
+    const rows = await db
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .limit(1)
+
+    return rows.length > 0 ? BOARD_PERMISSION_EDIT : null
+  }
+
+  async function getBoardLinkAccess(boardId: string, shareToken: string) {
+    const rows = await db
+      .select({ permission: boardShares.permission })
+      .from(boardShares)
+      .where(and(eq(boardShares.token, shareToken), eq(boardShares.boardId, boardId), isNull(boardShares.userId)))
+      .limit(1)
+
+    return rows[0] ?? null
   }
 
   async function createBoard(workspaceId: string, name: string) {
@@ -83,11 +59,6 @@ export function createBoardService(db: Database) {
 
   async function getBoardsForWorkspace(workspaceId: string) {
     return db.select().from(boards).where(eq(boards.workspaceId, workspaceId))
-  }
-
-  async function getBoard(boardId: string) {
-    const result = await db.select().from(boards).where(eq(boards.id, boardId)).limit(1)
-    return result[0] ?? null
   }
 
   async function listAccessibleBoards(userId: string): Promise<AccessibleBoard[]> {
@@ -174,41 +145,28 @@ export function createBoardService(db: Database) {
     boardId: string,
     userId: string | undefined,
     shareToken?: string,
-  ): Promise<{ hasAccess: boolean; permission: 'view' | 'edit' | null }> {
+  ): Promise<{ hasAccess: boolean; permission: BoardPermission | null }> {
     const board = await getBoard(boardId)
-    if (!board) return { hasAccess: false, permission: null }
+    if (!board) {
+      return { hasAccess: false, permission: null }
+    }
 
     if (userId) {
-      const memberRows = await db
-        .select({ role: workspaceMembers.role })
-        .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, board.workspaceId), eq(workspaceMembers.userId, userId)))
-        .limit(1)
-
-      if (memberRows.length > 0) {
-        return { hasAccess: true, permission: BOARD_PERMISSION_EDIT }
+      const memberPermission = await getWorkspaceBoardMembershipPermission(board.workspaceId, userId)
+      if (memberPermission) {
+        return { hasAccess: true, permission: memberPermission }
       }
 
-      const shareRows = await db
-        .select({ permission: boardShares.permission })
-        .from(boardShares)
-        .where(and(eq(boardShares.boardId, boardId), eq(boardShares.userId, userId)))
-        .limit(1)
-
-      if (shareRows.length > 0) {
-        return { hasAccess: true, permission: shareRows[0].permission as 'view' | 'edit' }
+      const share = await getBoardUserShare(boardId, userId)
+      if (share) {
+        return { hasAccess: true, permission: share.permission as BoardPermission }
       }
     }
 
     if (shareToken) {
-      const tokenRows = await db
-        .select({ permission: boardShares.permission, boardId: boardShares.boardId })
-        .from(boardShares)
-        .where(and(eq(boardShares.token, shareToken), eq(boardShares.boardId, boardId), isNull(boardShares.userId)))
-        .limit(1)
-
-      if (tokenRows.length > 0) {
-        return { hasAccess: true, permission: tokenRows[0].permission as 'view' | 'edit' }
+      const shareLink = await getBoardLinkAccess(boardId, shareToken)
+      if (shareLink) {
+        return { hasAccess: true, permission: shareLink.permission as BoardPermission }
       }
     }
 
@@ -445,23 +403,11 @@ export function createBoardService(db: Database) {
         .from(elements)
         .where(eq(elements.boardId, boardId))
 
-      const idMap = new Map<string, string>()
-      for (const element of sourceElements) {
-        idMap.set(element.id, randomUUID())
-      }
-
       const now = new Date()
+      const duplicatedElements = buildDuplicatedElements(sourceElements, copy.id, now)
 
-      if (sourceElements.length > 0) {
-        await tx
-          .insert(elements)
-          .values(sourceElements.map((element) => ({
-            id: idMap.get(element.id)!,
-            boardId: copy.id,
-            type: element.type,
-            data: remapElementData(element.data, idMap, '') as Record<string, unknown>,
-            updatedAt: now,
-          })))
+      if (duplicatedElements.length > 0) {
+        await tx.insert(elements).values(duplicatedElements)
       }
 
       return copy ?? null

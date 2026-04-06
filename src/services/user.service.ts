@@ -2,7 +2,7 @@ import { eq, and } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { users, oauthAccounts, workspaces, workspaceMembers } from '../db/schema.js'
 
-interface GoogleUserInput {
+export interface GoogleUserInput {
   email: string
   name: string
   avatarUrl: string | null

@@ -2,6 +2,9 @@ import { Router } from 'express'
 import { OAuth2Client } from 'google-auth-library'
 import { eq, and, gt } from 'drizzle-orm'
 import type { AppConfig } from '../config.js'
+import { sendBadRequest, sendNotFound } from '../lib/http.js'
+import { parseWithSchema } from '../lib/validation.js'
+import { authCallbackQuerySchema, devLoginBodySchema } from '../openapi/schemas.js'
 import type { AuthService } from '../services/auth.service.js'
 import type { UserService } from '../services/user.service.js'
 import type { Database } from '../db/client.js'
@@ -54,15 +57,15 @@ export function createAuthRouter(
   })
 
   router.get('/callback', async (req, res) => {
-    const code = req.query.code as string | undefined
+    const parsed = parseWithSchema(authCallbackQuerySchema, req.query)
 
-    if (!code) {
-      res.status(400).json({ error: 'Missing authorization code' })
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
     try {
-      const { tokens } = await oauth2Client.getToken(code)
+      const { tokens } = await oauth2Client.getToken(parsed.data.code)
       const idToken = tokens.id_token
 
       if (!idToken) {
@@ -141,19 +144,19 @@ export function createAuthRouter(
 
   router.post('/dev-login', async (req, res) => {
     if (config.nodeEnv !== 'development') {
-      res.status(404).json({ error: 'Not found' })
+      sendNotFound(res, 'Not found')
       return
     }
 
-    const { email } = req.body as { email?: string }
-    if (!email) {
-      res.status(400).json({ error: 'email required' })
+    const parsed = parseWithSchema(devLoginBodySchema, req.body)
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
       return
     }
 
-    const user = await userService.getUserByEmail(email)
+    const user = await userService.getUserByEmail(parsed.data.email)
     if (!user) {
-      res.status(404).json({ error: 'User not found. Run: just db-seed' })
+      sendNotFound(res, 'User not found. Run: just db-seed')
       return
     }
 
