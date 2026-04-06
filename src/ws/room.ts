@@ -5,6 +5,7 @@ export interface ConnectedClient {
   ws: WebSocket
   userId: string
   userName: string
+  avatarUrl?: string | null
   connectionId: string
   color: string
   lastPong: number
@@ -39,6 +40,7 @@ export function createBoardRoomManager() {
       type: 'USER_JOINED',
       userId: client.userId,
       userName: client.userName,
+      avatarUrl: client.avatarUrl ?? null,
       color: client.color,
     }, client.connectionId)
   }

@@ -97,6 +97,11 @@ export function createBoardStateService(redis: Redis, db: Database) {
     return redis.incr(boardSeqKey(boardId))
   }
 
+  async function peekSequence(boardId: string): Promise<number> {
+    const raw = await redis.get(boardSeqKey(boardId))
+    return raw ? parseInt(raw, 10) : 0
+  }
+
   async function isDuplicate(boardId: string, mutationId: string): Promise<boolean> {
     const exists = await redis.exists(boardSeenKey(boardId, mutationId))
     return exists === 1
@@ -145,6 +150,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
     setElement,
     deleteElement,
     getSequence,
+    peekSequence,
     isDuplicate,
     markSeen,
     trackClient,

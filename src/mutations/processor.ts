@@ -1,6 +1,6 @@
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { elements, mutations } from '../db/schema.js'
+import { boards, elements, mutations } from '../db/schema.js'
 import type { BoardStateService } from '../services/board-state.service.js'
 import { MutationType } from './types.js'
 import type { BoardElement, Mutation, MutationResult, Operation } from './types.js'
@@ -87,35 +87,27 @@ export function createMutationProcessor(boardStateService: BoardStateService, db
           data: rest,
           updatedAt: serverTs,
         })
-        return
-      }
-
-      if (operation.type === MutationType.UPDATE_ELEMENT) {
+      } else if (operation.type === MutationType.UPDATE_ELEMENT) {
         const existing = await tx
           .select()
           .from(elements)
           .where(eq(elements.id, operation.elementId))
           .limit(1)
 
-        if (existing.length === 0) return
-
-        const mergedData = { ...(existing[0].data as Record<string, unknown>), ...operation.fields }
-        await tx
-          .update(elements)
-          .set({ data: mergedData, updatedAt: serverTs })
-          .where(eq(elements.id, operation.elementId))
-        return
-      }
-
-      if (operation.type === MutationType.DELETE_ELEMENTS) {
-        if (operation.elementIds.length === 0) return
-        await tx
-          .delete(elements)
-          .where(inArray(elements.id, operation.elementIds))
-        return
-      }
-
-      if (operation.type === MutationType.MOVE_ELEMENTS) {
+        if (existing.length > 0) {
+          const mergedData = { ...(existing[0].data as Record<string, unknown>), ...operation.fields }
+          await tx
+            .update(elements)
+            .set({ data: mergedData, updatedAt: serverTs })
+            .where(eq(elements.id, operation.elementId))
+        }
+      } else if (operation.type === MutationType.DELETE_ELEMENTS) {
+        if (operation.elementIds.length > 0) {
+          await tx
+            .delete(elements)
+            .where(inArray(elements.id, operation.elementIds))
+        }
+      } else if (operation.type === MutationType.MOVE_ELEMENTS) {
         for (const move of operation.moves) {
           const existing = await tx
             .select()
@@ -132,10 +124,7 @@ export function createMutationProcessor(boardStateService: BoardStateService, db
             .set({ data: updatedData, updatedAt: serverTs })
             .where(eq(elements.id, move.elementId))
         }
-        return
-      }
-
-      if (operation.type === MutationType.UPDATE_ELEMENTS) {
+      } else if (operation.type === MutationType.UPDATE_ELEMENTS) {
         for (const update of operation.updates) {
           const existing = await tx
             .select()
@@ -151,30 +140,36 @@ export function createMutationProcessor(boardStateService: BoardStateService, db
             .set({ data: mergedData, updatedAt: serverTs })
             .where(eq(elements.id, update.elementId))
         }
-        return
-      }
-
-      if (operation.type === MutationType.REORDER_ELEMENT) {
+      } else if (operation.type === MutationType.REORDER_ELEMENT) {
         const existing = await tx
           .select()
           .from(elements)
           .where(eq(elements.id, operation.elementId))
           .limit(1)
 
-        if (existing.length === 0) return
-
-        const currentData = (existing[0].data as Record<string, unknown>) ?? {}
-        const updatedData = { ...currentData, zIndex: operation.zIndex }
-        await tx
-          .update(elements)
-          .set({ data: updatedData, updatedAt: serverTs })
-          .where(eq(elements.id, operation.elementId))
+        if (existing.length > 0) {
+          const currentData = (existing[0].data as Record<string, unknown>) ?? {}
+          const updatedData = { ...currentData, zIndex: operation.zIndex }
+          await tx
+            .update(elements)
+            .set({ data: updatedData, updatedAt: serverTs })
+            .where(eq(elements.id, operation.elementId))
+        }
       }
+
+      await tx
+        .update(boards)
+        .set({ updatedAt: serverTs })
+        .where(eq(boards.id, boardId))
     })
   }
 
   async function processMutation(mutation: Mutation, userId: string): Promise<MutationResult> {
     const { mutationId, boardId, operation } = mutation
+
+    if (operation.type === MutationType.MOVE_ELEMENTS && operation.transient) {
+      return { mutationId, status: 'broadcast_only', serverTimestamp: Date.now() }
+    }
 
     const isDuplicate = await boardStateService.isDuplicate(boardId, mutationId)
     if (isDuplicate) {

@@ -5,10 +5,14 @@ import type { WorkspaceService } from '../services/workspace.service.js'
 export function createWorkspaceRouter(workspaceService: WorkspaceService, authMiddleware: RequestHandler) {
   const router = Router()
 
+  function toRecord<T extends { id: string }>(rows: T[]): Record<string, T> {
+    return Object.fromEntries(rows.map((row) => [row.id, row]))
+  }
+
   router.get('/workspaces', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const workspaces = await workspaceService.getWorkspacesForUser(userId)
-    res.json(workspaces)
+    res.json({ workspaces: toRecord(workspaces) })
   })
 
   router.post('/workspaces', authMiddleware, async (req, res) => {
@@ -35,7 +39,7 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
     }
 
     const members = await workspaceService.getWorkspaceMembers(wid)
-    res.json(members)
+    res.json({ members: toRecord(members) })
   })
 
   router.post('/workspaces/:wid/invitations', authMiddleware, async (req, res) => {

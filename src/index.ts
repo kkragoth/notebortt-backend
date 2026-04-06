@@ -11,6 +11,8 @@ import { createUserService } from './services/user.service.js'
 import { createWorkspaceService } from './services/workspace.service.js'
 import { createBoardService } from './services/board.service.js'
 import { createBoardStateService } from './services/board-state.service.js'
+import { createBoardPreviewRenderer } from './services/board-preview.service.js'
+import { createPreviewJobService } from './services/preview-job.service.js'
 import { createMutationProcessor } from './mutations/processor.js'
 import { createCompactionService } from './mutations/compaction.js'
 import { createAuthMiddleware } from './middleware/auth.js'
@@ -34,6 +36,8 @@ const userService = createUserService(db)
 const workspaceService = createWorkspaceService(db)
 const boardService = createBoardService(db)
 const boardStateService = createBoardStateService(redis, db)
+const boardPreviewRenderer = createBoardPreviewRenderer()
+const previewJobService = createPreviewJobService(db, redis, boardPreviewRenderer)
 const mutationProcessor = createMutationProcessor(boardStateService, db)
 const authMiddleware = createAuthMiddleware(authService)
 
@@ -47,7 +51,7 @@ app.get('/health', healthRoute(db, redis))
 app.use('/auth', createAuthRouter(config, authService, userService, db))
 app.use('/users', createUserRouter(userService, authMiddleware))
 app.use('/', createWorkspaceRouter(workspaceService, authMiddleware))
-app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor, authService))
+app.use('/', createBoardRouter(boardService, workspaceService, authMiddleware, boardStateService, mutationProcessor, authService, previewJobService))
 
 const compactionService = createCompactionService(db, redis)
 
@@ -68,6 +72,7 @@ wss.on('connection', (ws, request) => {
 })
 
 const compactionTimer = compactionService.startCompactionInterval()
+const stopPreviewWorker = previewJobService.startWorker()
 heartbeat.startHeartbeat()
 
-export { app, server, db, redis, compactionTimer }
+export { app, server, db, redis, compactionTimer, stopPreviewWorker }

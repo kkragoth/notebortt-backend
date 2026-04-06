@@ -68,6 +68,9 @@ export const boards = pgTable('boards', {
   name: text('name').notNull(),
   currentCommitId: uuid('current_commit_id'),
   currentBranch: text('current_branch').default('main'),
+  previewSvg: text('preview_svg'),
+  previewVersion: text('preview_version'),
+  previewUpdatedAt: timestamp('preview_updated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 })
@@ -84,6 +87,22 @@ export const boardShares = pgTable('board_shares', {
   check('valid_share_permission', sql`${table.permission} IN ('view', 'edit')`),
 ])
 
+export const boardInvitations = pgTable('board_invitations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
+  invitedBy: uuid('invited_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  emailLower: text('email_lower').notNull(),
+  role: text('role').notNull().default('viewer'),
+  status: text('status').notNull().default('pending'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (table) => [
+  index('idx_board_invitations_email').on(table.emailLower),
+  uniqueIndex('board_invitation_pending_idx').on(table.boardId, table.emailLower, table.status),
+  check('valid_board_invitation_role', sql`${table.role} IN ('editor', 'viewer')`),
+  check('valid_board_invitation_status', sql`${table.status} IN ('pending', 'accepted', 'revoked', 'expired')`),
+])
+
 export const elements = pgTable('elements', {
   id: text('id').primaryKey(),
   boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
@@ -92,7 +111,7 @@ export const elements = pgTable('elements', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   index('idx_elements_board').on(table.boardId),
-  check('valid_element_type', sql`${table.type} IN ('NOTE','TEXT','ARROW','DRAWING','SHAPE','COLUMN','IMAGE','LINK_PREVIEW')`),
+  check('valid_element_type', sql`${table.type} IN ('NOTE','TEXT','ARROW','DRAWING','SHAPE','COLUMN','IMAGE','LINK_PREVIEW','META_COLUMN')`),
 ])
 
 export const mutations = pgTable('mutations', {

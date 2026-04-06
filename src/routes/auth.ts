@@ -90,7 +90,9 @@ export function createAuthRouter(
 
       const cookieOptions = buildRefreshTokenCookieOptions(config)
       res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, cookieOptions)
-      res.redirect(config.corsOrigin + '?token=' + accessToken)
+      const redirectUrl = new URL('/callback', config.corsOrigin)
+      redirectUrl.searchParams.set('accessToken', accessToken)
+      res.redirect(redirectUrl.toString())
     } catch (err) {
       console.error('[Auth] OAuth callback error:', err)
       res.status(500).json({ error: 'Authentication failed' })

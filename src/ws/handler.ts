@@ -15,6 +15,7 @@ import type { HeartbeatService } from './heartbeat.js'
 import type { UpgradeContext } from './upgrade.js'
 
 const RATE_LIMIT_MAX_PER_SECOND = 30
+const PRESENCE_RATE_LIMIT_MAX_PER_SECOND = 20
 const ROOM_FLUSH_GRACE_PERIOD_MS = 30_000
 const REDIS_MUTATION_CHANNEL_PREFIX = 'board:'
 const REDIS_MUTATION_CHANNEL_SUFFIX = ':mutations'
@@ -28,7 +29,7 @@ interface RateLimitState {
   windowStart: number
 }
 
-function isRateLimited(state: RateLimitState): boolean {
+function isRateLimited(state: RateLimitState, limit: number = RATE_LIMIT_MAX_PER_SECOND): boolean {
   const now = Date.now()
   const windowElapsed = now - state.windowStart
   if (windowElapsed >= 1000) {
@@ -36,7 +37,7 @@ function isRateLimited(state: RateLimitState): boolean {
     state.windowStart = now
   }
   state.count++
-  return state.count > RATE_LIMIT_MAX_PER_SECOND
+  return state.count > limit
 }
 
 function extractWsContext(request: IncomingMessage): UpgradeContext | null {
@@ -170,6 +171,7 @@ export function createWebSocketHandler(
         type: 'USER_JOINED',
         userId: member.userId,
         userName: member.userName,
+        avatarUrl: member.avatarUrl ?? null,
         color: member.color,
       }))
     }
@@ -182,7 +184,7 @@ export function createWebSocketHandler(
       return
     }
 
-    const { boardId, userId, userName, lastSequence } = context
+    const { boardId, userId, userName, avatarUrl, lastSequence } = context
     const connectionId = randomUUID()
     const color = getUserColor(userId)
 
@@ -192,21 +194,46 @@ export function createWebSocketHandler(
     await boardStateService.loadBoard(boardId)
     await boardStateService.trackClient(boardId, userId, connectionId)
 
-    const client = { ws, userId, userName, connectionId, color, lastPong: Date.now() }
+    const client = { ws, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
     sendExistingRoomMembers(ws, boardId, connectionId)
     roomManager.joinRoom(boardId, client)
 
     await sendInitialState(ws, boardId, lastSequence)
 
-    const rateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
+    const mutationRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
+    const presenceRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
 
     ws.on('message', async (raw: Buffer) => {
       const message = parseClientMessage(raw.toString())
       if (!message) return
 
       if (message.type === 'MUTATION') {
-        if (isRateLimited(rateLimitState)) {
+        if (isRateLimited(mutationRateLimitState)) {
           ws.send(serialize({ type: 'RATE_LIMITED' }))
+          return
+        }
+
+        if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
+          roomManager.broadcastToRoom(boardId, {
+            type: 'MUTATION',
+            mutation: message.mutation,
+            fromUserId: userId,
+          }, connectionId)
+
+          const pubPayload = JSON.stringify({
+            mutation: message.mutation,
+            fromUserId: userId,
+            senderConnectionId: connectionId,
+          })
+          await pubRedis.publish(boardMutationChannel(boardId), pubPayload)
+          ws.send(serialize({
+            type: 'MUTATION_RESULT',
+            result: {
+              mutationId: message.mutation.mutationId,
+              status: 'broadcast_only',
+              serverTimestamp: Date.now(),
+            },
+          }))
           return
         }
 
@@ -231,13 +258,17 @@ export function createWebSocketHandler(
       }
 
       if (message.type === 'PRESENCE') {
+        if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
+          return
+        }
+
         roomManager.broadcastToRoom(boardId, {
           type: 'PRESENCE',
           userId,
           cursor: message.cursor,
           selectedIds: message.selectedIds ?? [],
           userName,
-          avatarUrl: null,
+          avatarUrl,
           color,
         }, connectionId)
         return

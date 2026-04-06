@@ -15,6 +15,20 @@
       "when": 1774524015487,
       "tag": "0001_aberrant_preak",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775488225984,
+      "tag": "0002_round_ted_forrester",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775515800000,
+      "tag": "0003_preview_fields",
+      "breakpoints": true
     }
   ]
 }

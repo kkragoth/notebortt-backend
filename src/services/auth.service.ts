@@ -1,10 +1,11 @@
-import jwt from 'jsonwebtoken'
+import jwt, { type SignOptions } from 'jsonwebtoken'
 import crypto from 'crypto'
 import type { AppConfig } from '../config.js'
 
 export function createAuthService(config: Pick<AppConfig, 'jwtSecret' | 'jwtExpiresIn'>) {
   function generateAccessToken(userId: string): string {
-    return jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: config.jwtExpiresIn })
+    const signOptions: SignOptions = { expiresIn: config.jwtExpiresIn as SignOptions['expiresIn'] }
+    return jwt.sign({ sub: userId }, config.jwtSecret, signOptions)
   }
 
   function verifyAccessToken(token: string): { sub: string } {
