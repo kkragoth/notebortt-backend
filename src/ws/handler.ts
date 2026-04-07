@@ -24,6 +24,10 @@ interface PendingMutationBatch {
   flushing: boolean
 }
 
+interface FlushBatchOptions {
+  sendAcks: boolean
+}
+
 export function createWebSocketHandler(
   roomManager: BoardRoomManager,
   boardStateService: BoardStateService,
@@ -112,6 +116,7 @@ export function createWebSocketHandler(
     userId: string,
     connectionId: string,
     ws: WebSocket,
+    options: FlushBatchOptions = { sendAcks: true },
   ): Promise<void> {
     const batchState = pendingMutationBatches.get(connectionId)
     if (!batchState || batchState.flushing || batchState.mutations.length === 0) {
@@ -128,8 +133,10 @@ export function createWebSocketHandler(
 
     try {
       const results = await mutationProcessor.processBatch(batch, userId)
-      for (const result of results) {
-        ws.send(serialize({ type: 'MUTATION_RESULT', result }))
+      if (options.sendAcks && ws.readyState === 1) {
+        for (const result of results) {
+          ws.send(serialize({ type: 'MUTATION_RESULT', result }))
+        }
       }
 
       await publishAppliedChanges(boardId, userId, connectionId, results)
@@ -137,7 +144,7 @@ export function createWebSocketHandler(
       batchState.flushing = false
       if (batchState.mutations.length > 0) {
         batchState.flushTimer = setTimeout(() => {
-          void flushMutationBatch(boardId, userId, connectionId, ws)
+          void flushMutationBatch(boardId, userId, connectionId, ws, options)
         }, MUTATION_BATCH_WINDOW_MS)
       }
     }
@@ -166,6 +173,17 @@ export function createWebSocketHandler(
       batchState.flushTimer = null
       void flushMutationBatch(boardId, userId, connectionId, ws)
     }, MUTATION_BATCH_WINDOW_MS)
+  }
+
+  async function refreshConnectionActivity(
+    boardId: string,
+    userId: string,
+    sessionId: string,
+    connectionId: string,
+  ): Promise<void> {
+    await boardStateService.touchViewerSession(boardId, sessionId)
+    await boardStateService.trackClient(boardId, userId, connectionId)
+    heartbeat.handleActivity(boardId, connectionId)
   }
 
   async function onConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
@@ -205,9 +223,7 @@ export function createWebSocketHandler(
         if (!message) return
 
         if (message.type === 'MUTATION') {
-          await boardStateService.touchViewerSession(boardId, sessionId)
-          await boardStateService.trackClient(boardId, userId, connectionId)
-          heartbeat.handleActivity(boardId, connectionId)
+          await refreshConnectionActivity(boardId, userId, sessionId, connectionId)
 
           if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
             ws.send(serialize({ type: 'RATE_LIMITED' }))
@@ -236,9 +252,7 @@ export function createWebSocketHandler(
         }
 
         if (message.type === 'PRESENCE') {
-          await boardStateService.touchViewerSession(boardId, sessionId)
-          await boardStateService.trackClient(boardId, userId, connectionId)
-          heartbeat.handleActivity(boardId, connectionId)
+          await refreshConnectionActivity(boardId, userId, sessionId, connectionId)
 
           if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
             return
@@ -273,13 +287,14 @@ export function createWebSocketHandler(
 
     ws.on('close', async () => {
       try {
-        const leaveResult = roomManager.leaveRoom(boardId, connectionId)
         const batchState = pendingMutationBatches.get(connectionId)
         if (batchState?.flushTimer) {
           clearTimeout(batchState.flushTimer)
         }
+        await flushMutationBatch(boardId, userId, connectionId, ws, { sendAcks: false })
         pendingMutationBatches.delete(connectionId)
 
+        const leaveResult = roomManager.leaveRoom(boardId, connectionId)
         if (!leaveResult.client) {
           return
         }

@@ -236,3 +236,35 @@ describe('processBatch', () => {
     }
   })
 })
+
+describe('write mode behavior', () => {
+  it('uses solo mode by default and does not retain redis change-log entries', async () => {
+    const elementId = makeElementId()
+    const mutation = makeCreateMutation(elementId)
+    const sequenceBefore = await boardStateService.peekSequence(TEST_BOARD_ID)
+
+    const result = await mutationProcessor.processMutation(mutation, TEST_USER_ID)
+    expect(result.status).toBe('applied')
+    expect(result.sequence).toBe(sequenceBefore + 1)
+
+    const catchUp = await boardStateService.getChangesAfter(TEST_BOARD_ID, sequenceBefore)
+    expect(catchUp.complete).toBe(false)
+    expect(catchUp.changes).toEqual([])
+  })
+
+  it('switches to collab mode when two clients are active and keeps catch-up log', async () => {
+    const elementId = makeElementId()
+    await boardStateService.trackClient(TEST_BOARD_ID, 'collab-user-a', 'conn-a')
+    await boardStateService.trackClient(TEST_BOARD_ID, 'collab-user-b', 'conn-b')
+
+    const sequenceBefore = await boardStateService.peekSequence(TEST_BOARD_ID)
+    const mutation = makeCreateMutation(elementId)
+
+    const result = await mutationProcessor.processMutation(mutation, TEST_USER_ID)
+    expect(result.status).toBe('applied')
+
+    const catchUp = await boardStateService.getChangesAfter(TEST_BOARD_ID, sequenceBefore)
+    expect(catchUp.complete).toBe(true)
+    expect(catchUp.changes.length).toBeGreaterThan(0)
+  })
+})

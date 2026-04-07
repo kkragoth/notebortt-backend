@@ -239,6 +239,25 @@ describe('applyChangeSet', () => {
     expect(await service.getElement(TEST_BOARD_ID, 'column-1')).toBeNull()
     expect(await service.getElement(TEST_BOARD_ID, 'note-1')).toBeNull()
   })
+
+  it('can skip change-log tracking for solo writes', async () => {
+    await service.loadBoard(TEST_BOARD_ID)
+    const created = makeElement('solo-el-1')
+
+    const applied = await service.applyChangeSet(
+      TEST_BOARD_ID,
+      {
+        upserts: [created],
+        deletes: [],
+      },
+      { trackChanges: false },
+    )
+
+    expect(applied?.sequence).toBe(1)
+    const catchUp = await service.getChangesAfter(TEST_BOARD_ID, 0)
+    expect(catchUp.complete).toBe(false)
+    expect(catchUp.changes).toEqual([])
+  })
 })
 
 describe('getSequence', () => {
@@ -301,6 +320,47 @@ describe('trackClient / removeClient / getClientCount', () => {
     await service.removeClient(TEST_BOARD_ID, 'user-1', 'conn-b')
     await service.removeClient(TEST_BOARD_ID, 'user-2', 'conn-c')
     expect(await service.getClientCount(TEST_BOARD_ID)).toBe(0)
+  })
+
+  it('prunes stale client entries when lease keys expire', async () => {
+    const boardId = `client-lease-board-${Date.now()}`
+    await service.loadBoard(boardId)
+
+    await service.trackClient(boardId, 'user-1', 'conn-a')
+    const before = await service.getClientCount(boardId)
+    expect(before).toBe(1)
+
+    await redis.del(`board:${boardId}:client_lease:user-1:conn-a`)
+    const after = await service.getClientCount(boardId)
+    expect(after).toBe(0)
+
+    await service.flushBoard(boardId)
+  })
+})
+
+describe('getSyncWriteMode', () => {
+  it('returns solo when board has one active participant', async () => {
+    const boardId = `sync-mode-solo-${Date.now()}`
+    await service.loadBoard(boardId)
+    await service.trackClient(boardId, 'user-1', 'conn-a')
+    await service.touchViewerSession(boardId, 'session-a')
+
+    const mode = await service.getSyncWriteMode(boardId)
+    expect(mode).toBe('solo')
+
+    await service.flushBoard(boardId)
+  })
+
+  it('returns collab when two active participants are present', async () => {
+    const boardId = `sync-mode-collab-${Date.now()}`
+    await service.loadBoard(boardId)
+    await service.trackClient(boardId, 'user-1', 'conn-a')
+    await service.trackClient(boardId, 'user-2', 'conn-b')
+
+    const mode = await service.getSyncWriteMode(boardId)
+    expect(mode).toBe('collab')
+
+    await service.flushBoard(boardId)
   })
 })
 

@@ -118,8 +118,16 @@ export function createMutationProcessor(boardStateService: BoardStateService) {
       if (!claimed) {
         return { mutationId, status: 'already_applied' }
       }
+
+      const writeMode = await boardStateService.getSyncWriteMode(boardId)
       const changeSet = await toChangeSet(boardId, operation)
-      const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet)
+      const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet, {
+        trackChangeLog: writeMode === 'collab',
+      })
+
+      if (writeMode === 'solo' && persistedChange) {
+        await boardStateService.persistBoard(boardId)
+      }
 
       if (!persistedChange) {
         return {

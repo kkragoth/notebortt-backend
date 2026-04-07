@@ -41,9 +41,10 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
   }
 
   function startHeartbeat(intervalMs = 30000): void {
+    const staleThresholdMs = Math.max(DEFAULT_STALE_CLIENT_IDLE_MS, intervalMs + 10_000)
     intervalHandle = setInterval(() => {
       sendPings()
-      setTimeout(() => checkStaleClients(intervalMs + 10000), 5000)
+      setTimeout(() => checkStaleClients(staleThresholdMs), 5000)
     }, intervalMs)
   }
 

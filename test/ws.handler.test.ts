@@ -116,21 +116,24 @@ function createHandler(viewerCount = 0) {
   const roomManager = createBoardRoomManager()
   const boardStateService = createBoardStateServiceMock(viewerCount)
   const mutationProcessor = {
-    processMutation: vi.fn().mockResolvedValue({
-      mutationId: 'mut-1',
-      status: 'applied',
-      serverTimestamp: 123,
-      sequence: 1,
-      change: {
-        sequence: 1,
-        serverTimestamp: 123,
-        upserts: [],
-        deletes: [],
-      },
+    processBatch: vi.fn().mockImplementation(async (mutations: any[]) => {
+      return mutations.map((mutation, index) => ({
+        mutationId: mutation.mutationId,
+        status: 'applied' as const,
+        serverTimestamp: 123 + index,
+        sequence: 1 + index,
+        change: {
+          sequence: 1 + index,
+          serverTimestamp: 123 + index,
+          upserts: [],
+          deletes: [],
+        },
+      }))
     }),
   } as any
   const heartbeat = {
     handlePong: vi.fn(),
+    handleActivity: vi.fn(),
     startHeartbeat: vi.fn(),
     stopHeartbeat: vi.fn(),
   } as any
@@ -149,6 +152,10 @@ function createHandler(viewerCount = 0) {
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
+}
+
+async function waitForBatchWindow(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 20))
 }
 
 afterEach(() => {
@@ -187,6 +194,8 @@ describe('createWebSocketHandler', () => {
       })),
     )
 
+    await flushMicrotasks()
+    await waitForBatchWindow()
     await flushMicrotasks()
 
     const senderAfter = decodeMessages(sender.sent.slice(senderSentBefore))
@@ -266,6 +275,8 @@ describe('createWebSocketHandler', () => {
     )
 
     await flushMicrotasks()
+    await waitForBatchWindow()
+    await flushMicrotasks()
 
     const remoteAfter = decodeMessages(remotePeer.sent.slice(remoteSentBefore))
     expect(remoteAfter.filter((message) => message.type === 'ELEMENTS_CHANGED')).toHaveLength(1)
@@ -273,5 +284,43 @@ describe('createWebSocketHandler', () => {
       type: 'ELEMENTS_CHANGED',
       fromUserId: 'session-a-user',
     })
+  })
+
+  it('micro-batches quick mutation bursts into one processor batch', async () => {
+    const { handler, mutationProcessor } = createHandler()
+    const boardId = 'board-micro-batch'
+    const ws = new MockWebSocket()
+
+    await handler.onConnection(ws as any, makeRequest(boardId, 'session-a'))
+
+    const payloads = ['mut-1', 'mut-2', 'mut-3'].map((mutationId) =>
+      Buffer.from(JSON.stringify({
+        type: 'MUTATION',
+        mutation: {
+          mutationId,
+          boardId,
+          clientTimestamp: Date.now(),
+          operation: {
+            type: MutationType.UPDATE_ELEMENT,
+            elementId: `el-${mutationId}`,
+            fields: { x: 10 },
+          },
+        },
+      })),
+    )
+
+    for (const payload of payloads) {
+      ws.emit('message', payload)
+    }
+
+    await flushMicrotasks()
+    await waitForBatchWindow()
+    await flushMicrotasks()
+
+    expect(mutationProcessor.processBatch).toHaveBeenCalledTimes(1)
+    expect(mutationProcessor.processBatch.mock.calls[0][0]).toHaveLength(3)
+
+    const results = decodeMessages(ws.sent).filter((message) => message.type === 'MUTATION_RESULT')
+    expect(results).toHaveLength(3)
   })
 })
