@@ -90,92 +90,105 @@ export function createWebSocketHandler(
     const presenceRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
 
     ws.on('message', async (raw: Buffer) => {
-      const message = parseClientMessage(raw.toString())
-      if (!message) return
+      try {
+        const message = parseClientMessage(raw.toString())
+        if (!message) return
 
-      if (message.type === 'MUTATION') {
-        if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
-          ws.send(serialize({ type: 'RATE_LIMITED' }))
-          return
-        }
+        if (message.type === 'MUTATION') {
+          await boardStateService.touchViewerSession(boardId, sessionId)
 
-        if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
-          roomManager.broadcastToRoom(boardId, {
-            type: 'MUTATION',
-            mutation: message.mutation,
-            fromUserId: userId,
-          }, connectionId)
-
-          await mutationPubSub.publishMessage(boardId, {
-            type: 'MUTATION',
-            mutation: message.mutation,
-            fromUserId: userId,
-          }, connectionId)
-          ws.send(serialize({
-            type: 'MUTATION_RESULT',
-            result: {
-              mutationId: message.mutation.mutationId,
-              status: 'broadcast_only',
-              serverTimestamp: Date.now(),
-            },
-          }))
-          return
-        }
-
-        const result = await mutationProcessor.processMutation(message.mutation, userId)
-        ws.send(serialize({ type: 'MUTATION_RESULT', result }))
-
-        if (result.status === 'applied' && result.change) {
-          const serverMessage = {
-            type: 'ELEMENTS_CHANGED' as const,
-            change: result.change,
-            fromUserId: userId,
+          if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
+            ws.send(serialize({ type: 'RATE_LIMITED' }))
+            return
           }
 
-          roomManager.broadcastToRoom(boardId, serverMessage, connectionId)
-          await mutationPubSub.publishMessage(boardId, serverMessage, connectionId)
-        }
-        return
-      }
+          if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
+            roomManager.broadcastToRoom(boardId, {
+              type: 'MUTATION',
+              mutation: message.mutation,
+              fromUserId: userId,
+            }, connectionId)
 
-      if (message.type === 'PRESENCE') {
-        if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
+            await mutationPubSub.publishMessage(boardId, {
+              type: 'MUTATION',
+              mutation: message.mutation,
+              fromUserId: userId,
+            }, connectionId)
+            ws.send(serialize({
+              type: 'MUTATION_RESULT',
+              result: {
+                mutationId: message.mutation.mutationId,
+                status: 'broadcast_only',
+                serverTimestamp: Date.now(),
+              },
+            }))
+            return
+          }
+
+          const result = await mutationProcessor.processMutation(message.mutation, userId)
+          ws.send(serialize({ type: 'MUTATION_RESULT', result }))
+
+          if (result.status === 'applied' && result.change) {
+            const serverMessage = {
+              type: 'ELEMENTS_CHANGED' as const,
+              change: result.change,
+              fromUserId: userId,
+            }
+
+            roomManager.broadcastToRoom(boardId, serverMessage, connectionId)
+            await mutationPubSub.publishMessage(boardId, serverMessage, connectionId)
+          }
           return
         }
 
-        roomManager.broadcastToRoom(boardId, {
-          type: 'PRESENCE',
-          sessionId,
-          userId,
-          cursor: message.cursor,
-          selectedIds: message.selectedIds ?? [],
-          draggedIds: message.draggedIds ?? [],
-          focusedElementId: message.focusedElementId ?? null,
-          typingField: message.typingField ?? null,
-          userName,
-          avatarUrl,
-          color,
-        }, connectionId)
-        return
-      }
+        if (message.type === 'PRESENCE') {
+          await boardStateService.touchViewerSession(boardId, sessionId)
 
-      if (message.type === 'PONG') {
-        heartbeat.handlePong(boardId, connectionId)
-        return
+          if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
+            return
+          }
+
+          roomManager.broadcastToRoom(boardId, {
+            type: 'PRESENCE',
+            sessionId,
+            userId,
+            cursor: message.cursor,
+            selectedIds: message.selectedIds ?? [],
+            draggedIds: message.draggedIds ?? [],
+            focusedElementId: message.focusedElementId ?? null,
+            typingField: message.typingField ?? null,
+            userName,
+            avatarUrl,
+            color,
+          }, connectionId)
+          return
+        }
+
+        if (message.type === 'PONG') {
+          await boardStateService.touchViewerSession(boardId, sessionId)
+          heartbeat.handlePong(boardId, connectionId)
+          return
+        }
+      } catch (error) {
+        console.error(`[WS] message handling failed for board=${boardId} conn=${connectionId}`, error)
       }
     })
 
     ws.on('close', async () => {
-      roomManager.leaveRoom(boardId, connectionId)
-      await boardStateService.removeClient(boardId, userId, connectionId)
-      await boardStateService.removeViewerSession(boardId, sessionId)
+      try {
+        roomManager.leaveRoom(boardId, connectionId)
+        await boardStateService.removeClient(boardId, userId, connectionId)
+        await boardStateService.removeViewerSession(boardId, sessionId)
 
-      const roomSize = roomManager.getRoomSize(boardId)
-      if (roomSize <= 1) {
-        await boardStateService.persistBoard(boardId)
-      }
-      if (roomSize === 0) {
-        scheduleRoomFlush(boardId)
+        const globalClientCount = await boardStateService.getClientCount(boardId)
+        if (globalClientCount <= 1) {
+          await boardStateService.persistBoard(boardId)
+        }
+        if (globalClientCount === 0) {
+          scheduleRoomFlush(boardId)
+        }
+      } catch (error) {
+        console.error(`[WS] close handling failed for board=${boardId} conn=${connectionId}`, error)
       }
     })
   }

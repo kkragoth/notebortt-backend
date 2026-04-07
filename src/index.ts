@@ -19,8 +19,9 @@ runtime.wss.on('connection', (ws, request) => {
 })
 
 const persistenceWorker = runtime.boardPersistenceService.startWorker()
+const redisCleanupWorker = runtime.redisCleanupService.startWorker()
 const stopPreviewWorker = runtime.previewJobService.startWorker()
 runtime.heartbeat.startHeartbeat()
 
-export { app, server, persistenceWorker, stopPreviewWorker }
+export { app, server, persistenceWorker, redisCleanupWorker, stopPreviewWorker }
 export const { db, redis } = runtime

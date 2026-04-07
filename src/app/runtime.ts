@@ -8,6 +8,7 @@ import { createAuthService } from '../services/auth.service.js'
 import { createBoardPersistenceService } from '../services/board-persistence.service.js'
 import { createBoardPreviewRenderer } from '../services/board-preview.service.js'
 import { createBoardStateService } from '../services/board-state.service.js'
+import { createRedisCleanupService } from '../services/redis-cleanup.service.js'
 import { createBoardService } from '../services/board.service.js'
 import { createPreviewJobService } from '../services/preview-job.service.js'
 import { createUserService } from '../services/user.service.js'
@@ -30,6 +31,7 @@ export function createAppRuntime(config: AppConfig) {
   const boardService = createBoardService(db)
   const boardStateService = createBoardStateService(redis, db)
   const boardPersistenceService = createBoardPersistenceService(boardStateService)
+  const redisCleanupService = createRedisCleanupService(redis, boardStateService)
   const boardPreviewRenderer = createBoardPreviewRenderer()
   const previewJobService = createPreviewJobService(db, redis, boardPreviewRenderer)
   const mutationProcessor = createMutationProcessor(boardStateService)
@@ -51,6 +53,7 @@ export function createAppRuntime(config: AppConfig) {
     boardService,
     boardStateService,
     boardPersistenceService,
+    redisCleanupService,
     previewJobService,
     mutationProcessor,
     roomManager,

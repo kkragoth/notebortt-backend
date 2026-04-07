@@ -340,6 +340,12 @@ export function createBoardStateService(redis: Redis, db: Database) {
 
   async function persistBoard(boardId: string): Promise<void> {
     await withPersistLock(boardId, async () => {
+      const isLoaded = await redis.exists(boardSeqKey(boardId))
+      if (isLoaded !== 1) {
+        await redis.srem(DIRTY_BOARDS_KEY, boardId)
+        return
+      }
+
       const flushStartedAt = Date.now()
       const dirtySince = await getDirtySince(boardId)
       const snapshotSequence = await peekSequence(boardId)
