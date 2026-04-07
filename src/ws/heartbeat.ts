@@ -19,12 +19,11 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
   function checkStaleClients(maxMissedMs = 30000): void {
     const now = Date.now()
     const rooms = roomManager.getAllRooms()
-    for (const [boardId, room] of rooms) {
+    for (const [, room] of rooms) {
       for (const [connectionId, client] of room) {
         if (now - client.lastPong > maxMissedMs) {
           console.log(`[Heartbeat] Closing stale connection ${connectionId}`)
           client.ws.close(4408, 'Heartbeat timeout')
-          roomManager.leaveRoom(boardId, connectionId)
         }
       }
     }
@@ -35,10 +34,10 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
     if (client) client.lastPong = Date.now()
   }
 
-  function startHeartbeat(intervalMs = 15000): void {
+  function startHeartbeat(intervalMs = 30000): void {
     intervalHandle = setInterval(() => {
       sendPings()
-      setTimeout(() => checkStaleClients(), 5000)
+      setTimeout(() => checkStaleClients(intervalMs + 10000), 5000)
     }, intervalMs)
   }
 

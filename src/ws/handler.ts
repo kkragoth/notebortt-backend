@@ -81,8 +81,12 @@ export function createWebSocketHandler(
     await boardStateService.touchViewerSession(boardId, sessionId)
 
     const client = { ws, sessionId, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
+    const replacedClient = roomManager.joinRoom(boardId, client)
+    if (replacedClient) {
+      await boardStateService.removeClient(boardId, replacedClient.userId, replacedClient.connectionId)
+      replacedClient.ws.close(4001, 'Session replaced')
+    }
     sendExistingRoomMembers(ws, boardId, connectionId)
-    roomManager.joinRoom(boardId, client)
 
     await sendInitialState(ws, boardId, lastSequence, boardStateService, pubRedis)
 
@@ -176,9 +180,15 @@ export function createWebSocketHandler(
 
     ws.on('close', async () => {
       try {
-        roomManager.leaveRoom(boardId, connectionId)
+        const leaveResult = roomManager.leaveRoom(boardId, connectionId)
+        if (!leaveResult.client) {
+          return
+        }
+
         await boardStateService.removeClient(boardId, userId, connectionId)
-        await boardStateService.removeViewerSession(boardId, sessionId)
+        if (!leaveResult.sessionStillActive) {
+          await boardStateService.removeViewerSession(boardId, sessionId)
+        }
 
         const globalClientCount = await boardStateService.getClientCount(boardId)
         if (globalClientCount <= 1) {
