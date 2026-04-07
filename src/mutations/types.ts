@@ -39,4 +39,10 @@ export interface MutationResult {
   status: 'applied' | 'already_applied' | 'broadcast_only'
   serverTimestamp?: number
   sequence?: number
+  change?: {
+    sequence: number
+    serverTimestamp: number
+    upserts: BoardElement[]
+    deletes: string[]
+  }
 }

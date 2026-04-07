@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import type { RequestHandler } from 'express'
-import { createOptionalAuth, sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
+import { createOptionalAuth, getRequiredString, sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { createBoardBodySchema, createBoardInviteBodySchema, updateBoardSharePermissionBodySchema } from '../openapi/schemas.js'
 import type { BoardService } from '../services/board.service.js'
@@ -114,6 +114,42 @@ export function createBoardRouter(
     const elements = await boardStateService.getElements(id)
     const lastSequence = await boardStateService.peekSequence(id)
     res.json({ elements, lastSequence })
+  })
+
+  router.patch('/boards/:id/elements', optionalAuth, async (req, res) => {
+    const boardId = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
+    const { upserts, deletes } = req.body as {
+      upserts?: unknown
+      deletes?: unknown
+    }
+
+    if (!Array.isArray(upserts) || !Array.isArray(deletes) || (upserts.length === 0 && deletes.length === 0)) {
+      sendBadRequest(res, 'upserts and deletes must be arrays and at least one change is required')
+      return
+    }
+
+    const access = await requireBoardAccess(boardId, req.userId, shareToken)
+    if (!access.hasAccess || access.permission !== 'edit') {
+      sendForbidden(res, 'No edit access to this board')
+      return
+    }
+
+    await boardStateService.loadBoard(boardId)
+    const change = await boardStateService.applyChangeSet(boardId, {
+      upserts: upserts as any[],
+      deletes: deletes as string[],
+    })
+
+    void previewJobService.enqueue(boardId).catch((error) => {
+      console.error('[PreviewJob] enqueue after element patch failed', error)
+    })
+
+    res.json({
+      ok: true,
+      sequence: change?.sequence ?? await boardStateService.peekSequence(boardId),
+      serverTimestamp: change?.serverTimestamp ?? Date.now(),
+    })
   })
 
   router.post('/boards/:id/mutations', optionalAuth, async (req, res) => {
@@ -238,8 +274,29 @@ export function createBoardRouter(
       return
     }
 
-    const count = await boardStateService.getClientCount(id)
+    const count = await boardStateService.getActiveViewerCount(id)
     res.json({ count })
+  })
+
+  router.post('/boards/:id/presence', optionalAuth, async (req, res) => {
+    const userId = req.userId
+    const id = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
+    const sessionId = getRequiredString(req.body?.sessionId)
+
+    if (!sessionId) {
+      sendBadRequest(res, 'sessionId is required')
+      return
+    }
+
+    const { hasAccess } = await requireBoardAccess(id, userId, shareToken)
+    if (!hasAccess) {
+      sendForbidden(res)
+      return
+    }
+
+    await boardStateService.touchViewerSession(id, sessionId)
+    res.sendStatus(204)
   })
 
   router.post('/boards/:id/shares', authMiddleware, async (req, res) => {

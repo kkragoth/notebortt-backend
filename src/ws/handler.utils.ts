@@ -1,11 +1,8 @@
-import { and, asc, eq, gt } from 'drizzle-orm'
 import type Redis from 'ioredis'
 import type WebSocket from 'ws'
 import type { IncomingMessage } from 'http'
-import type { Database } from '../db/client.js'
-import { mutations as mutationsTable } from '../db/schema.js'
 import type { BoardStateService } from '../services/board-state.service.js'
-import { serialize, type MutationCatchUp } from './messages.js'
+import { serialize } from './messages.js'
 import type { UpgradeContext } from './upgrade.js'
 
 const REDIS_MUTATION_CHANNEL_PREFIX = 'board:'
@@ -37,31 +34,6 @@ export function extractWsContext(request: IncomingMessage): UpgradeContext | nul
   return (request as any).__wsContext ?? null
 }
 
-export async function queryCatchUpMutations(
-  db: Database,
-  boardId: string,
-  afterSequence: number,
-): Promise<MutationCatchUp[]> {
-  const rows = await db
-    .select()
-    .from(mutationsTable)
-    .where(and(eq(mutationsTable.boardId, boardId), gt(mutationsTable.sequence, afterSequence)))
-    .orderBy(asc(mutationsTable.sequence))
-
-  return rows.map((row) => ({
-    mutation: {
-      mutationId: row.id,
-      boardId: row.boardId,
-      clientTimestamp: row.clientTs.getTime(),
-      serverTimestamp: row.serverTs ? new Date(row.serverTs).getTime() : undefined,
-      sequence: row.sequence,
-      operation: row.operationData as any,
-    },
-    sequence: row.sequence,
-    serverTimestamp: row.serverTs ? new Date(row.serverTs).getTime() : Date.now(),
-  }))
-}
-
 export async function sendSnapshot(
   ws: WebSocket,
   boardId: string,
@@ -79,7 +51,6 @@ export async function sendInitialState(
   ws: WebSocket,
   boardId: string,
   lastSequence: number,
-  db: Database,
   boardStateService: BoardStateService,
   pubRedis: Redis,
 ): Promise<void> {
@@ -88,9 +59,9 @@ export async function sendInitialState(
     return
   }
 
-  const catchUpMutations = await queryCatchUpMutations(db, boardId, lastSequence)
-  if (catchUpMutations.length > 0) {
-    ws.send(serialize({ type: 'CATCH_UP', mutations: catchUpMutations }))
+  const catchUp = await boardStateService.getChangesAfter(boardId, lastSequence)
+  if (catchUp.complete && catchUp.changes.length > 0) {
+    ws.send(serialize({ type: 'CATCH_UP', changes: catchUp.changes }))
     return
   }
 

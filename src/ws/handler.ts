@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
 import type WebSocket from 'ws'
 import type Redis from 'ioredis'
-import type { Database } from '../db/client.js'
 import type { BoardStateService } from '../services/board-state.service.js'
 import type { MutationProcessor } from '../mutations/processor.js'
 import { parseClientMessage, serialize } from './messages.js'
@@ -21,7 +20,6 @@ export function createWebSocketHandler(
   boardStateService: BoardStateService,
   mutationProcessor: MutationProcessor,
   heartbeat: HeartbeatService,
-  db: Database,
   pubRedis: Redis,
 ) {
   const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager)
@@ -41,6 +39,7 @@ export function createWebSocketHandler(
       gracePeriodTimers.delete(boardId)
       const roomSize = roomManager.getRoomSize(boardId)
       if (roomSize > 0) return
+      await boardStateService.persistBoard(boardId)
       await boardStateService.flushBoard(boardId)
       mutationPubSub.unsubscribeFromBoard(boardId)
       console.log(`[WS] Flushed board ${boardId} from Redis after grace period`)
@@ -54,6 +53,7 @@ export function createWebSocketHandler(
       if (member.connectionId === excludeConnectionId) continue
       ws.send(serialize({
         type: 'USER_JOINED',
+        sessionId: member.sessionId,
         userId: member.userId,
         userName: member.userName,
         avatarUrl: member.avatarUrl ?? null,
@@ -69,7 +69,7 @@ export function createWebSocketHandler(
       return
     }
 
-    const { boardId, userId, userName, avatarUrl, lastSequence } = context
+    const { boardId, userId, userName, avatarUrl, lastSequence, sessionId } = context
     const connectionId = randomUUID()
     const color = getUserColor(userId)
 
@@ -79,11 +79,11 @@ export function createWebSocketHandler(
     await boardStateService.loadBoard(boardId)
     await boardStateService.trackClient(boardId, userId, connectionId)
 
-    const client = { ws, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
+    const client = { ws, sessionId, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
     sendExistingRoomMembers(ws, boardId, connectionId)
     roomManager.joinRoom(boardId, client)
 
-    await sendInitialState(ws, boardId, lastSequence, db, boardStateService, pubRedis)
+    await sendInitialState(ws, boardId, lastSequence, boardStateService, pubRedis)
 
     const mutationRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
     const presenceRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
@@ -105,7 +105,11 @@ export function createWebSocketHandler(
             fromUserId: userId,
           }, connectionId)
 
-          await mutationPubSub.publishMutation(boardId, message.mutation, userId, connectionId)
+          await mutationPubSub.publishMessage(boardId, {
+            type: 'MUTATION',
+            mutation: message.mutation,
+            fromUserId: userId,
+          }, connectionId)
           ws.send(serialize({
             type: 'MUTATION_RESULT',
             result: {
@@ -120,14 +124,15 @@ export function createWebSocketHandler(
         const result = await mutationProcessor.processMutation(message.mutation, userId)
         ws.send(serialize({ type: 'MUTATION_RESULT', result }))
 
-        if (result.status === 'applied') {
-          roomManager.broadcastToRoom(boardId, {
-            type: 'MUTATION',
-            mutation: message.mutation,
+        if (result.status === 'applied' && result.change) {
+          const serverMessage = {
+            type: 'ELEMENTS_CHANGED' as const,
+            change: result.change,
             fromUserId: userId,
-          }, connectionId)
+          }
 
-          await mutationPubSub.publishMutation(boardId, message.mutation, userId, connectionId)
+          roomManager.broadcastToRoom(boardId, serverMessage, connectionId)
+          await mutationPubSub.publishMessage(boardId, serverMessage, connectionId)
         }
         return
       }
@@ -139,6 +144,7 @@ export function createWebSocketHandler(
 
         roomManager.broadcastToRoom(boardId, {
           type: 'PRESENCE',
+          sessionId,
           userId,
           cursor: message.cursor,
           selectedIds: message.selectedIds ?? [],
@@ -160,6 +166,9 @@ export function createWebSocketHandler(
       await boardStateService.removeClient(boardId, userId, connectionId)
 
       const roomSize = roomManager.getRoomSize(boardId)
+      if (roomSize <= 1) {
+        await boardStateService.persistBoard(boardId)
+      }
       if (roomSize === 0) {
         scheduleRoomFlush(boardId)
       }

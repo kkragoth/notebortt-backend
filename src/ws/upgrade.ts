@@ -10,6 +10,7 @@ export interface UpgradeContext {
   userName: string
   avatarUrl: string | null
   lastSequence: number
+  sessionId: string
 }
 
 function parseBoardIdFromPath(pathname: string): string | null {
@@ -39,6 +40,11 @@ export function createUpgradeHandler(wss: WebSocketServer, authService: AuthServ
       }
 
       const lastSequence = parseLastSequence(url.searchParams.get('lastSequence'))
+      const sessionId = url.searchParams.get('sessionId')
+      if (!sessionId) {
+        socket.destroy()
+        return
+      }
 
       const payload = authService.verifyAccessToken(token)
       const user = await userService.getUserById(payload.sub)
@@ -53,6 +59,7 @@ export function createUpgradeHandler(wss: WebSocketServer, authService: AuthServ
         userName: user.name,
         avatarUrl: user.avatarUrl ?? null,
         lastSequence,
+        sessionId,
       }
 
       ;(request as any).__wsContext = context

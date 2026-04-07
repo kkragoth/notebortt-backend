@@ -108,6 +108,50 @@ describe('deleteElement', () => {
   })
 })
 
+describe('applyChangeSet', () => {
+  it('records canonical changes and supports catch-up replay', async () => {
+    await service.loadBoard(TEST_BOARD_ID)
+    const first = makeElement('el-1')
+    const second = makeElement('el-2', { x: 500 })
+
+    const applied = await service.applyChangeSet(TEST_BOARD_ID, {
+      upserts: [first, second],
+      deletes: [],
+    })
+
+    expect(applied?.sequence).toBe(1)
+    expect(applied?.upserts).toHaveLength(2)
+
+    const catchUp = await service.getChangesAfter(TEST_BOARD_ID, 0)
+    expect(catchUp.complete).toBe(true)
+    expect(catchUp.changes).toHaveLength(1)
+    expect(catchUp.changes[0]?.upserts.map((element) => element.id).sort()).toEqual(['el-1', 'el-2'])
+  })
+
+  it('cascades deletes from meta columns to nested columns and contained notes', async () => {
+    await service.loadBoard(TEST_BOARD_ID)
+
+    await service.applyChangeSet(TEST_BOARD_ID, {
+      upserts: [
+        makeElement('meta-1', { kind: 'META_COLUMN' }),
+        makeElement('column-1', { kind: 'COLUMN', metaContainerId: 'meta-1' }),
+        makeElement('note-1', { containerId: 'column-1', containerColumnId: 'a', containerOrder: 0 }),
+      ],
+      deletes: [],
+    })
+
+    const applied = await service.applyChangeSet(TEST_BOARD_ID, {
+      upserts: [],
+      deletes: ['meta-1'],
+    })
+
+    expect(applied?.deletes.sort()).toEqual(['column-1', 'meta-1', 'note-1'])
+    expect(await service.getElement(TEST_BOARD_ID, 'meta-1')).toBeNull()
+    expect(await service.getElement(TEST_BOARD_ID, 'column-1')).toBeNull()
+    expect(await service.getElement(TEST_BOARD_ID, 'note-1')).toBeNull()
+  })
+})
+
 describe('getSequence', () => {
   it('returns incrementing numbers on each call', async () => {
     await service.loadBoard(TEST_BOARD_ID)

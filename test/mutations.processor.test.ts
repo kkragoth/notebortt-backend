@@ -6,7 +6,7 @@ import { createBoardStateService } from '../src/services/board-state.service.js'
 import { createMutationProcessor } from '../src/mutations/processor.js'
 import { MutationType } from '../src/mutations/types.js'
 import type { Mutation } from '../src/mutations/types.js'
-import { boards, workspaces, users, elements, mutations } from '../src/db/schema.js'
+import { boards, workspaces, users, elements } from '../src/db/schema.js'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://notecanva:localdev@localhost:5432/notecanva'
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
@@ -14,7 +14,7 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
 const db = createDb(DATABASE_URL)
 const redis = createRedisClient(REDIS_URL)
 const boardStateService = createBoardStateService(redis, db)
-const mutationProcessor = createMutationProcessor(boardStateService, db)
+const mutationProcessor = createMutationProcessor(boardStateService)
 
 let TEST_BOARD_ID: string
 let TEST_USER_ID: string
@@ -76,7 +76,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await boardStateService.flushBoard(TEST_BOARD_ID)
 
-  await db.delete(mutations).where(eq(mutations.boardId, TEST_BOARD_ID))
   await db.delete(elements).where(eq(elements.boardId, TEST_BOARD_ID))
   await db.delete(boards).where(eq(boards.id, TEST_BOARD_ID))
   await db.delete(workspaces).where(eq(workspaces.id, TEST_WORKSPACE_ID))
@@ -86,7 +85,7 @@ afterAll(async () => {
 })
 
 describe('CREATE_ELEMENT', () => {
-  it('stores the element in Redis and Postgres', async () => {
+  it('stores the element in Redis and emits a canonical change', async () => {
     const elementId = makeElementId()
     const mutation = makeCreateMutation(elementId)
 
@@ -100,13 +99,8 @@ describe('CREATE_ELEMENT', () => {
     expect(inRedis).not.toBeNull()
     expect(inRedis?.x).toBe(100)
     expect(inRedis?.y).toBe(200)
-
-    const inPostgres = await db.select().from(elements).where(eq(elements.id, elementId)).limit(1)
-    expect(inPostgres).toHaveLength(1)
-    expect(inPostgres[0].type).toBe('NOTE')
-    const data = inPostgres[0].data as Record<string, unknown>
-    expect(data.x).toBe(100)
-    expect(data.y).toBe(200)
+    expect(result.change?.upserts).toHaveLength(1)
+    expect(result.change?.deletes).toEqual([])
   })
 })
 

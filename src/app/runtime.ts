@@ -3,9 +3,9 @@ import type { AppConfig } from '../config.js'
 import { createDb } from '../db/client.js'
 import { createAuthMiddleware } from '../middleware/auth.js'
 import { createRedisClient } from '../redis/client.js'
-import { createCompactionService } from '../mutations/compaction.js'
 import { createMutationProcessor } from '../mutations/processor.js'
 import { createAuthService } from '../services/auth.service.js'
+import { createBoardPersistenceService } from '../services/board-persistence.service.js'
 import { createBoardPreviewRenderer } from '../services/board-preview.service.js'
 import { createBoardStateService } from '../services/board-state.service.js'
 import { createBoardService } from '../services/board.service.js'
@@ -29,13 +29,13 @@ export function createAppRuntime(config: AppConfig) {
   const workspaceService = createWorkspaceService(db)
   const boardService = createBoardService(db)
   const boardStateService = createBoardStateService(redis, db)
+  const boardPersistenceService = createBoardPersistenceService(boardStateService)
   const boardPreviewRenderer = createBoardPreviewRenderer()
   const previewJobService = createPreviewJobService(db, redis, boardPreviewRenderer)
-  const mutationProcessor = createMutationProcessor(boardStateService, db)
-  const compactionService = createCompactionService(db, redis)
+  const mutationProcessor = createMutationProcessor(boardStateService)
   const roomManager = createBoardRoomManager()
   const heartbeat = createHeartbeatService(roomManager)
-  const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, db, pubRedis)
+  const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis)
   const upgradeHandler = createUpgradeHandler(wss, authService, userService)
 
   return {
@@ -50,9 +50,9 @@ export function createAppRuntime(config: AppConfig) {
     workspaceService,
     boardService,
     boardStateService,
+    boardPersistenceService,
     previewJobService,
     mutationProcessor,
-    compactionService,
     roomManager,
     heartbeat,
     wsHandler,

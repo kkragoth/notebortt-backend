@@ -1,24 +1,32 @@
 import type Redis from 'ioredis'
 import type { BoardRoomManager } from './room.js'
+import type { ServerMessage } from './messages.js'
 import { boardMutationChannel, extractBoardIdFromChannel, tryParseJson } from './handler.utils.js'
 
 export function createBoardMutationPubSub(pubRedis: Redis, roomManager: BoardRoomManager) {
   const subRedis = pubRedis.duplicate()
   const subscribedBoards = new Set<string>()
 
-  subRedis.on('message', (channel: string, message: string) => {
+  subRedis.on('message', (channel: string, payload: string) => {
     const boardId = extractBoardIdFromChannel(channel)
     if (!boardId) {
       return
     }
 
-    const parsed = tryParseJson(message)
+    const parsed = tryParseJson(payload)
     if (!parsed) {
       return
     }
 
-    const { mutation, fromUserId, senderConnectionId } = parsed
-    roomManager.broadcastToRoom(boardId, { type: 'MUTATION', mutation, fromUserId }, senderConnectionId)
+    const { message: serverMessage, senderConnectionId } = parsed as {
+      message?: ServerMessage
+      senderConnectionId?: string
+    }
+    if (!serverMessage) {
+      return
+    }
+
+    roomManager.broadcastToRoom(boardId, serverMessage, senderConnectionId)
   })
 
   function ensureSubscribedToBoard(boardId: string): void {
@@ -35,14 +43,14 @@ export function createBoardMutationPubSub(pubRedis: Redis, roomManager: BoardRoo
     subRedis.unsubscribe(boardMutationChannel(boardId))
   }
 
-  async function publishMutation(boardId: string, mutation: unknown, fromUserId: string, senderConnectionId: string) {
-    const payload = JSON.stringify({ mutation, fromUserId, senderConnectionId })
+  async function publishMessage(boardId: string, message: ServerMessage, senderConnectionId: string) {
+    const payload = JSON.stringify({ message, senderConnectionId })
     await pubRedis.publish(boardMutationChannel(boardId), payload)
   }
 
   return {
     ensureSubscribedToBoard,
     unsubscribeFromBoard,
-    publishMutation,
+    publishMessage,
   }
 }

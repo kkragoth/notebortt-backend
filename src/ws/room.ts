@@ -3,6 +3,7 @@ import { serialize, type ServerMessage } from './messages.js'
 
 export interface ConnectedClient {
   ws: WebSocket
+  sessionId: string
   userId: string
   userName: string
   avatarUrl?: string | null
@@ -38,6 +39,7 @@ export function createBoardRoomManager() {
     room.set(client.connectionId, client)
     broadcastToRoom(boardId, {
       type: 'USER_JOINED',
+      sessionId: client.sessionId,
       userId: client.userId,
       userName: client.userName,
       avatarUrl: client.avatarUrl ?? null,
@@ -51,7 +53,7 @@ export function createBoardRoomManager() {
     const client = room.get(connectionId)
     if (!client) return
     room.delete(connectionId)
-    broadcastToRoom(boardId, { type: 'USER_LEFT', userId: client.userId })
+    broadcastToRoom(boardId, { type: 'USER_LEFT', sessionId: client.sessionId, userId: client.userId })
     if (room.size === 0) rooms.delete(boardId)
   }
 

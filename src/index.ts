@@ -18,9 +18,9 @@ runtime.wss.on('connection', (ws, request) => {
   runtime.wsHandler.onConnection(ws, request)
 })
 
-const compactionTimer = runtime.compactionService.startCompactionInterval()
+const persistenceWorker = runtime.boardPersistenceService.startWorker()
 const stopPreviewWorker = runtime.previewJobService.startWorker()
 runtime.heartbeat.startHeartbeat()
 
-export { app, server, compactionTimer, stopPreviewWorker }
+export { app, server, persistenceWorker, stopPreviewWorker }
 export const { db, redis } = runtime

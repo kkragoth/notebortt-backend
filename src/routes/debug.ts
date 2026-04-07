@@ -6,6 +6,7 @@ import type { Database } from '../db/client.js'
 import { sendBadRequest } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { debugStateQuerySchema } from '../openapi/schemas.js'
+import type { BoardStateService } from '../services/board-state.service.js'
 
 const MAX_REDIS_KEYS = 100
 const DEFAULT_BOARD_SCAN_LIMIT = 20
@@ -14,6 +15,7 @@ interface DebugRouteDeps {
   config: Pick<AppConfig, 'nodeEnv'>
   db: Database
   redis: Redis
+  boardStateService: BoardStateService
 }
 
 async function scanRedisKeys(redis: Redis, pattern: string, limit: number): Promise<string[]> {
@@ -88,7 +90,7 @@ async function getDatabaseInfo(db: Database, limit: number) {
   }
 }
 
-export function createDebugRouter({ config, db, redis }: DebugRouteDeps) {
+export function createDebugRouter({ config, db, redis, boardStateService }: DebugRouteDeps) {
   const router = Router()
 
   router.use((_, res, next) => {
@@ -118,6 +120,9 @@ export function createDebugRouter({ config, db, redis }: DebugRouteDeps) {
       nodeEnv: config.nodeEnv,
       postgres,
       redis: redisInfo,
+      boardMetrics: parsed.data.boardId
+        ? await boardStateService.getBoardMetrics(parsed.data.boardId)
+        : null,
     })
   })
 
