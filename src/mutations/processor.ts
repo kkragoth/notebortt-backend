@@ -114,12 +114,10 @@ export function createMutationProcessor(boardStateService: BoardStateService) {
     }
 
     return withBoardMutationLock(boardId, async () => {
-      const isDuplicate = await boardStateService.isDuplicate(boardId, mutationId)
-      if (isDuplicate) {
+      const claimed = await boardStateService.tryMarkSeen(boardId, mutationId)
+      if (!claimed) {
         return { mutationId, status: 'already_applied' }
       }
-
-      await boardStateService.markSeen(boardId, mutationId)
       const changeSet = await toChangeSet(boardId, operation)
       const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet)
 

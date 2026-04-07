@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import type Redis from 'ioredis'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
@@ -7,7 +8,10 @@ import type { BoardElement } from '../mutations/types.js'
 const SEEN_TTL_SECONDS = 300
 const CHANGE_LOG_MAX_LENGTH = 2000
 const DIRTY_BOARDS_KEY = 'boards:dirty'
-const VIEWER_SESSION_TTL_MS = 15_000
+const VIEWER_SESSION_TTL_MS = 90_000
+const CLIENT_LEASE_TTL_SECONDS = 90
+const BOARD_LOAD_LOCK_TTL_MS = 30_000
+const BOARD_LOAD_LOCK_POLL_MS = 25
 
 function boardSeqKey(boardId: string): string {
   return `board:${boardId}:seq`
@@ -27,6 +31,10 @@ function boardChangeLogKey(boardId: string): string {
 
 function boardClientsKey(boardId: string): string {
   return `board:${boardId}:clients`
+}
+
+function boardClientLeaseKey(boardId: string, member: string): string {
+  return `board:${boardId}:client_lease:${member}`
 }
 
 function boardViewerSessionsKey(boardId: string): string {
@@ -53,6 +61,16 @@ function boardLastFlushDurationKey(boardId: string): string {
   return `board:${boardId}:last_flush_duration_ms`
 }
 
+function boardLoadLockKey(boardId: string): string {
+  return `board:${boardId}:load_lock`
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 export interface ElementChangeSet {
   upserts: BoardElement[]
   deletes: string[]
@@ -72,6 +90,11 @@ export interface BoardRuntimeMetrics {
   lastFlushedAt: number | null
 }
 
+export interface BoardSnapshot {
+  elements: Record<string, BoardElement>
+  sequence: number
+}
+
 function clientMember(userId: string, connectionId: string): string {
   return `${userId}:${connectionId}`
 }
@@ -88,6 +111,7 @@ function dbRowToBoardElement(row: typeof elements.$inferSelect): BoardElement {
 
 export function createBoardStateService(redis: Redis, db: Database) {
   const persistLocks = new Map<string, Promise<void>>()
+  const loadLocks = new Map<string, Promise<void>>()
 
   async function withPersistLock(boardId: string, task: () => Promise<void>): Promise<void> {
     const previous = persistLocks.get(boardId) ?? Promise.resolve()
@@ -108,6 +132,73 @@ export function createBoardStateService(redis: Redis, db: Database) {
         persistLocks.delete(boardId)
       }
     }
+  }
+
+  async function withLoadLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
+    const previous = loadLocks.get(boardId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    loadLocks.set(boardId, previous.then(() => current))
+
+    await previous
+
+    try {
+      return await task()
+    } finally {
+      release()
+      if (loadLocks.get(boardId) === current) {
+        loadLocks.delete(boardId)
+      }
+    }
+  }
+
+  async function waitForBoardLoad(boardId: string): Promise<void> {
+    const seqKey = boardSeqKey(boardId)
+    const lockKey = boardLoadLockKey(boardId)
+
+    while (true) {
+      const [lockExists, seqExists] = await Promise.all([
+        redis.exists(lockKey),
+        redis.exists(seqKey),
+      ])
+
+      if (seqExists === 1 || lockExists === 0) {
+        return
+      }
+
+      await sleep(BOARD_LOAD_LOCK_POLL_MS)
+    }
+  }
+
+  async function acquireBoardLoadLock(boardId: string): Promise<string | null> {
+    const token = randomUUID()
+    const acquired = await redis.set(
+      boardLoadLockKey(boardId),
+      token,
+      'PX',
+      BOARD_LOAD_LOCK_TTL_MS,
+      'NX',
+    )
+
+    return acquired === 'OK' ? token : null
+  }
+
+  async function releaseBoardLoadLock(boardId: string, token: string): Promise<void> {
+    await redis.eval(
+      `
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        end
+
+        return 0
+      `,
+      1,
+      boardLoadLockKey(boardId),
+      token,
+    )
   }
 
   function normalizeUpserts(upserts: BoardElement[]): BoardElement[] {
@@ -164,33 +255,51 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function loadBoard(boardId: string): Promise<number> {
-    const seqKey = boardSeqKey(boardId)
-    const alreadyLoaded = await redis.exists(seqKey)
+    return withLoadLock(boardId, async () => {
+      const seqKey = boardSeqKey(boardId)
+      while (true) {
+        const alreadyLoaded = await redis.exists(seqKey)
+        if (alreadyLoaded) {
+          return 0
+        }
 
-    if (alreadyLoaded) {
-      return 0
-    }
+        const lockToken = await acquireBoardLoadLock(boardId)
+        if (!lockToken) {
+          await waitForBoardLoad(boardId)
+          continue
+        }
 
-    const rows = await db.select().from(elements).where(eq(elements.boardId, boardId))
+        try {
+          const loadedAlready = await redis.exists(seqKey)
+          if (loadedAlready) {
+            return 0
+          }
 
-    const elementsKey = boardElementsKey(boardId)
+          const rows = await db.select().from(elements).where(eq(elements.boardId, boardId))
+          const elementsKey = boardElementsKey(boardId)
 
-    if (rows.length > 0) {
-      const pipeline = redis.pipeline()
-      for (const row of rows) {
-        const element = dbRowToBoardElement(row)
-        pipeline.hset(elementsKey, row.id, JSON.stringify(element))
+          if (rows.length > 0) {
+            const pipeline = redis.pipeline()
+            for (const row of rows) {
+              const element = dbRowToBoardElement(row)
+              pipeline.hset(elementsKey, row.id, JSON.stringify(element))
+            }
+            pipeline.set(seqKey, '0')
+            await pipeline.exec()
+          } else {
+            await redis.set(seqKey, '0')
+          }
+
+          return rows.length
+        } finally {
+          await releaseBoardLoadLock(boardId, lockToken)
+        }
       }
-      pipeline.set(seqKey, '0')
-      await pipeline.exec()
-    } else {
-      await redis.set(seqKey, '0')
-    }
-
-    return rows.length
+    })
   }
 
   async function getElements(boardId: string): Promise<Record<string, BoardElement>> {
+    await waitForBoardLoad(boardId)
     const raw = await redis.hgetall(boardElementsKey(boardId))
     const result: Record<string, BoardElement> = {}
 
@@ -202,50 +311,108 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function getElement(boardId: string, elementId: string): Promise<BoardElement | null> {
+    await waitForBoardLoad(boardId)
     const json = await redis.hget(boardElementsKey(boardId), elementId)
     if (json === null) return null
     return JSON.parse(json) as BoardElement
   }
 
   async function setElement(boardId: string, elementId: string, element: BoardElement): Promise<void> {
+    await waitForBoardLoad(boardId)
     await redis.hset(boardElementsKey(boardId), elementId, JSON.stringify(element))
   }
 
   async function deleteElement(boardId: string, elementId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     await redis.hdel(boardElementsKey(boardId), elementId)
   }
 
   async function getSequence(boardId: string): Promise<number> {
+    await waitForBoardLoad(boardId)
     return redis.incr(boardSeqKey(boardId))
   }
 
   async function peekSequence(boardId: string): Promise<number> {
+    await waitForBoardLoad(boardId)
     const raw = await redis.get(boardSeqKey(boardId))
     return raw ? parseInt(raw, 10) : 0
   }
 
   async function isDuplicate(boardId: string, mutationId: string): Promise<boolean> {
+    await waitForBoardLoad(boardId)
     const exists = await redis.exists(boardSeenKey(boardId, mutationId))
     return exists === 1
   }
 
+  async function tryMarkSeen(boardId: string, mutationId: string): Promise<boolean> {
+    await waitForBoardLoad(boardId)
+    const result = await redis.set(boardSeenKey(boardId, mutationId), '1', 'EX', SEEN_TTL_SECONDS, 'NX')
+    return result === 'OK'
+  }
+
   async function markSeen(boardId: string, mutationId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     await redis.setex(boardSeenKey(boardId, mutationId), SEEN_TTL_SECONDS, '1')
   }
 
   async function trackClient(boardId: string, userId: string, connectionId: string): Promise<void> {
-    await redis.sadd(boardClientsKey(boardId), clientMember(userId, connectionId))
+    await waitForBoardLoad(boardId)
+    const member = clientMember(userId, connectionId)
+    await redis
+      .pipeline()
+      .sadd(boardClientsKey(boardId), member)
+      .set(boardClientLeaseKey(boardId, member), '1', 'EX', CLIENT_LEASE_TTL_SECONDS)
+      .exec()
   }
 
   async function removeClient(boardId: string, userId: string, connectionId: string): Promise<void> {
-    await redis.srem(boardClientsKey(boardId), clientMember(userId, connectionId))
+    await waitForBoardLoad(boardId)
+    const member = clientMember(userId, connectionId)
+    await redis
+      .pipeline()
+      .srem(boardClientsKey(boardId), member)
+      .del(boardClientLeaseKey(boardId, member))
+      .exec()
+  }
+
+  async function pruneStaleClients(boardId: string): Promise<void> {
+    const members = await redis.smembers(boardClientsKey(boardId))
+    if (members.length === 0) {
+      return
+    }
+
+    const checks = redis.pipeline()
+    for (const member of members) {
+      checks.exists(boardClientLeaseKey(boardId, member))
+    }
+    const leaseResults = await checks.exec()
+    if (!leaseResults) {
+      return
+    }
+
+    const staleMembers: string[] = []
+    for (let i = 0; i < members.length; i++) {
+      const member = members[i]
+      if (!member) continue
+      const leaseExists = leaseResults[i]?.[1]
+      if (leaseExists !== 1) {
+        staleMembers.push(member)
+      }
+    }
+
+    if (staleMembers.length > 0) {
+      await redis.srem(boardClientsKey(boardId), ...staleMembers)
+    }
   }
 
   async function getClientCount(boardId: string): Promise<number> {
+    await waitForBoardLoad(boardId)
+    await pruneStaleClients(boardId)
     return redis.scard(boardClientsKey(boardId))
   }
 
   async function touchViewerSession(boardId: string, sessionId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     const now = Date.now()
     const minActiveTimestamp = now - VIEWER_SESSION_TTL_MS
     await redis
@@ -257,10 +424,12 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function removeViewerSession(boardId: string, sessionId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     await redis.zrem(boardViewerSessionsKey(boardId), sessionId)
   }
 
   async function getActiveViewerCount(boardId: string): Promise<number> {
+    await waitForBoardLoad(boardId)
     const now = Date.now()
     const minActiveTimestamp = now - VIEWER_SESSION_TTL_MS
     await redis.zremrangebyscore(boardViewerSessionsKey(boardId), 0, minActiveTimestamp)
@@ -268,10 +437,12 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function touchLastActive(boardId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     await redis.set(boardLastActiveKey(boardId), Date.now().toString())
   }
 
   async function applyChangeSet(boardId: string, changeSet: ElementChangeSet): Promise<PersistedElementChange | null> {
+    await waitForBoardLoad(boardId)
     const currentElements = await getElements(boardId)
     const deleteIds = collectCascadeDeleteIds(currentElements, changeSet.deletes)
     const deletedIdSet = new Set(deleteIds)
@@ -317,6 +488,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
     boardId: string,
     afterSequence: number,
   ): Promise<{ changes: PersistedElementChange[]; complete: boolean }> {
+    await waitForBoardLoad(boardId)
     const currentSequence = await peekSequence(boardId)
     if (afterSequence >= currentSequence) {
       return { changes: [], complete: true }
@@ -339,6 +511,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function persistBoard(boardId: string): Promise<void> {
+    await waitForBoardLoad(boardId)
     await withPersistLock(boardId, async () => {
       const isLoaded = await redis.exists(boardSeqKey(boardId))
       if (isLoaded !== 1) {
@@ -399,6 +572,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
   }
 
   async function getBoardMetrics(boardId: string): Promise<BoardRuntimeMetrics> {
+    await waitForBoardLoad(boardId)
     const [sequenceRaw, lastFlushedSequenceRaw, dirtySinceRaw, lastFlushedAtRaw, lastFlushDurationRaw] = await Promise.all([
       redis.get(boardSeqKey(boardId)),
       redis.get(boardLastFlushedSequenceKey(boardId)),
@@ -417,6 +591,43 @@ export function createBoardStateService(redis: Redis, db: Database) {
       dirtyAgeMs: dirtySince ? Math.max(0, now - dirtySince) : 0,
       lastFlushDurationMs: lastFlushDurationRaw ? parseInt(lastFlushDurationRaw, 10) : null,
       lastFlushedAt: lastFlushedAtRaw ? parseInt(lastFlushedAtRaw, 10) : null,
+    }
+  }
+
+  async function getSnapshot(boardId: string): Promise<BoardSnapshot> {
+    await waitForBoardLoad(boardId)
+
+    const results = await redis
+      .multi()
+      .hgetall(boardElementsKey(boardId))
+      .get(boardSeqKey(boardId))
+      .exec()
+
+    if (!results) {
+      return { elements: {}, sequence: 0 }
+    }
+
+    const [elementsResult, sequenceResult] = results
+
+    if (elementsResult?.[0]) {
+      throw elementsResult[0]
+    }
+
+    if (sequenceResult?.[0]) {
+      throw sequenceResult[0]
+    }
+
+    const rawElements = (elementsResult?.[1] as Record<string, string> | undefined) ?? {}
+    const rawSequence = sequenceResult?.[1]
+    const elementsSnapshot: Record<string, BoardElement> = {}
+
+    for (const [id, json] of Object.entries(rawElements)) {
+      elementsSnapshot[id] = JSON.parse(json) as BoardElement
+    }
+
+    return {
+      elements: elementsSnapshot,
+      sequence: typeof rawSequence === 'string' && rawSequence.length > 0 ? parseInt(rawSequence, 10) : 0,
     }
   }
 
@@ -459,6 +670,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
     getSequence,
     peekSequence,
     isDuplicate,
+    tryMarkSeen,
     markSeen,
     trackClient,
     removeClient,
@@ -472,6 +684,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
     persistBoard,
     persistDirtyBoards,
     getBoardMetrics,
+    getSnapshot,
     flushBoard,
   }
 }

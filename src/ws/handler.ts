@@ -4,16 +4,25 @@ import type WebSocket from 'ws'
 import type Redis from 'ioredis'
 import type { BoardStateService } from '../services/board-state.service.js'
 import type { MutationProcessor } from '../mutations/processor.js'
+import type { Mutation } from '../mutations/types.js'
 import { parseClientMessage, serialize } from './messages.js'
 import type { BoardRoomManager } from './room.js'
 import { getUserColor } from './room.js'
 import type { HeartbeatService } from './heartbeat.js'
 import { createBoardMutationPubSub } from './pubsub.js'
-import { extractWsContext, isRateLimited, sendInitialState, type RateLimitState } from './handler.utils.js'
+import { extractWsContext, isBoardGloballyIdle, isRateLimited, sendInitialState, type RateLimitState } from './handler.utils.js'
 
 const RATE_LIMIT_MAX_PER_SECOND = 30
 const PRESENCE_RATE_LIMIT_MAX_PER_SECOND = 20
 const ROOM_FLUSH_GRACE_PERIOD_MS = 30_000
+const MUTATION_BATCH_WINDOW_MS = 12
+const MUTATION_BATCH_MAX_SIZE = 25
+
+interface PendingMutationBatch {
+  mutations: Mutation[]
+  flushTimer: NodeJS.Timeout | null
+  flushing: boolean
+}
 
 export function createWebSocketHandler(
   roomManager: BoardRoomManager,
@@ -24,6 +33,7 @@ export function createWebSocketHandler(
 ) {
   const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager)
   const gracePeriodTimers = new Map<string, NodeJS.Timeout>()
+  const pendingMutationBatches = new Map<string, PendingMutationBatch>()
 
   function cancelGracePeriod(boardId: string): void {
     const timer = gracePeriodTimers.get(boardId)
@@ -39,6 +49,7 @@ export function createWebSocketHandler(
       gracePeriodTimers.delete(boardId)
       const roomSize = roomManager.getRoomSize(boardId)
       if (roomSize > 0) return
+      if (!(await isBoardGloballyIdle(boardId, boardStateService))) return
       await boardStateService.persistBoard(boardId)
       await boardStateService.flushBoard(boardId)
       mutationPubSub.unsubscribeFromBoard(boardId)
@@ -60,6 +71,101 @@ export function createWebSocketHandler(
         color: member.color,
       }))
     }
+  }
+
+  function getOrCreateBatch(connectionId: string): PendingMutationBatch {
+    const existing = pendingMutationBatches.get(connectionId)
+    if (existing) {
+      return existing
+    }
+
+    const created: PendingMutationBatch = {
+      mutations: [],
+      flushTimer: null,
+      flushing: false,
+    }
+    pendingMutationBatches.set(connectionId, created)
+    return created
+  }
+
+  async function publishAppliedChanges(
+    boardId: string,
+    userId: string,
+    connectionId: string,
+    results: Awaited<ReturnType<MutationProcessor['processBatch']>>,
+  ): Promise<void> {
+    for (const result of results) {
+      if (result.status !== 'applied' || !result.change) {
+        continue
+      }
+
+      await mutationPubSub.publishMessage(boardId, {
+        type: 'ELEMENTS_CHANGED',
+        fromUserId: userId,
+        change: result.change,
+      }, connectionId)
+    }
+  }
+
+  async function flushMutationBatch(
+    boardId: string,
+    userId: string,
+    connectionId: string,
+    ws: WebSocket,
+  ): Promise<void> {
+    const batchState = pendingMutationBatches.get(connectionId)
+    if (!batchState || batchState.flushing || batchState.mutations.length === 0) {
+      return
+    }
+
+    if (batchState.flushTimer) {
+      clearTimeout(batchState.flushTimer)
+      batchState.flushTimer = null
+    }
+
+    batchState.flushing = true
+    const batch = batchState.mutations.splice(0, batchState.mutations.length)
+
+    try {
+      const results = await mutationProcessor.processBatch(batch, userId)
+      for (const result of results) {
+        ws.send(serialize({ type: 'MUTATION_RESULT', result }))
+      }
+
+      await publishAppliedChanges(boardId, userId, connectionId, results)
+    } finally {
+      batchState.flushing = false
+      if (batchState.mutations.length > 0) {
+        batchState.flushTimer = setTimeout(() => {
+          void flushMutationBatch(boardId, userId, connectionId, ws)
+        }, MUTATION_BATCH_WINDOW_MS)
+      }
+    }
+  }
+
+  function enqueueMutation(
+    boardId: string,
+    userId: string,
+    connectionId: string,
+    ws: WebSocket,
+    mutation: Mutation,
+  ): void {
+    const batchState = getOrCreateBatch(connectionId)
+    batchState.mutations.push(mutation)
+
+    if (batchState.mutations.length >= MUTATION_BATCH_MAX_SIZE) {
+      void flushMutationBatch(boardId, userId, connectionId, ws)
+      return
+    }
+
+    if (batchState.flushTimer) {
+      return
+    }
+
+    batchState.flushTimer = setTimeout(() => {
+      batchState.flushTimer = null
+      void flushMutationBatch(boardId, userId, connectionId, ws)
+    }, MUTATION_BATCH_WINDOW_MS)
   }
 
   async function onConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
@@ -100,6 +206,8 @@ export function createWebSocketHandler(
 
         if (message.type === 'MUTATION') {
           await boardStateService.touchViewerSession(boardId, sessionId)
+          await boardStateService.trackClient(boardId, userId, connectionId)
+          heartbeat.handleActivity(boardId, connectionId)
 
           if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
             ws.send(serialize({ type: 'RATE_LIMITED' }))
@@ -107,12 +215,6 @@ export function createWebSocketHandler(
           }
 
           if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
-            roomManager.broadcastToRoom(boardId, {
-              type: 'MUTATION',
-              mutation: message.mutation,
-              fromUserId: userId,
-            }, connectionId)
-
             await mutationPubSub.publishMessage(boardId, {
               type: 'MUTATION',
               mutation: message.mutation,
@@ -129,24 +231,14 @@ export function createWebSocketHandler(
             return
           }
 
-          const result = await mutationProcessor.processMutation(message.mutation, userId)
-          ws.send(serialize({ type: 'MUTATION_RESULT', result }))
-
-          if (result.status === 'applied' && result.change) {
-            const serverMessage = {
-              type: 'ELEMENTS_CHANGED' as const,
-              change: result.change,
-              fromUserId: userId,
-            }
-
-            roomManager.broadcastToRoom(boardId, serverMessage, connectionId)
-            await mutationPubSub.publishMessage(boardId, serverMessage, connectionId)
-          }
+          enqueueMutation(boardId, userId, connectionId, ws, message.mutation)
           return
         }
 
         if (message.type === 'PRESENCE') {
           await boardStateService.touchViewerSession(boardId, sessionId)
+          await boardStateService.trackClient(boardId, userId, connectionId)
+          heartbeat.handleActivity(boardId, connectionId)
 
           if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
             return
@@ -170,6 +262,7 @@ export function createWebSocketHandler(
 
         if (message.type === 'PONG') {
           await boardStateService.touchViewerSession(boardId, sessionId)
+          await boardStateService.trackClient(boardId, userId, connectionId)
           heartbeat.handlePong(boardId, connectionId)
           return
         }
@@ -181,6 +274,12 @@ export function createWebSocketHandler(
     ws.on('close', async () => {
       try {
         const leaveResult = roomManager.leaveRoom(boardId, connectionId)
+        const batchState = pendingMutationBatches.get(connectionId)
+        if (batchState?.flushTimer) {
+          clearTimeout(batchState.flushTimer)
+        }
+        pendingMutationBatches.delete(connectionId)
+
         if (!leaveResult.client) {
           return
         }

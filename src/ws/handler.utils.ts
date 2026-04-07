@@ -40,11 +40,9 @@ export async function sendSnapshot(
   boardStateService: BoardStateService,
   pubRedis: Redis,
 ): Promise<void> {
-  const elements = await boardStateService.getElements(boardId)
-  const currentSeqRaw = await pubRedis.get(`board:${boardId}:seq`)
-  const lastSequence = currentSeqRaw ? parseInt(currentSeqRaw, 10) : 0
+  const snapshot = await boardStateService.getSnapshot(boardId)
 
-  ws.send(serialize({ type: 'SNAPSHOT', elements, lastSequence }))
+  ws.send(serialize({ type: 'SNAPSHOT', elements: snapshot.elements, lastSequence: snapshot.sequence }))
 }
 
 export async function sendInitialState(
@@ -66,6 +64,18 @@ export async function sendInitialState(
   }
 
   await sendSnapshot(ws, boardId, boardStateService, pubRedis)
+}
+
+export async function isBoardGloballyIdle(
+  boardId: string,
+  boardStateService: BoardStateService,
+): Promise<boolean> {
+  const [clientCount, viewerCount] = await Promise.all([
+    boardStateService.getClientCount(boardId),
+    boardStateService.getActiveViewerCount(boardId),
+  ])
+
+  return clientCount === 0 && viewerCount === 0
 }
 
 export function extractBoardIdFromChannel(channel: string): string | null {

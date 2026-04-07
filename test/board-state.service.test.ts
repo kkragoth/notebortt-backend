@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, afterAll } from 'vitest'
+import { describe, it, expect, afterEach, afterAll, vi } from 'vitest'
 import { createRedisClient } from '../src/redis/client.js'
 import { createBoardStateService } from '../src/services/board-state.service.js'
 import type { BoardElement } from '../src/mutations/types.js'
@@ -51,6 +51,95 @@ describe('loadBoard', () => {
 
     const seq = await redis.get(`board:${TEST_BOARD_ID}:seq`)
     expect(seq).toBe('1')
+  })
+})
+
+describe('loadBoard concurrency', () => {
+  it('does not clobber a newer in-memory mutation when a second load starts late', async () => {
+    const boardId = `race-board-${Date.now()}`
+    let releaseRows!: () => void
+    const rowsReady = new Promise<void>((resolve) => {
+      releaseRows = resolve
+    })
+
+    const delayedRow = {
+      id: 'el-race',
+      boardId,
+      type: 'NOTE',
+      data: {
+        x: 100,
+        y: 200,
+        zIndex: 1,
+      },
+      updatedAt: new Date(),
+    }
+
+    const blockingDb = {
+      select: () => blockingDb,
+      from: () => blockingDb,
+      where: async () => {
+        await rowsReady
+        return [delayedRow]
+      },
+    } as any
+
+    const raceService = createBoardStateService(redis, blockingDb)
+
+    try {
+      const firstLoad = raceService.loadBoard(boardId)
+      const secondLoad = raceService.loadBoard(boardId)
+      const mutation = raceService.applyChangeSet(boardId, {
+        upserts: [makeElement('el-race', { x: 999 })],
+        deletes: [],
+      })
+
+      releaseRows()
+
+      const [firstLoadCount, secondLoadCount, appliedChange] = await Promise.all([firstLoad, secondLoad, mutation])
+
+      expect(firstLoadCount).toBe(1)
+      expect(secondLoadCount).toBe(0)
+      expect(appliedChange?.sequence).toBe(1)
+      expect(await raceService.peekSequence(boardId)).toBe(1)
+      expect(await raceService.getElement(boardId, 'el-race')).toMatchObject({ x: 999 })
+    } finally {
+      await raceService.flushBoard(boardId)
+    }
+  })
+})
+
+describe('getSnapshot', () => {
+  it('reads elements and sequence from one Redis MULTI boundary', async () => {
+    const snapshotBoardId = `snapshot-board-${Date.now()}`
+    const element = makeElement('el-snapshot', { x: 12, y: 34 })
+    const redisMock = {
+      exists: vi.fn().mockResolvedValue(0),
+      hgetall: vi.fn(() => {
+        throw new Error('getSnapshot should use multi() for the snapshot read')
+      }),
+      get: vi.fn(() => {
+        throw new Error('getSnapshot should use multi() for the snapshot read')
+      }),
+      multi: vi.fn(() => ({
+        hgetall: vi.fn().mockReturnThis(),
+        get: vi.fn().mockReturnThis(),
+        exec: vi.fn().mockResolvedValue([
+          [null, { 'el-snapshot': JSON.stringify(element) }],
+          [null, '7'],
+        ]),
+      })),
+    } as any
+
+    const snapshotService = createBoardStateService(redisMock, mockDb)
+    const snapshot = await snapshotService.getSnapshot(snapshotBoardId)
+
+    expect(snapshot).toEqual({
+      elements: {
+        'el-snapshot': element,
+      },
+      sequence: 7,
+    })
+    expect(redisMock.multi).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -178,6 +267,21 @@ describe('isDuplicate / markSeen', () => {
 
     const after = await service.isDuplicate(TEST_BOARD_ID, mutationId)
     expect(after).toBe(true)
+  })
+})
+
+describe('tryMarkSeen', () => {
+  it('claims a mutation id only once under concurrent calls', async () => {
+    await service.loadBoard(TEST_BOARD_ID)
+    const mutationId = 'mut-concurrent-123'
+
+    const results = await Promise.all([
+      service.tryMarkSeen(TEST_BOARD_ID, mutationId),
+      service.tryMarkSeen(TEST_BOARD_ID, mutationId),
+    ])
+
+    expect(results.filter(Boolean)).toHaveLength(1)
+    expect(await service.isDuplicate(TEST_BOARD_ID, mutationId)).toBe(true)
   })
 })
 

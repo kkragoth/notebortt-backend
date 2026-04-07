@@ -10,6 +10,7 @@ describe('GET /debug/state', () => {
       config: { nodeEnv: 'production' } as const,
       db: {} as any,
       redis: {} as any,
+      boardStateService: {} as any,
     }))
 
     const response = await request(app).get('/debug/state')
@@ -44,6 +45,16 @@ describe('GET /debug/state', () => {
       config: { nodeEnv: 'development' } as const,
       db,
       redis,
+      boardStateService: {
+        getBoardMetrics: async () => ({
+          sequence: 4,
+          lastFlushedSequence: 4,
+          dirtySince: null,
+          dirtyAgeMs: 0,
+          lastFlushDurationMs: null,
+          lastFlushedAt: null,
+        }),
+      } as any,
     }))
 
     const response = await request(app).get('/debug/state?boardId=board-1')

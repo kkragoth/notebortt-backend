@@ -15,6 +15,7 @@ const db = createDb(DATABASE_URL)
 const redis = createRedisClient(REDIS_URL)
 const boardStateService = createBoardStateService(redis, db)
 const mutationProcessor = createMutationProcessor(boardStateService)
+const competingMutationProcessor = createMutationProcessor(boardStateService)
 
 let TEST_BOARD_ID: string
 let TEST_USER_ID: string
@@ -112,9 +113,27 @@ describe('Idempotency', () => {
     const first = await mutationProcessor.processMutation(mutation, TEST_USER_ID)
     expect(first.status).toBe('applied')
 
-    const second = await mutationProcessor.processMutation(mutation, TEST_USER_ID)
+    const second = await competingMutationProcessor.processMutation(mutation, TEST_USER_ID)
     expect(second.status).toBe('already_applied')
     expect(second.serverTimestamp).toBeUndefined()
+  })
+
+  it('applies a concurrent same mutationId request only once', async () => {
+    const elementId = makeElementId()
+    const mutationId = makeMutationId()
+    const mutation = makeCreateMutation(elementId, { mutationId })
+    const sequenceBefore = await boardStateService.peekSequence(TEST_BOARD_ID)
+
+    const [first, second] = await Promise.all([
+      mutationProcessor.processMutation(mutation, TEST_USER_ID),
+      competingMutationProcessor.processMutation(mutation, TEST_USER_ID),
+    ])
+
+    const results = [first, second]
+    expect(results.filter((result) => result.status === 'applied')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'already_applied')).toHaveLength(1)
+    expect(await boardStateService.peekSequence(TEST_BOARD_ID)).toBe(sequenceBefore + 1)
+    expect(await boardStateService.getElement(TEST_BOARD_ID, elementId)).not.toBeNull()
   })
 })
 

@@ -3,6 +3,7 @@ import { serialize } from './messages.js'
 
 export function createHeartbeatService(roomManager: BoardRoomManager) {
   let intervalHandle: NodeJS.Timeout | null = null
+  const DEFAULT_STALE_CLIENT_IDLE_MS = 90_000
 
   function sendPings(): void {
     const rooms = roomManager.getAllRooms()
@@ -16,7 +17,7 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
     }
   }
 
-  function checkStaleClients(maxMissedMs = 30000): void {
+  function checkStaleClients(maxMissedMs = DEFAULT_STALE_CLIENT_IDLE_MS): void {
     const now = Date.now()
     const rooms = roomManager.getAllRooms()
     for (const [, room] of rooms) {
@@ -30,6 +31,11 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
   }
 
   function handlePong(boardId: string, connectionId: string): void {
+    const client = roomManager.getClientByConnectionId(boardId, connectionId)
+    if (client) client.lastPong = Date.now()
+  }
+
+  function handleActivity(boardId: string, connectionId: string): void {
     const client = roomManager.getClientByConnectionId(boardId, connectionId)
     if (client) client.lastPong = Date.now()
   }
@@ -48,7 +54,7 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
     }
   }
 
-  return { handlePong, startHeartbeat, stopHeartbeat }
+  return { handlePong, handleActivity, startHeartbeat, stopHeartbeat }
 }
 
 export type HeartbeatService = ReturnType<typeof createHeartbeatService>

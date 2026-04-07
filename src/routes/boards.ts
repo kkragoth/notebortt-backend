@@ -3,6 +3,7 @@ import type { RequestHandler } from 'express'
 import { createOptionalAuth, getRequiredString, sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { createBoardBodySchema, createBoardInviteBodySchema, updateBoardSharePermissionBodySchema } from '../openapi/schemas.js'
+import { buildElementMutationBatch } from './boards.utils.js'
 import type { BoardService } from '../services/board.service.js'
 import type { WorkspaceService } from '../services/workspace.service.js'
 import type { BoardStateService } from '../services/board-state.service.js'
@@ -136,10 +137,15 @@ export function createBoardRouter(
     }
 
     await boardStateService.loadBoard(boardId)
-    const change = await boardStateService.applyChangeSet(boardId, {
-      upserts: upserts as any[],
-      deletes: deletes as string[],
-    })
+    const currentElements = await boardStateService.getElements(boardId)
+    const mutations = buildElementMutationBatch(
+      boardId,
+      currentElements,
+      upserts as unknown[],
+      deletes as unknown[],
+    )
+    const results = await mutationProcessor.processBatch(mutations, req.userId!)
+    const latestAppliedResult = [...results].reverse().find((result) => result.status === 'applied') ?? results.at(-1)
 
     void previewJobService.enqueue(boardId).catch((error) => {
       console.error('[PreviewJob] enqueue after element patch failed', error)
@@ -147,8 +153,8 @@ export function createBoardRouter(
 
     res.json({
       ok: true,
-      sequence: change?.sequence ?? await boardStateService.peekSequence(boardId),
-      serverTimestamp: change?.serverTimestamp ?? Date.now(),
+      sequence: latestAppliedResult?.sequence ?? await boardStateService.peekSequence(boardId),
+      serverTimestamp: latestAppliedResult?.serverTimestamp ?? Date.now(),
     })
   })
 
