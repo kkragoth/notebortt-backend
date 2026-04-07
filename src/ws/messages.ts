@@ -4,7 +4,14 @@ import type { PersistedElementChange } from '../services/board-state.service.js'
 // Client → Server
 export type ClientMessage =
   | { type: 'MUTATION'; mutation: Mutation }
-  | { type: 'PRESENCE'; cursor: { x: number; y: number } | null; selectedIds?: string[] }
+  | {
+      type: 'PRESENCE'
+      cursor: { x: number; y: number } | null
+      selectedIds?: string[]
+      draggedIds?: string[]
+      focusedElementId?: string | null
+      typingField?: 'title' | 'body' | null
+    }
   | { type: 'PONG' }
 
 // Server → Client
@@ -14,7 +21,19 @@ export type ServerMessage =
   | { type: 'CATCH_UP_FAILED'; reason: string }
   | { type: 'ELEMENTS_CHANGED'; change: PersistedElementChange; fromUserId: string }
   | { type: 'SNAPSHOT'; elements: Record<string, BoardElement>; lastSequence: number }
-  | { type: 'PRESENCE'; sessionId: string; userId: string; cursor: { x: number; y: number } | null; selectedIds: string[]; userName: string; avatarUrl: string | null; color: string }
+  | {
+      type: 'PRESENCE'
+      sessionId: string
+      userId: string
+      cursor: { x: number; y: number } | null
+      selectedIds: string[]
+      draggedIds?: string[]
+      focusedElementId?: string | null
+      typingField?: 'title' | 'body' | null
+      userName: string
+      avatarUrl: string | null
+      color: string
+    }
   | { type: 'USER_JOINED'; sessionId: string; userId: string; userName: string; avatarUrl: string | null; color: string }
   | { type: 'USER_LEFT'; sessionId: string; userId: string }
   | { type: 'UPGRADE'; message: string }

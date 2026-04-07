@@ -3,6 +3,28 @@ import { MutationType } from './types.js'
 import type { BoardElement, Mutation, MutationResult, Operation } from './types.js'
 
 export function createMutationProcessor(boardStateService: BoardStateService) {
+  const boardMutationLocks = new Map<string, Promise<void>>()
+
+  async function withBoardMutationLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
+    const previous = boardMutationLocks.get(boardId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    boardMutationLocks.set(boardId, previous.then(() => current))
+    await previous
+
+    try {
+      return await task()
+    } finally {
+      release()
+      if (boardMutationLocks.get(boardId) === current) {
+        boardMutationLocks.delete(boardId)
+      }
+    }
+  }
+
   async function toUpsert(
     boardId: string,
     elementId: string,
@@ -91,31 +113,33 @@ export function createMutationProcessor(boardStateService: BoardStateService) {
       return { mutationId, status: 'broadcast_only', serverTimestamp: Date.now() }
     }
 
-    const isDuplicate = await boardStateService.isDuplicate(boardId, mutationId)
-    if (isDuplicate) {
-      return { mutationId, status: 'already_applied' }
-    }
+    return withBoardMutationLock(boardId, async () => {
+      const isDuplicate = await boardStateService.isDuplicate(boardId, mutationId)
+      if (isDuplicate) {
+        return { mutationId, status: 'already_applied' }
+      }
 
-    await boardStateService.markSeen(boardId, mutationId)
-    const changeSet = await toChangeSet(boardId, operation)
-    const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet)
+      await boardStateService.markSeen(boardId, mutationId)
+      const changeSet = await toChangeSet(boardId, operation)
+      const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet)
 
-    if (!persistedChange) {
+      if (!persistedChange) {
+        return {
+          mutationId,
+          status: 'applied',
+          serverTimestamp: Date.now(),
+          sequence: await boardStateService.peekSequence(boardId),
+        }
+      }
+
       return {
         mutationId,
         status: 'applied',
-        serverTimestamp: Date.now(),
-        sequence: await boardStateService.peekSequence(boardId),
+        serverTimestamp: persistedChange.serverTimestamp,
+        sequence: persistedChange.sequence,
+        change: persistedChange,
       }
-    }
-
-    return {
-      mutationId,
-      status: 'applied',
-      serverTimestamp: persistedChange.serverTimestamp,
-      sequence: persistedChange.sequence,
-      change: persistedChange,
-    }
+    })
   }
 
   async function processBatch(mutations: Mutation[], userId: string): Promise<MutationResult[]> {

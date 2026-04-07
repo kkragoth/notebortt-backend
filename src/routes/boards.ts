@@ -299,6 +299,27 @@ export function createBoardRouter(
     res.sendStatus(204)
   })
 
+  router.delete('/boards/:id/presence/:sessionId', optionalAuth, async (req, res) => {
+    const userId = req.userId
+    const id = req.params['id'] as string
+    const shareToken = req.query['shareToken'] as string | undefined
+    const sessionId = req.params['sessionId'] as string
+
+    if (!sessionId) {
+      sendBadRequest(res, 'sessionId is required')
+      return
+    }
+
+    const { hasAccess } = await requireBoardAccess(id, userId, shareToken)
+    if (!hasAccess) {
+      sendForbidden(res)
+      return
+    }
+
+    await boardStateService.removeViewerSession(id, sessionId)
+    res.sendStatus(204)
+  })
+
   router.post('/boards/:id/shares', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const id = req.params['id'] as string

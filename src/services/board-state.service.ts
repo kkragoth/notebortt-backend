@@ -256,6 +256,10 @@ export function createBoardStateService(redis: Redis, db: Database) {
       .exec()
   }
 
+  async function removeViewerSession(boardId: string, sessionId: string): Promise<void> {
+    await redis.zrem(boardViewerSessionsKey(boardId), sessionId)
+  }
+
   async function getActiveViewerCount(boardId: string): Promise<number> {
     const now = Date.now()
     const minActiveTimestamp = now - VIEWER_SESSION_TTL_MS
@@ -454,6 +458,7 @@ export function createBoardStateService(redis: Redis, db: Database) {
     removeClient,
     getClientCount,
     touchViewerSession,
+    removeViewerSession,
     getActiveViewerCount,
     touchLastActive,
     applyChangeSet,

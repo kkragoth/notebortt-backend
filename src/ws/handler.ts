@@ -78,6 +78,7 @@ export function createWebSocketHandler(
 
     await boardStateService.loadBoard(boardId)
     await boardStateService.trackClient(boardId, userId, connectionId)
+    await boardStateService.touchViewerSession(boardId, sessionId)
 
     const client = { ws, sessionId, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
     sendExistingRoomMembers(ws, boardId, connectionId)
@@ -148,6 +149,9 @@ export function createWebSocketHandler(
           userId,
           cursor: message.cursor,
           selectedIds: message.selectedIds ?? [],
+          draggedIds: message.draggedIds ?? [],
+          focusedElementId: message.focusedElementId ?? null,
+          typingField: message.typingField ?? null,
           userName,
           avatarUrl,
           color,
@@ -164,6 +168,7 @@ export function createWebSocketHandler(
     ws.on('close', async () => {
       roomManager.leaveRoom(boardId, connectionId)
       await boardStateService.removeClient(boardId, userId, connectionId)
+      await boardStateService.removeViewerSession(boardId, sessionId)
 
       const roomSize = roomManager.getRoomSize(boardId)
       if (roomSize <= 1) {
