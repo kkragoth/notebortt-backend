@@ -31,8 +31,11 @@ dev:
     @echo "Redis Commander: http://localhost:8082"
     npm run dev
 
+dev-docker:
+    docker compose -f deploy/docker/docker-compose.yml --profile dev --profile debug up --build --remove-orphans
+
 infra-up:
-    docker compose -f deploy/docker/docker-compose.yml --profile debug up -d postgres redis adminer redis-commander
+    docker compose -f deploy/docker/docker-compose.yml --profile debug up -d postgres redis-realtime redis-jobs adminer redis-commander
     @echo "Waiting for services..."
     @sleep 2
     @docker compose -f deploy/docker/docker-compose.yml ps

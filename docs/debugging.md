@@ -37,7 +37,11 @@ just debug-ui-up
 
 Open `http://localhost:8082`.
 
-That UI is backed by the `redis` service from [deploy/docker/docker-compose.yml](/Users/kkragoth/dev/note-canva-backend/deploy/docker/docker-compose.yml).
+That UI is backed by the `redis-realtime` and `redis-jobs` services from [deploy/docker/docker-compose.yml](/Users/kkragoth/dev/note-canva-backend/deploy/docker/docker-compose.yml).
+Inside Redis Commander, use the preconfigured connections:
+
+- `realtime` for live board state / ws pubsub keys
+- `jobs` for preview/background queue keys
 
 ## App Debug Endpoint
 

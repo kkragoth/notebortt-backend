@@ -20,8 +20,9 @@ import { createWebSocketHandler } from '../ws/handler.js'
 
 export function createAppRuntime(config: AppConfig) {
   const db = createDb(config.databaseUrl)
-  const redis = createRedisClient(config.redisUrl)
-  const pubRedis = createRedisClient(config.redisUrl)
+  const redis = createRedisClient(config.redisRealtimeUrl)
+  const pubRedis = createRedisClient(config.redisRealtimeUrl)
+  const jobsRedis = createRedisClient(config.redisJobsUrl)
   const wss = new WebSocketServer({ noServer: true })
 
   const authService = createAuthService(config)
@@ -33,7 +34,7 @@ export function createAppRuntime(config: AppConfig) {
   const boardPersistenceService = createBoardPersistenceService(boardStateService)
   const redisCleanupService = createRedisCleanupService(redis, boardStateService)
   const boardPreviewRenderer = createBoardPreviewRenderer()
-  const previewJobService = createPreviewJobService(db, redis, boardPreviewRenderer)
+  const previewJobService = createPreviewJobService(db, jobsRedis, boardPreviewRenderer)
   const mutationProcessor = createMutationProcessor(boardStateService)
   const roomManager = createBoardRoomManager()
   const heartbeat = createHeartbeatService(roomManager)
@@ -45,6 +46,7 @@ export function createAppRuntime(config: AppConfig) {
     db,
     redis,
     pubRedis,
+    jobsRedis,
     wss,
     authService,
     authMiddleware,

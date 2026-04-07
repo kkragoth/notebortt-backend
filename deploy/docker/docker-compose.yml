@@ -15,10 +15,20 @@ services:
       timeout: 3s
       retries: 5
 
-  redis:
+  redis-realtime:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: redis-cli ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-jobs:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
     healthcheck:
       test: redis-cli ping
       interval: 5s
@@ -40,12 +50,46 @@ services:
     ports:
       - "8082:8081"
     environment:
-      REDIS_HOSTS: local:redis:6379
+      REDIS_HOSTS: realtime:redis-realtime:6379,jobs:redis-jobs:6379
     depends_on:
-      redis:
+      redis-realtime:
+        condition: service_healthy
+      redis-jobs:
         condition: service_healthy
     profiles:
       - debug
+
+  backend-dev:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../..:/app
+      - backend-node-modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-realtime:
+        condition: service_healthy
+      redis-jobs:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://notecanva:localdev@postgres:5432/notecanva
+      REDIS_REALTIME_URL: redis://redis-realtime:6379
+      REDIS_JOBS_URL: redis://redis-jobs:6379
+      PORT: "8080"
+      NODE_ENV: development
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:3005,http://localhost:3006,http://localhost:3007,http://localhost:3008,http://localhost:3009,http://localhost:3010
+      GOOGLE_CLIENT_ID: test-google-client-id
+      GOOGLE_CLIENT_SECRET: test-google-client-secret
+      GOOGLE_REDIRECT_URI: http://localhost:8080/auth/callback
+      JWT_SECRET: dev-jwt-secret-change-in-production-min16chars
+      JWT_EXPIRES_IN: 15m
+      REFRESH_TOKEN_EXPIRES_DAYS: "7"
+    profiles:
+      - dev
 
   backend:
     build:
@@ -56,16 +100,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-realtime:
+        condition: service_healthy
+      redis-jobs:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://notecanva:localdev@postgres:5432/notecanva
-      REDIS_URL: redis://redis:6379
+      REDIS_REALTIME_URL: redis://redis-realtime:6379
+      REDIS_JOBS_URL: redis://redis-jobs:6379
       PORT: "8080"
       NODE_ENV: development
-      CORS_ORIGIN: http://localhost:5173
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:3005,http://localhost:3006,http://localhost:3007,http://localhost:3008,http://localhost:3009,http://localhost:3010
     profiles:
       - full
 
 volumes:
   pgdata:
+  backend-node-modules:

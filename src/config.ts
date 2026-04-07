@@ -5,7 +5,9 @@ const envSchema = z.object({
     (s) => s.startsWith('postgres://') || s.startsWith('postgresql://'),
     { message: 'Must be a valid PostgreSQL connection string' }
   ),
-  REDIS_URL: z.string().default('redis://localhost:6379'),
+  REDIS_URL: z.string().optional(),
+  REDIS_REALTIME_URL: z.string().optional(),
+  REDIS_JOBS_URL: z.string().optional(),
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
@@ -19,7 +21,8 @@ const envSchema = z.object({
 
 export interface AppConfig {
   databaseUrl: string
-  redisUrl: string
+  redisRealtimeUrl: string
+  redisJobsUrl: string
   port: number
   nodeEnv: 'development' | 'production' | 'test'
   corsOrigin: string
@@ -33,9 +36,14 @@ export interface AppConfig {
 
 export function loadConfig(): AppConfig {
   const parsed = envSchema.parse(process.env)
+  const fallbackRedisUrl = parsed.REDIS_URL ?? 'redis://localhost:6379'
+  const redisRealtimeUrl = parsed.REDIS_REALTIME_URL ?? fallbackRedisUrl
+  const redisJobsUrl = parsed.REDIS_JOBS_URL ?? fallbackRedisUrl
+
   return {
     databaseUrl: parsed.DATABASE_URL,
-    redisUrl: parsed.REDIS_URL,
+    redisRealtimeUrl,
+    redisJobsUrl,
     port: parsed.PORT,
     nodeEnv: parsed.NODE_ENV,
     corsOrigin: parsed.CORS_ORIGIN,
