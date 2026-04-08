@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: notecanva
+      POSTGRES_USER: notecanva
+      POSTGRES_PASSWORD: change_me_db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notecanva"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-realtime:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_realtime_data:/data
+
+  redis-jobs:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_jobs_data:/data
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-realtime:
+        condition: service_started
+      redis-jobs:
+        condition: service_started
+
+  # Run manually: docker compose -f deploy/vps/docker-compose.yml --profile tools run --rm migrator
+  migrator:
+    image: node:22-alpine
+    working_dir: /app
+    profiles: ["tools"]
+    volumes:
+      - ../..:/app
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -lc "npm ci && npm run db:migrate"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["tools"]
+    volumes:
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+
+volumes:
+  postgres_data:
+  redis_realtime_data:
+  redis_jobs_data:
+  certbot_www:
+  letsencrypt:
