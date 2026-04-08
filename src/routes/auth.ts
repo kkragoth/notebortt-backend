@@ -19,6 +19,24 @@ const OAUTH_STATE_COOKIE_NAME = 'oauthState'
 const OAUTH_PKCE_COOKIE_NAME = 'oauthPkceVerifier'
 const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000
 
+function isProduction(config: Pick<AppConfig, 'nodeEnv'>): boolean {
+  return config.nodeEnv === 'production'
+}
+
+function buildCookieSecurityOptions(config: Pick<AppConfig, 'nodeEnv'>) {
+  if (isProduction(config)) {
+    return {
+      secure: true,
+      sameSite: 'none' as const,
+    }
+  }
+
+  return {
+    secure: false,
+    sameSite: 'lax' as const,
+  }
+}
+
 function parseAllowedOrigins(raw: string): string[] {
   return raw
     .split(',')
@@ -39,8 +57,7 @@ function buildRefreshTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'ref
   const maxAgeMs = config.refreshTokenExpiresDays * 24 * 60 * 60 * 1000
   return {
     httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'lax' as const,
+    ...buildCookieSecurityOptions(config),
     maxAge: maxAgeMs,
     path: REFRESH_TOKEN_COOKIE_PATH,
   }
@@ -67,8 +84,7 @@ function parseJwtExpiryToMs(raw: string): number {
 function buildAccessTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'jwtExpiresIn'>) {
   return {
     httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'lax' as const,
+    ...buildCookieSecurityOptions(config),
     maxAge: parseJwtExpiryToMs(config.jwtExpiresIn),
     path: '/',
   }
@@ -77,8 +93,7 @@ function buildAccessTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'jwtE
 function buildOAuthCookieOptions(config: Pick<AppConfig, 'nodeEnv'>) {
   return {
     httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'lax' as const,
+    ...buildCookieSecurityOptions(config),
     maxAge: OAUTH_COOKIE_MAX_AGE_MS,
     path: '/auth',
   }
