@@ -43,6 +43,8 @@ docker compose -f deploy/docker/docker-compose.yml restart nginx
 
 ## 5) Run migrations
 
+The migrator installs devDependencies explicitly so `drizzle-kit` is available even though the main app runs with production env.
+
 ```bash
 docker compose -f deploy/docker/docker-compose.yml --profile tools run --rm migrator
 ```

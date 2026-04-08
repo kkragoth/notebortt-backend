@@ -52,7 +52,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -lc "npm ci && npm run db:migrate"
+    command: sh -lc "npm ci --include=dev && npm run db:migrate"
 
   nginx:
     image: nginx:1.27-alpine
