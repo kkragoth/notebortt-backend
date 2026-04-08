@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express'
 import { sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { createWorkspaceBodySchema, createWorkspaceInvitationBodySchema } from '../openapi/schemas.js'
-import type { WorkspaceService } from '../services/workspace.service.js'
+import { WorkspaceInvitationError, type WorkspaceService } from '../services/workspace.service.js'
 
 export function createWorkspaceRouter(workspaceService: WorkspaceService, authMiddleware: RequestHandler) {
   const router = Router()
@@ -83,7 +83,24 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
     try {
       const workspace = await workspaceService.acceptInvitation(token, userId)
       res.json(workspace)
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceInvitationError) {
+        if (error.code === 'wrong_user') {
+          sendForbidden(res, 'Invitation is for a different email address')
+          return
+        }
+
+        if (error.code === 'not_found') {
+          sendNotFound(res, 'Invitation not found')
+          return
+        }
+
+        if (error.code === 'expired_or_used') {
+          res.status(410).json({ error: 'Invitation expired or already used' })
+          return
+        }
+      }
+
       sendNotFound(res, 'Invitation not found or already used')
     }
   })

@@ -60,6 +60,10 @@ export const authCallbackQuerySchema = z.object({
     description: 'Google OAuth authorization code',
     example: '4/0AQSTgQF...',
   }),
+  state: z.string().min(1).meta({
+    description: 'OAuth state parameter for CSRF protection',
+    example: 'R5B4s2g6hM6_Jm7q7w0A8A',
+  }),
 }).meta({ id: 'AuthCallbackQuery' })
 
 export const devLoginBodySchema = z.object({

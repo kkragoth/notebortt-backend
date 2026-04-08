@@ -1,8 +1,9 @@
+import { createHash, randomBytes } from 'crypto'
 import { Router } from 'express'
 import { OAuth2Client } from 'google-auth-library'
-import { eq, and, gt } from 'drizzle-orm'
+import { and, eq, gt } from 'drizzle-orm'
 import type { AppConfig } from '../config.js'
-import { sendBadRequest, sendNotFound } from '../lib/http.js'
+import { sendBadRequest, sendForbidden, sendNotFound } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { authCallbackQuerySchema, devLoginBodySchema } from '../openapi/schemas.js'
 import type { AuthService } from '../services/auth.service.js'
@@ -11,8 +12,28 @@ import type { Database } from '../db/client.js'
 import { refreshTokens } from '../db/schema.js'
 
 const GOOGLE_OAUTH_SCOPES = ['openid', 'email', 'profile']
+const ACCESS_TOKEN_COOKIE_NAME = 'accessToken'
 const REFRESH_TOKEN_COOKIE_NAME = 'refreshToken'
 const REFRESH_TOKEN_COOKIE_PATH = '/auth'
+const OAUTH_STATE_COOKIE_NAME = 'oauthState'
+const OAUTH_PKCE_COOKIE_NAME = 'oauthPkceVerifier'
+const OAUTH_COOKIE_MAX_AGE_MS = 10 * 60 * 1000
+
+function parseAllowedOrigins(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
+function isAllowedOrigin(config: Pick<AppConfig, 'corsOrigin'>, origin: string | undefined): boolean {
+  if (!origin) {
+    return false
+  }
+
+  const allowedOrigins = parseAllowedOrigins(config.corsOrigin)
+  return allowedOrigins.includes(origin)
+}
 
 function buildRefreshTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'refreshTokenExpiresDays'>) {
   const maxAgeMs = config.refreshTokenExpiresDays * 24 * 60 * 60 * 1000
@@ -22,6 +43,44 @@ function buildRefreshTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'ref
     sameSite: 'lax' as const,
     maxAge: maxAgeMs,
     path: REFRESH_TOKEN_COOKIE_PATH,
+  }
+}
+
+function parseJwtExpiryToMs(raw: string): number {
+  const match = raw.match(/^(\d+)([smhd])$/)
+  if (!match) {
+    return 15 * 60 * 1000
+  }
+
+  const amount = Number.parseInt(match[1] ?? '15', 10)
+  const unit = match[2] ?? 'm'
+  const unitMultiplier: Record<string, number> = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  }
+
+  return amount * (unitMultiplier[unit] ?? unitMultiplier.m)
+}
+
+function buildAccessTokenCookieOptions(config: Pick<AppConfig, 'nodeEnv' | 'jwtExpiresIn'>) {
+  return {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: 'lax' as const,
+    maxAge: parseJwtExpiryToMs(config.jwtExpiresIn),
+    path: '/',
+  }
+}
+
+function buildOAuthCookieOptions(config: Pick<AppConfig, 'nodeEnv'>) {
+  return {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: 'lax' as const,
+    maxAge: OAUTH_COOKIE_MAX_AGE_MS,
+    path: '/auth',
   }
 }
 
@@ -39,8 +98,20 @@ function extractGoogleUserInfo(payload: { email?: string; name?: string; picture
   return { email, name, avatarUrl, googleId }
 }
 
+function generateOAuthState(): string {
+  return randomBytes(24).toString('base64url')
+}
+
+function generatePkceVerifier(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+function toPkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url')
+}
+
 export function createAuthRouter(
-  config: Pick<AppConfig, 'googleClientId' | 'googleClientSecret' | 'googleRedirectUri' | 'nodeEnv' | 'refreshTokenExpiresDays' | 'corsOrigin'>,
+  config: Pick<AppConfig, 'googleClientId' | 'googleClientSecret' | 'googleRedirectUri' | 'nodeEnv' | 'refreshTokenExpiresDays' | 'jwtExpiresIn' | 'corsOrigin'>,
   authService: AuthService,
   userService: UserService,
   db: Database,
@@ -49,9 +120,20 @@ export function createAuthRouter(
   const oauth2Client = new OAuth2Client(config.googleClientId, config.googleClientSecret, config.googleRedirectUri)
 
   router.get('/google', (_req, res) => {
+    const state = generateOAuthState()
+    const verifier = generatePkceVerifier()
+    const challenge = toPkceChallenge(verifier)
+    const oauthCookieOptions = buildOAuthCookieOptions(config)
+
+    res.cookie(OAUTH_STATE_COOKIE_NAME, state, oauthCookieOptions)
+    res.cookie(OAUTH_PKCE_COOKIE_NAME, verifier, oauthCookieOptions)
+
     const url = oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: GOOGLE_OAUTH_SCOPES,
+      state,
+      code_challenge_method: 'S256' as any,
+      code_challenge: challenge,
     })
     res.redirect(url)
   })
@@ -64,12 +146,25 @@ export function createAuthRouter(
       return
     }
 
-    try {
-      const { tokens } = await oauth2Client.getToken(parsed.data.code)
-      const idToken = tokens.id_token
+    const stateFromCookie = req.cookies[OAUTH_STATE_COOKIE_NAME] as string | undefined
+    const verifier = req.cookies[OAUTH_PKCE_COOKIE_NAME] as string | undefined
 
+    if (!stateFromCookie || stateFromCookie !== parsed.data.state || !verifier) {
+      res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' })
+      res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' })
+      sendForbidden(res, 'Invalid OAuth state')
+      return
+    }
+
+    try {
+      const { tokens } = await oauth2Client.getToken({
+        code: parsed.data.code,
+        codeVerifier: verifier,
+      })
+
+      const idToken = tokens.id_token
       if (!idToken) {
-        res.status(400).json({ error: 'Missing id_token from Google' })
+        sendBadRequest(res, 'Missing id_token from Google')
         return
       }
 
@@ -77,7 +172,7 @@ export function createAuthRouter(
       const payload = ticket.getPayload()
 
       if (!payload) {
-        res.status(400).json({ error: 'Invalid Google token payload' })
+        sendBadRequest(res, 'Invalid Google token payload')
         return
       }
 
@@ -91,20 +186,30 @@ export function createAuthRouter(
 
       await db.insert(refreshTokens).values({ userId: user.id, tokenHash, expiresAt })
 
-      const cookieOptions = buildRefreshTokenCookieOptions(config)
-      res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, cookieOptions)
-      const redirectUrl = new URL('/callback', config.corsOrigin)
-      redirectUrl.searchParams.set('accessToken', accessToken)
+      const accessCookieOptions = buildAccessTokenCookieOptions(config)
+      const refreshCookieOptions = buildRefreshTokenCookieOptions(config)
+      res.cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, accessCookieOptions)
+      res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, refreshCookieOptions)
+      res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' })
+      res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' })
+
+      const redirectUrl = new URL('/callback', parseAllowedOrigins(config.corsOrigin)[0] ?? config.corsOrigin)
       res.redirect(redirectUrl.toString())
     } catch (err) {
       console.error('[Auth] OAuth callback error:', err)
+      res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' })
+      res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' })
       res.status(500).json({ error: 'Authentication failed' })
     }
   })
 
   router.post('/refresh', async (req, res) => {
-    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
+    if (!isAllowedOrigin(config, req.headers.origin)) {
+      sendForbidden(res, 'Untrusted origin')
+      return
+    }
 
+    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
     if (!refreshToken) {
       res.status(401).json({ error: 'Missing refresh token' })
       return
@@ -120,14 +225,13 @@ export function createAuthRouter(
       .limit(1)
 
     if (found.length === 0) {
-      const cookieOptions = buildRefreshTokenCookieOptions(config)
       res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH })
+      res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, { path: '/' })
       res.status(401).json({ error: 'Invalid or expired refresh token' })
       return
     }
 
     const existingToken = found[0]
-
     await db.delete(refreshTokens).where(eq(refreshTokens.id, existingToken.id))
 
     const newAccessToken = authService.generateAccessToken(existingToken.userId)
@@ -137,14 +241,21 @@ export function createAuthRouter(
 
     await db.insert(refreshTokens).values({ userId: existingToken.userId, tokenHash: newTokenHash, expiresAt })
 
-    const cookieOptions = buildRefreshTokenCookieOptions(config)
-    res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, cookieOptions)
-    res.json({ accessToken: newAccessToken })
+    const accessCookieOptions = buildAccessTokenCookieOptions(config)
+    const refreshCookieOptions = buildRefreshTokenCookieOptions(config)
+    res.cookie(ACCESS_TOKEN_COOKIE_NAME, newAccessToken, accessCookieOptions)
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, refreshCookieOptions)
+    res.json({ ok: true })
   })
 
   router.post('/dev-login', async (req, res) => {
     if (config.nodeEnv !== 'development') {
       sendNotFound(res, 'Not found')
+      return
+    }
+
+    if (!isAllowedOrigin(config, req.headers.origin)) {
+      sendForbidden(res, 'Untrusted origin')
       return
     }
 
@@ -167,20 +278,27 @@ export function createAuthRouter(
 
     await db.insert(refreshTokens).values({ userId: user.id, tokenHash, expiresAt })
 
-    const cookieOptions = buildRefreshTokenCookieOptions(config)
-    res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, cookieOptions)
-    res.json({ accessToken, user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } })
+    const accessCookieOptions = buildAccessTokenCookieOptions(config)
+    const refreshCookieOptions = buildRefreshTokenCookieOptions(config)
+    res.cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, accessCookieOptions)
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, refreshCookieOptions)
+    res.json({ user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } })
   })
 
   router.post('/logout', async (req, res) => {
-    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
+    if (!isAllowedOrigin(config, req.headers.origin)) {
+      sendForbidden(res, 'Untrusted origin')
+      return
+    }
 
+    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
     if (refreshToken) {
       const tokenHash = authService.hashRefreshToken(refreshToken)
       await db.delete(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash))
     }
 
     res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH })
+    res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, { path: '/' })
     res.sendStatus(200)
   })
 

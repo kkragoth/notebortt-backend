@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm'
+import { eq, and, gt } from 'drizzle-orm'
 import { randomBytes } from 'crypto'
 import type { Database } from '../db/client.js'
 import { workspaces, workspaceMembers, workspaceInvitations, users } from '../db/schema.js'
@@ -14,6 +14,20 @@ function buildInvitationExpiry(): Date {
 
 function generateInvitationToken(): string {
   return randomBytes(INVITATION_TOKEN_BYTES).toString('hex')
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+export class WorkspaceInvitationError extends Error {
+  constructor(
+    public code: 'not_found' | 'wrong_user' | 'expired_or_used' | 'user_not_found',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'WorkspaceInvitationError'
+  }
 }
 
 export function createWorkspaceService(db: Database) {
@@ -108,6 +122,17 @@ export function createWorkspaceService(db: Database) {
   }
 
   async function acceptInvitation(token: string, userId: string) {
+    const userRows = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+
+    const currentUserEmail = userRows[0]?.email
+    if (!currentUserEmail) {
+      throw new WorkspaceInvitationError('user_not_found', 'User not found')
+    }
+
     return db.transaction(async (tx) => {
       const invitations = await tx
         .select()
@@ -116,18 +141,34 @@ export function createWorkspaceService(db: Database) {
         .limit(1)
 
       const invitation = invitations[0]
-      if (!invitation) throw new Error('Invitation not found')
+      if (!invitation) {
+        throw new WorkspaceInvitationError('not_found', 'Invitation not found')
+      }
 
-      await tx
+      if (normalizeEmail(invitation.email) !== normalizeEmail(currentUserEmail)) {
+        throw new WorkspaceInvitationError('wrong_user', 'Invitation email does not match current user')
+      }
+
+      const now = new Date()
+      const acceptedRows = await tx
         .update(workspaceInvitations)
         .set({ status: 'accepted' })
-        .where(eq(workspaceInvitations.id, invitation.id))
+        .where(and(
+          eq(workspaceInvitations.id, invitation.id),
+          eq(workspaceInvitations.status, 'pending'),
+          gt(workspaceInvitations.expiresAt, now),
+        ))
+        .returning({ id: workspaceInvitations.id, expiresAt: workspaceInvitations.expiresAt })
+
+      if (acceptedRows.length === 0) {
+        throw new WorkspaceInvitationError('expired_or_used', 'Invitation is expired or already used')
+      }
 
       await tx.insert(workspaceMembers).values({
         workspaceId: invitation.workspaceId,
         userId,
         role: invitation.role,
-      })
+      }).onConflictDoNothing()
 
       const workspaceRows = await tx
         .select()

@@ -109,7 +109,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
             query: authCallbackQuerySchema,
           },
           responses: {
-            '302': { description: 'Redirects back to the frontend with an access token' },
+            '302': { description: 'Redirects back to the frontend after setting secure auth cookies' },
           },
         },
       },
@@ -122,7 +122,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
             },
           },
           responses: {
-            '200': { description: 'Returns access token and user profile' },
+            '200': { description: 'Sets secure auth cookies and returns user profile' },
           },
         },
       },
@@ -133,7 +133,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
             cookie: refreshTokenCookieSchema,
           },
           responses: {
-            '200': { description: 'Returns a fresh access token' },
+            '200': { description: 'Rotates auth cookies' },
             '401': { description: 'Missing or invalid refresh token' },
           },
         },

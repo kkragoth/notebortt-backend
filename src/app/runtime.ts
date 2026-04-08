@@ -39,7 +39,7 @@ export function createAppRuntime(config: AppConfig) {
   const roomManager = createBoardRoomManager()
   const heartbeat = createHeartbeatService(roomManager)
   const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis)
-  const upgradeHandler = createUpgradeHandler(wss, authService, userService)
+  const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService)
 
   return {
     config,

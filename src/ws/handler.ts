@@ -193,7 +193,7 @@ export function createWebSocketHandler(
       return
     }
 
-    const { boardId, userId, userName, avatarUrl, lastSequence, sessionId } = context
+    const { boardId, userId, userName, avatarUrl, permission, lastSequence, sessionId } = context
     const connectionId = randomUUID()
     const color = getUserColor(userId)
 
@@ -223,6 +223,11 @@ export function createWebSocketHandler(
         if (!message) return
 
         if (message.type === 'MUTATION') {
+          if (permission !== 'edit') {
+            ws.send(serialize({ type: 'ERROR', message: 'No edit access to this board' }))
+            return
+          }
+
           await refreshConnectionActivity(boardId, userId, sessionId, connectionId)
 
           if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {

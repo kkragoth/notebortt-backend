@@ -29,6 +29,14 @@ describe('auth middleware', () => {
     expect(res.body.userId).toBe('user-123')
   })
 
+  it('passes with valid accessToken cookie', async () => {
+    const res = await request(createApp())
+      .get('/protected')
+      .set('Cookie', 'accessToken=valid-token')
+    expect(res.status).toBe(200)
+    expect(res.body.userId).toBe('user-123')
+  })
+
   it('rejects request without Authorization header', async () => {
     const res = await request(createApp()).get('/protected')
     expect(res.status).toBe(401)

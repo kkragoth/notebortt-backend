@@ -83,6 +83,7 @@ function makeRequest(boardId: string, sessionId: string): IncomingMessage {
       userId: `${sessionId}-user`,
       userName: `User ${sessionId}`,
       avatarUrl: null,
+      permission: 'edit',
       lastSequence: 0,
       sessionId,
     },
