@@ -1,119 +1,92 @@
 services:
   postgres:
     image: postgres:17-alpine
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: notecanva
-      POSTGRES_USER: notecanva
-      POSTGRES_PASSWORD: localdev
+    restart: unless-stopped
+    env_file:
+      - ./env/postgres.env
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: pg_isready -U notecanva
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis-realtime:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: redis-cli ping
-      interval: 5s
-      timeout: 3s
-      retries: 5
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_realtime_data:/data
 
   redis-jobs:
     image: redis:7-alpine
-    ports:
-      - "6380:6379"
-    healthcheck:
-      test: redis-cli ping
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  adminer:
-    image: adminer:5
-    ports:
-      - "8081:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    profiles:
-      - debug
-
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    ports:
-      - "8082:8081"
-    environment:
-      REDIS_HOSTS: realtime:redis-realtime:6379,jobs:redis-jobs:6379
-    depends_on:
-      redis-realtime:
-        condition: service_healthy
-      redis-jobs:
-        condition: service_healthy
-    profiles:
-      - debug
-
-  backend-dev:
-    image: node:22-alpine
-    working_dir: /app
-    command: sh -c "npm ci && npm run dev"
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ../..:/app
-      - backend-node-modules:/app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis-realtime:
-        condition: service_healthy
-      redis-jobs:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://notecanva:localdev@postgres:5432/notecanva
-      REDIS_REALTIME_URL: redis://redis-realtime:6379
-      REDIS_JOBS_URL: redis://redis-jobs:6379
-      PORT: "8080"
-      NODE_ENV: development
-      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:3005,http://localhost:3006,http://localhost:3007,http://localhost:3008,http://localhost:3009,http://localhost:3010
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
-      JWT_SECRET: dev-jwt-secret-change-in-production-min16chars
-      JWT_EXPIRES_IN: 15m
-      REFRESH_TOKEN_EXPIRES_DAYS: "7"
-    profiles:
-      - dev
+      - redis_jobs_data:/data
 
   backend:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    env_file:
+      - ./env/backend.env
     depends_on:
       postgres:
         condition: service_healthy
       redis-realtime:
-        condition: service_healthy
+        condition: service_started
       redis-jobs:
+        condition: service_started
+
+  migrator:
+    image: node:22-alpine
+    working_dir: /app
+    profiles: ["tools"]
+    volumes:
+      - ../..:/app
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      postgres:
         condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://notecanva:localdev@postgres:5432/notecanva
-      REDIS_REALTIME_URL: redis://redis-realtime:6379
-      REDIS_JOBS_URL: redis://redis-jobs:6379
-      PORT: "8080"
-      NODE_ENV: development
-      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:3005,http://localhost:3006,http://localhost:3007,http://localhost:3008,http://localhost:3009,http://localhost:3010
-    profiles:
-      - full
+    command: sh -lc "npm ci && npm run db:migrate"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    env_file:
+      - ./env/nginx.env
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    command: >
+      /bin/sh -eu -c '
+      if [ -f "/etc/letsencrypt/live/$${API_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$${API_DOMAIN}/privkey.pem" ]; then
+        sed "s/__API_DOMAIN__/$${API_DOMAIN}/g" /etc/nginx/templates/https.conf.template > /etc/nginx/conf.d/default.conf;
+      else
+        sed "s/__API_DOMAIN__/$${API_DOMAIN}/g" /etc/nginx/templates/http.conf.template > /etc/nginx/conf.d/default.conf;
+      fi;
+      nginx -g "daemon off;"'
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["tools"]
+    volumes:
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
 
 volumes:
-  pgdata:
-  backend-node-modules:
+  postgres_data:
+  redis_realtime_data:
+  redis_jobs_data:
+  certbot_www:
+  letsencrypt:

@@ -5,7 +5,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 80;
-    server_name api.example.com;
+    server_name __API_DOMAIN__;
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -18,11 +18,10 @@ server {
 
 server {
     listen 443 ssl;
-    server_name api.example.com;
+    server_name __API_DOMAIN__;
 
-    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
-
+    ssl_certificate /etc/letsencrypt/live/__API_DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__API_DOMAIN__/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:10m;
@@ -34,8 +33,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket upgrade for /boards/:id/ws
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600;
