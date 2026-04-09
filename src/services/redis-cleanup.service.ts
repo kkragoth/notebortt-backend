@@ -192,7 +192,7 @@ export function createRedisCleanupService(
       }
 
       await boardStateService.persistBoard(boardId)
-      await boardStateService.flushBoard(boardId)
+      await boardStateService.flushBoard(boardId, { requireIdle: true })
       flushedBoardIds.push(boardId)
     }
 

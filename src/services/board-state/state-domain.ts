@@ -1,7 +1,22 @@
 import type Redis from 'ioredis'
 import type { BoardElement } from '../../mutations/types.js'
 import type { RuntimeMetrics } from '../../observability/metrics.js'
-import { ACTIVE_BOARDS_KEY, CHANGE_LOG_MAX_LENGTH, DIRTY_BOARDS_KEY, SEEN_TTL_SECONDS, boardChangeLogKey, boardDeletedElementIdsKey, boardDirtyElementIdsKey, boardDirtySinceKey, boardElementsKey, boardLastActiveKey, boardSeenKey, boardSeqKey } from './keys.js'
+import {
+  ACTIVE_BOARDS_KEY,
+  CHANGE_LOG_MAX_LENGTH,
+  DIRTY_BOARDS_BY_AGE_KEY,
+  DIRTY_BOARDS_KEY,
+  SEEN_TTL_SECONDS,
+  boardChangeLogKey,
+  boardDeletedElementIdsKey,
+  boardDirtyElementIdsKey,
+  boardDirtyEpochKey,
+  boardDirtySinceKey,
+  boardElementsKey,
+  boardLastActiveKey,
+  boardSeenKey,
+  boardSeqKey,
+} from './keys.js'
 import { collectCascadeDeleteIds, normalizeUpserts } from './state-utils.js'
 import type { ApplyChangeSetOptions, BoardSnapshot, ElementChangeSet, PersistedElementChange } from './types.js'
 
@@ -144,8 +159,10 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
     }
 
     pipeline.sadd(DIRTY_BOARDS_KEY, boardId)
+    pipeline.zadd(DIRTY_BOARDS_BY_AGE_KEY, 'NX', serverTimestamp, boardId)
     pipeline.sadd(ACTIVE_BOARDS_KEY, boardId)
     pipeline.setnx(boardDirtySinceKey(boardId), serverTimestamp.toString())
+    pipeline.incr(boardDirtyEpochKey(boardId))
     pipeline.set(boardLastActiveKey(boardId), serverTimestamp.toString())
     if (persistedChange.upserts.length > 0) {
       pipeline.sadd(dirtyElementIdsKey, ...persistedChange.upserts.map((element) => element.id))

@@ -29,6 +29,8 @@ async function createHarness(): Promise<Harness> {
     touchViewerSession: vi.fn().mockResolvedValue(undefined),
     removeClient: vi.fn().mockResolvedValue(undefined),
     removeViewerSession: vi.fn().mockResolvedValue(undefined),
+    getClientCount: vi.fn().mockResolvedValue(0),
+    persistBoard: vi.fn().mockResolvedValue(undefined),
     getSnapshot: vi.fn().mockResolvedValue({
       elements: { e1: { id: 'e1', kind: 'note', x: 0, y: 0, zIndex: 0, updatedAt: 1 } },
       sequence: 3,

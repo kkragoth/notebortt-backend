@@ -4,7 +4,16 @@ import type Redis from 'ioredis'
 import type { Database } from '../../db/client.js'
 import { elements } from '../../db/schema.js'
 import type { BoardElement } from '../../mutations/types.js'
-import { BOARD_LOAD_LOCK_POLL_MS, BOARD_LOAD_LOCK_TTL_MS, boardElementsKey, boardLoadLockKey, boardSeqKey, sleep } from './keys.js'
+import {
+  BOARD_EVICTION_LOCK_POLL_MS,
+  BOARD_LOAD_LOCK_POLL_MS,
+  BOARD_LOAD_LOCK_TTL_MS,
+  boardElementsKey,
+  boardEvictionLockKey,
+  boardLoadLockKey,
+  boardSeqKey,
+  sleep,
+} from './keys.js'
 
 function dbRowToBoardElement(row: typeof elements.$inferSelect): BoardElement {
   const data = row.data as Record<string, unknown>
@@ -41,15 +50,17 @@ export function createBoardLoadDomain(redis: Redis, db: Database) {
 
   async function waitForBoardLoad(boardId: string): Promise<void> {
     const seqKey = boardSeqKey(boardId)
-    const lockKey = boardLoadLockKey(boardId)
+    const loadLockKey = boardLoadLockKey(boardId)
+    const evictionLockKey = boardEvictionLockKey(boardId)
 
     while (true) {
-      const [lockExists, seqExists] = await Promise.all([
-        redis.exists(lockKey),
+      const [loadLockExists, seqExists, evictionLockExists] = await Promise.all([
+        redis.exists(loadLockKey),
         redis.exists(seqKey),
+        redis.exists(evictionLockKey),
       ])
 
-      if (seqExists === 1 || lockExists === 0) {
+      if (evictionLockExists === 0 && (seqExists === 1 || loadLockExists === 0)) {
         return
       }
 
@@ -88,7 +99,14 @@ export function createBoardLoadDomain(redis: Redis, db: Database) {
   async function loadBoard(boardId: string): Promise<number> {
     return withLoadLock(boardId, async () => {
       const seqKey = boardSeqKey(boardId)
+      const evictionLockKey = boardEvictionLockKey(boardId)
       while (true) {
+        const evictionInProgress = await redis.exists(evictionLockKey)
+        if (evictionInProgress === 1) {
+          await sleep(BOARD_EVICTION_LOCK_POLL_MS)
+          continue
+        }
+
         const alreadyLoaded = await redis.exists(seqKey)
         if (alreadyLoaded) {
           return 0
@@ -107,6 +125,10 @@ export function createBoardLoadDomain(redis: Redis, db: Database) {
           }
 
           const rows = await db.select().from(elements).where(eq(elements.boardId, boardId))
+          const loadedDuringRead = await redis.exists(seqKey)
+          if (loadedDuringRead) {
+            return 0
+          }
           const elementsKey = boardElementsKey(boardId)
 
           if (rows.length > 0) {

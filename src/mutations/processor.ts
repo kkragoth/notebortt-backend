@@ -10,6 +10,11 @@ interface CachedBoardContext {
   elementsById: Map<string, BoardElement>
 }
 
+interface ProcessMutationWithContextResult {
+  result: MutationResult
+  appliedCanonicalChange: boolean
+}
+
 export function createMutationProcessor(
   boardStateService: BoardStateService,
   options: MutationProcessorOptions = {},
@@ -175,51 +180,63 @@ export function createMutationProcessor(
     mutation: Mutation,
     _userId: string,
     context: CachedBoardContext,
-  ): Promise<MutationResult> {
+    writeMode: 'solo' | 'collab',
+  ): Promise<ProcessMutationWithContextResult> {
     const { mutationId, boardId, operation } = mutation
 
     if (operation.type === MutationType.MOVE_ELEMENTS && operation.transient) {
-      return { mutationId, status: 'broadcast_only', serverTimestamp: Date.now() }
+      return {
+        result: { mutationId, status: 'broadcast_only', serverTimestamp: Date.now() },
+        appliedCanonicalChange: false,
+      }
     }
 
     const claimed = await boardStateService.tryMarkSeen(boardId, mutationId)
     if (!claimed) {
-      return { mutationId, status: 'already_applied' }
+      return {
+        result: { mutationId, status: 'already_applied' },
+        appliedCanonicalChange: false,
+      }
     }
 
-    const writeMode = await boardStateService.getSyncWriteMode(boardId)
     const changeSet = toChangeSet(context, operation)
     const persistedChange = await boardStateService.applyChangeSet(boardId, changeSet, {
       trackChangeLog: writeMode === 'collab',
     })
 
-    if (writeMode === 'solo' && persistedChange) {
-      await boardStateService.persistBoard(boardId)
-    }
-
     if (!persistedChange) {
       return {
-        mutationId,
-        status: 'applied',
-        serverTimestamp: Date.now(),
-        sequence: await boardStateService.peekSequence(boardId),
+        result: {
+          mutationId,
+          status: 'applied',
+          serverTimestamp: Date.now(),
+          sequence: await boardStateService.peekSequence(boardId),
+        },
+        appliedCanonicalChange: false,
       }
     }
 
     return {
-      mutationId,
-      status: 'applied',
-      serverTimestamp: persistedChange.serverTimestamp,
-      sequence: persistedChange.sequence,
-      change: persistedChange,
+      result: {
+        mutationId,
+        status: 'applied',
+        serverTimestamp: persistedChange.serverTimestamp,
+        sequence: persistedChange.sequence,
+        change: persistedChange,
+      },
+      appliedCanonicalChange: true,
     }
   }
 
   async function processMutation(mutation: Mutation, userId: string): Promise<MutationResult> {
     return withBoardMutationLock(mutation.boardId, async () => {
       const context = await createCachedBoardContext(mutation.boardId, [mutation])
-      const result = await processMutationWithContext(mutation, userId, context)
+      const writeMode = await boardStateService.getSyncWriteMode(mutation.boardId)
+      const { result, appliedCanonicalChange } = await processMutationWithContext(mutation, userId, context, writeMode)
       applyPersistedChangeToContext(context, result)
+      if (writeMode === 'solo' && appliedCanonicalChange) {
+        await boardStateService.persistBoard(mutation.boardId)
+      }
       return result
     })
   }
@@ -242,10 +259,23 @@ export function createMutationProcessor(
     for (const [boardId, boardMutations] of byBoard) {
       await withBoardMutationLock(boardId, async () => {
         const context = await createCachedBoardContext(boardId, boardMutations.map((entry) => entry.mutation))
+        const writeMode = await boardStateService.getSyncWriteMode(boardId)
+        let shouldPersistSolo = false
         for (const entry of boardMutations) {
-          const result = await processMutationWithContext(entry.mutation, userId, context)
+          const { result, appliedCanonicalChange } = await processMutationWithContext(
+            entry.mutation,
+            userId,
+            context,
+            writeMode,
+          )
           applyPersistedChangeToContext(context, result)
+          if (writeMode === 'solo' && appliedCanonicalChange) {
+            shouldPersistSolo = true
+          }
           results[entry.index] = result
+        }
+        if (writeMode === 'solo' && shouldPersistSolo) {
+          await boardStateService.persistBoard(boardId)
         }
       })
     }

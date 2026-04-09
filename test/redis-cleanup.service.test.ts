@@ -47,7 +47,7 @@ describe('createRedisCleanupService', () => {
 
     expect(flushed).toContain(boardId)
     expect(boardStateService.persistBoard).toHaveBeenCalledWith(boardId)
-    expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId)
+    expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId, { requireIdle: true })
   })
 
   it('skips inactive boards that still have clients', async () => {
@@ -85,7 +85,7 @@ describe('createRedisCleanupService', () => {
 
     expect(flushed).toContain(boardId)
     expect(boardStateService.persistBoard).toHaveBeenCalledWith(boardId)
-    expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId)
+    expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId, { requireIdle: true })
   })
 
   it('deletes stale transient keys by idle time', async () => {

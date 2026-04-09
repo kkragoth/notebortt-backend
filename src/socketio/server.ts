@@ -184,6 +184,13 @@ export function createSocketIoRealtimeServer(
       crdtStore.clearRoom(boardId)
     }
 
+    async function persistBoardOnGlobalDrain(boardId: string): Promise<void> {
+      const globalClientCount = await deps.boardStateService.getClientCount(boardId)
+      if (globalClientCount <= 1) {
+        await deps.boardStateService.persistBoard(boardId)
+      }
+    }
+
     async function detachFromBoard(context: SocketBoardContext, broadcastLeave: boolean): Promise<void> {
       await deps.boardStateService.removeClient(context.boardId, context.userId, socket.id)
       await deps.boardStateService.removeViewerSession(context.boardId, context.sessionId)
@@ -194,6 +201,7 @@ export function createSocketIoRealtimeServer(
       }
       socket.leave(context.boardId)
       await cleanupBoardRealtimeStateIfEmpty(context.boardId)
+      await persistBoardOnGlobalDrain(context.boardId)
     }
 
     function cleanupConnectionState(): void {

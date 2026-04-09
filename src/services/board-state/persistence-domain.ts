@@ -6,14 +6,21 @@ import type { RuntimeMetrics } from '../../observability/metrics.js'
 import type { BoardElement } from '../../mutations/types.js'
 import {
   ACTIVE_BOARDS_KEY,
+  BOARD_EVICTION_LOCK_TTL_MS,
+  DIRTY_BOARDS_BY_AGE_KEY,
   DIRTY_BOARDS_KEY,
+  VIEWER_SESSION_TTL_MS,
+  boardClientsKey,
   boardDeletedElementIdsKey,
+  boardDirtyEpochKey,
   boardDirtyElementIdsKey,
   boardDirtySinceKey,
+  boardEvictionLockKey,
   boardElementsKey,
   boardLastFlushDurationKey,
   boardLastFlushedAtKey,
   boardLastFlushedSequenceKey,
+  boardViewerSessionsKey,
   boardSeqKey,
   sleep,
 } from './keys.js'
@@ -34,8 +41,18 @@ export interface PersistDirtyBoardsOptions {
   retryDelayMs?: number
 }
 
+export interface FlushBoardOptions {
+  requireIdle?: boolean
+}
+
 export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: PersistenceDomainDeps) {
-  const { waitForBoardLoad, getElements, peekSequence, metrics, enableIncrementalPersistence } = deps
+  const {
+    waitForBoardLoad,
+    getElements,
+    peekSequence,
+    metrics,
+    enableIncrementalPersistence,
+  } = deps
   const persistLocks = new Map<string, Promise<void>>()
 
   async function withPersistLock(boardId: string, task: () => Promise<void>): Promise<void> {
@@ -62,6 +79,37 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
   async function getDirtySince(boardId: string): Promise<number | null> {
     const raw = await redis.get(boardDirtySinceKey(boardId))
     return raw ? parseInt(raw, 10) : null
+  }
+
+  async function getDirtyEpoch(boardId: string): Promise<number> {
+    const raw = await redis.get(boardDirtyEpochKey(boardId))
+    if (!raw) {
+      return 0
+    }
+
+    const parsed = parseInt(raw, 10)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  async function acquireEvictionLock(boardId: string): Promise<string | null> {
+    const token = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const acquired = await redis.set(boardEvictionLockKey(boardId), token, 'PX', BOARD_EVICTION_LOCK_TTL_MS, 'NX')
+    return acquired === 'OK' ? token : null
+  }
+
+  async function releaseEvictionLock(boardId: string, token: string): Promise<void> {
+    await redis.eval(
+      `
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        end
+
+        return 0
+      `,
+      1,
+      boardEvictionLockKey(boardId),
+      token,
+    )
   }
 
   function toElementRow(boardId: string, element: BoardElement, serverTimestamp: Date) {
@@ -167,6 +215,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
         await redis
           .pipeline()
           .srem(DIRTY_BOARDS_KEY, boardId)
+          .zrem(DIRTY_BOARDS_BY_AGE_KEY, boardId)
           .srem(ACTIVE_BOARDS_KEY, boardId)
           .exec()
         return
@@ -175,26 +224,55 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
       const flushStartedAt = Date.now()
       const dirtySince = await getDirtySince(boardId)
       const snapshotSequence = await peekSequence(boardId)
+      const snapshotDirtyEpoch = await getDirtyEpoch(boardId)
       const serverTimestamp = new Date()
       const persistedCounts = enableIncrementalPersistence
         ? await persistBoardIncremental(boardId, serverTimestamp)
         : { upserts: await persistBoardFullSnapshot(boardId, serverTimestamp), deletes: 0 }
 
-      const latestSequence = await peekSequence(boardId)
-      if (latestSequence <= snapshotSequence) {
-        const flushCompletedAt = Date.now()
-        const pipeline = redis.pipeline()
-        pipeline.srem(DIRTY_BOARDS_KEY, boardId)
-        pipeline.del(boardDirtySinceKey(boardId))
-        pipeline.set(boardLastFlushedSequenceKey(boardId), snapshotSequence.toString())
-        pipeline.set(boardLastFlushedAtKey(boardId), flushCompletedAt.toString())
-        pipeline.set(boardLastFlushDurationKey(boardId), (flushCompletedAt - flushStartedAt).toString())
-        if (enableIncrementalPersistence) {
-          pipeline.del(boardDirtyElementIdsKey(boardId))
-          pipeline.del(boardDeletedElementIdsKey(boardId))
-        }
-        await pipeline.exec()
-        metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'pipeline.exec' })
+      const flushCompletedAt = Date.now()
+      const cleared = await redis.eval(
+        `
+          local currentEpoch = tonumber(redis.call('get', KEYS[1]) or '0')
+          local expectedEpoch = tonumber(ARGV[1])
+          if currentEpoch ~= expectedEpoch then
+            return 0
+          end
+
+          redis.call('srem', KEYS[2], ARGV[2])
+          redis.call('zrem', KEYS[3], ARGV[2])
+          redis.call('del', KEYS[4])
+          redis.call('set', KEYS[5], ARGV[3])
+          redis.call('set', KEYS[6], ARGV[4])
+          redis.call('set', KEYS[7], ARGV[5])
+
+          if ARGV[6] == '1' then
+            redis.call('del', KEYS[8])
+            redis.call('del', KEYS[9])
+          end
+
+          return 1
+        `,
+        9,
+        boardDirtyEpochKey(boardId),
+        DIRTY_BOARDS_KEY,
+        DIRTY_BOARDS_BY_AGE_KEY,
+        boardDirtySinceKey(boardId),
+        boardLastFlushedSequenceKey(boardId),
+        boardLastFlushedAtKey(boardId),
+        boardLastFlushDurationKey(boardId),
+        boardDirtyElementIdsKey(boardId),
+        boardDeletedElementIdsKey(boardId),
+        snapshotDirtyEpoch.toString(),
+        boardId,
+        snapshotSequence.toString(),
+        flushCompletedAt.toString(),
+        (flushCompletedAt - flushStartedAt).toString(),
+        enableIncrementalPersistence ? '1' : '0',
+      )
+      metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'eval' })
+
+      if (Number(cleared) === 1) {
         metrics.observeTiming('flush.duration_ms', flushCompletedAt - flushStartedAt)
         metrics.incrementCounter('flush.rows_persisted', persistedCounts.upserts + persistedCounts.deletes)
         metrics.logStructured('board.flush', {
@@ -208,16 +286,31 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
           deletes: persistedCounts.deletes,
         })
       } else {
+        const latestSequence = await peekSequence(boardId)
+        const latestDirtyEpoch = await getDirtyEpoch(boardId)
         metrics.logStructured('board.flush_skipped_clear', {
           boardId,
           snapshotSequence,
           latestSequence,
+          snapshotDirtyEpoch,
+          latestDirtyEpoch,
           incremental: enableIncrementalPersistence,
           upserts: persistedCounts.upserts,
           deletes: persistedCounts.deletes,
         })
       }
     })
+  }
+
+  async function isBoardIdleForFlush(boardId: string): Promise<boolean> {
+    const now = Date.now()
+    const minActiveTimestamp = now - VIEWER_SESSION_TTL_MS
+    await redis.zremrangebyscore(boardViewerSessionsKey(boardId), 0, minActiveTimestamp)
+    const [clientCount, viewerCount] = await Promise.all([
+      redis.scard(boardClientsKey(boardId)),
+      redis.zcard(boardViewerSessionsKey(boardId)),
+    ])
+    return clientCount === 0 && viewerCount === 0
   }
 
   async function getBoardMetrics(boardId: string): Promise<BoardRuntimeMetrics> {
@@ -248,11 +341,13 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
     const minDirtyAgeMs = typeof options === 'number' ? 0 : (options.minDirtyAgeMs ?? 0)
     const retryAttempts = typeof options === 'number' ? 1 : Math.max(1, options.retryAttempts ?? 3)
     const retryDelayMs = typeof options === 'number' ? 0 : Math.max(0, options.retryDelayMs ?? 250)
+    const now = Date.now()
+    const maxScore = minDirtyAgeMs > 0 ? (now - minDirtyAgeMs).toString() : '+inf'
     const [boardIds, dirtyBacklog] = await Promise.all([
-      redis.srandmember(DIRTY_BOARDS_KEY, limit),
-      redis.scard(DIRTY_BOARDS_KEY),
+      redis.zrangebyscore(DIRTY_BOARDS_BY_AGE_KEY, '-inf', maxScore, 'LIMIT', 0, limit),
+      redis.zcard(DIRTY_BOARDS_BY_AGE_KEY),
     ])
-    metrics.incrementCounter('redis.commands', 2, { category: 'state', command: 'srandmember_or_scard' })
+    metrics.incrementCounter('redis.commands', 2, { category: 'state', command: 'zrangebyscore_or_zcard' })
     metrics.logStructured('board.dirty_backlog', { dirtyBoards: dirtyBacklog, sampleSize: boardIds.length })
     const persisted: string[] = []
 
@@ -285,26 +380,41 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
     return persisted
   }
 
-  async function flushBoard(boardId: string): Promise<void> {
-    const pattern = `board:${boardId}:*`
-    const keys: string[] = []
-    let cursor = '0'
-
-    do {
-      const [nextCursor, found] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
-      cursor = nextCursor
-      keys.push(...found)
-    } while (cursor !== '0')
-
-    if (keys.length > 0) {
-      await redis.del(...keys)
+  async function flushBoard(boardId: string, options: FlushBoardOptions = {}): Promise<void> {
+    const requireIdle = options.requireIdle ?? false
+    const token = await acquireEvictionLock(boardId)
+    if (!token) {
+      return
     }
 
-    await redis
-      .pipeline()
-      .srem(DIRTY_BOARDS_KEY, boardId)
-      .srem(ACTIVE_BOARDS_KEY, boardId)
-      .exec()
+    try {
+      if (requireIdle && !(await isBoardIdleForFlush(boardId))) {
+        return
+      }
+
+      const pattern = `board:${boardId}:*`
+      const keys: string[] = []
+      let cursor = '0'
+
+      do {
+        const [nextCursor, found] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
+        cursor = nextCursor
+        keys.push(...found)
+      } while (cursor !== '0')
+
+      if (keys.length > 0) {
+        await redis.del(...keys)
+      }
+
+      await redis
+        .pipeline()
+        .srem(DIRTY_BOARDS_KEY, boardId)
+        .zrem(DIRTY_BOARDS_BY_AGE_KEY, boardId)
+        .srem(ACTIVE_BOARDS_KEY, boardId)
+        .exec()
+    } finally {
+      await releaseEvictionLock(boardId, token)
+    }
   }
 
   return {

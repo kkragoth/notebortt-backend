@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createDb } from '../src/db/client.js'
 import { createRedisClient } from '../src/redis/client.js'
@@ -234,6 +234,25 @@ describe('processBatch', () => {
       const inRedis = await boardStateService.getElement(TEST_BOARD_ID, id)
       expect(inRedis).not.toBeNull()
     }
+  })
+
+  it('persists once for a multi-mutation solo batch', async () => {
+    const idA = makeElementId()
+    const idB = makeElementId()
+    const idC = makeElementId()
+    const persistSpy = vi.spyOn(boardStateService, 'persistBoard')
+
+    const batch: Mutation[] = [
+      makeCreateMutation(idA),
+      makeCreateMutation(idB),
+      makeCreateMutation(idC),
+    ]
+
+    await mutationProcessor.processBatch(batch, TEST_USER_ID)
+
+    expect(persistSpy).toHaveBeenCalledTimes(1)
+    expect(persistSpy).toHaveBeenCalledWith(TEST_BOARD_ID)
+    persistSpy.mockRestore()
   })
 })
 
