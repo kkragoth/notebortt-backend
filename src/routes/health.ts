@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import type { Database } from '../db/client.js'
 import type Redis from 'ioredis'
 import { sql } from 'drizzle-orm'
+import { getOpenSocketIoConnections } from '../socketio/stats.js'
 
 const startTime = Date.now()
 
@@ -55,6 +56,7 @@ export function healthRoute(db: Database, redis: Redis) {
       postgres: postgresStatus,
       redis: redisStatus,
       uptime: uptimeSeconds(),
+      openWebSocketConnections: getOpenSocketIoConnections(),
     })
   }
 }

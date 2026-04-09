@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest'
 import express from 'express'
 import request from 'supertest'
 import { healthRoute } from '../src/routes/health.js'
+import { resetOpenSocketIoConnectionsForTests } from '../src/socketio/stats.js'
 
 describe('GET /health', () => {
   it('returns status ok with postgres and redis status', async () => {
+    resetOpenSocketIoConnectionsForTests()
     const app = express()
     const mockDb = { execute: async () => [{ now: new Date() }] } as any
     const mockRedis = { ping: async () => 'PONG' } as any
@@ -15,9 +17,11 @@ describe('GET /health', () => {
     expect(res.body.postgres).toBe('ok')
     expect(res.body.redis).toBe('ok')
     expect(res.body).toHaveProperty('uptime')
+    expect(res.body.openWebSocketConnections).toBe(0)
   })
 
   it('returns degraded when postgres is down', async () => {
+    resetOpenSocketIoConnectionsForTests()
     const app = express()
     const mockDb = { execute: async () => { throw new Error('connection refused') } } as any
     const mockRedis = { ping: async () => 'PONG' } as any
@@ -27,5 +31,6 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('degraded')
     expect(res.body.postgres).toBe('error')
     expect(res.body.redis).toBe('ok')
+    expect(res.body.openWebSocketConnections).toBe(0)
   })
 })
