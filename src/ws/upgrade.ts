@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'http'
 import type { Duplex } from 'stream'
+import { randomUUID } from 'crypto'
 import type { WebSocketServer } from 'ws'
 import type { AuthService } from '../services/auth.service.js'
 import type { BoardService } from '../services/board.service.js'
@@ -23,7 +24,8 @@ function parseBoardIdFromPath(pathname: string): string | null {
 }
 
 function parseLastSequence(raw: string | null): number {
-  return parseInt(raw ?? '0', 10)
+  const parsed = parseInt(raw ?? '0', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
 }
 
 function parseCookieHeader(raw: string | undefined): Record<string, string> {
@@ -45,7 +47,7 @@ function parseCookieHeader(raw: string | undefined): Record<string, string> {
   return result
 }
 
-function resolveAccessToken(request: IncomingMessage, url: URL): string | null {
+function resolveAccessToken(request: IncomingMessage): string | null {
   const cookieToken = parseCookieHeader(request.headers.cookie)[ACCESS_TOKEN_COOKIE_NAME]
   if (cookieToken) {
     return cookieToken
@@ -56,7 +58,22 @@ function resolveAccessToken(request: IncomingMessage, url: URL): string | null {
     return authHeader.slice(7)
   }
 
-  return url.searchParams.get('token')
+  return null
+}
+
+function parseAllowedOrigins(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
+function isTrustedOrigin(origin: string | undefined, allowedOrigins: Set<string>): boolean {
+  if (!origin) {
+    return false
+  }
+
+  return allowedOrigins.has(origin)
 }
 
 export function createUpgradeHandler(
@@ -64,10 +81,20 @@ export function createUpgradeHandler(
   authService: AuthService,
   userService: UserService,
   boardService: BoardService,
+  corsOrigin: string,
 ) {
+  const allowedOrigins = new Set(parseAllowedOrigins(corsOrigin))
+
   return async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
     try {
       const url = new URL(request.url!, `http://${request.headers.host}`)
+      const origin = request.headers.origin
+
+      if (!isTrustedOrigin(origin, allowedOrigins)) {
+        console.warn('[WS Upgrade] Rejected untrusted origin', { origin })
+        socket.destroy()
+        return
+      }
 
       const boardId = parseBoardIdFromPath(url.pathname)
       if (!boardId) {
@@ -76,14 +103,10 @@ export function createUpgradeHandler(
       }
 
       const lastSequence = parseLastSequence(url.searchParams.get('lastSequence'))
-      const sessionId = url.searchParams.get('sessionId')
-      if (!sessionId) {
-        socket.destroy()
-        return
-      }
+      const sessionId = randomUUID()
 
       const shareToken = url.searchParams.get('shareToken') ?? undefined
-      const token = resolveAccessToken(request, url)
+      const token = resolveAccessToken(request)
       let userId: string | undefined
 
       if (token) {
@@ -93,6 +116,7 @@ export function createUpgradeHandler(
 
       const access = await boardService.checkBoardAccess(boardId, userId, shareToken)
       if (!access.hasAccess) {
+        console.warn('[WS Upgrade] Rejected unauthorized board access', { boardId, userId: userId ?? null })
         socket.destroy()
         return
       }

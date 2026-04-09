@@ -44,6 +44,11 @@ function parseAllowedOrigins(raw: string): string[] {
     .filter((value) => value.length > 0)
 }
 
+function resolveFrontendOrigin(corsOrigin: string): string {
+  const allowedOrigins = parseAllowedOrigins(corsOrigin)
+  return allowedOrigins.find((origin) => origin.startsWith('https://')) ?? allowedOrigins[0] ?? corsOrigin
+}
+
 function isAllowedOrigin(config: Pick<AppConfig, 'corsOrigin'>, origin: string | undefined): boolean {
   if (!origin) {
     return false
@@ -208,7 +213,7 @@ export function createAuthRouter(
       res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' })
       res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' })
 
-      const redirectUrl = new URL('/callback', parseAllowedOrigins(config.corsOrigin)[0] ?? config.corsOrigin)
+      const redirectUrl = new URL('/callback', resolveFrontendOrigin(config.corsOrigin))
       res.redirect(redirectUrl.toString())
     } catch (err) {
       console.error('[Auth] OAuth callback error:', err)

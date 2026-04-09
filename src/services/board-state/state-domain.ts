@@ -1,15 +1,17 @@
 import type Redis from 'ioredis'
 import type { BoardElement } from '../../mutations/types.js'
-import { CHANGE_LOG_MAX_LENGTH, DIRTY_BOARDS_KEY, SEEN_TTL_SECONDS, boardChangeLogKey, boardDirtySinceKey, boardElementsKey, boardLastActiveKey, boardSeenKey, boardSeqKey } from './keys.js'
+import type { RuntimeMetrics } from '../../observability/metrics.js'
+import { ACTIVE_BOARDS_KEY, CHANGE_LOG_MAX_LENGTH, DIRTY_BOARDS_KEY, SEEN_TTL_SECONDS, boardChangeLogKey, boardDeletedElementIdsKey, boardDirtyElementIdsKey, boardDirtySinceKey, boardElementsKey, boardLastActiveKey, boardSeenKey, boardSeqKey } from './keys.js'
 import { collectCascadeDeleteIds, normalizeUpserts } from './state-utils.js'
 import type { ApplyChangeSetOptions, BoardSnapshot, ElementChangeSet, PersistedElementChange } from './types.js'
 
 interface StateDomainDeps {
   waitForBoardLoad: (boardId: string) => Promise<void>
+  metrics: RuntimeMetrics
 }
 
 export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
-  const { waitForBoardLoad } = deps
+  const { waitForBoardLoad, metrics } = deps
 
   async function getElements(boardId: string): Promise<Record<string, BoardElement>> {
     await waitForBoardLoad(boardId)
@@ -28,6 +30,28 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
     const json = await redis.hget(boardElementsKey(boardId), elementId)
     if (json === null) return null
     return JSON.parse(json) as BoardElement
+  }
+
+  async function getElementsByIds(boardId: string, elementIds: string[]): Promise<Map<string, BoardElement>> {
+    await waitForBoardLoad(boardId)
+    const result = new Map<string, BoardElement>()
+    if (elementIds.length === 0) {
+      return result
+    }
+
+    const raw = await redis.hmget(boardElementsKey(boardId), ...elementIds)
+    metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'hmget' })
+
+    for (let i = 0; i < elementIds.length; i += 1) {
+      const elementId = elementIds[i]
+      const json = raw[i]
+      if (!elementId || !json) {
+        continue
+      }
+      result.set(elementId, JSON.parse(json) as BoardElement)
+    }
+
+    return result
   }
 
   async function setElement(boardId: string, elementId: string, element: BoardElement): Promise<void> {
@@ -73,10 +97,16 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
     changeSet: ElementChangeSet,
     options: ApplyChangeSetOptions = {},
   ): Promise<PersistedElementChange | null> {
+    const startedAt = Date.now()
     await waitForBoardLoad(boardId)
     const trackChangeLog = options.trackChangeLog ?? options.trackChanges ?? true
-    const currentElements = await getElements(boardId)
-    const deleteIds = collectCascadeDeleteIds(currentElements, changeSet.deletes)
+    let deleteIds = [...changeSet.deletes]
+    if (changeSet.deletes.length > 0) {
+      const cascadeSource = options.baseElementsForCascadeDelete ?? (await getElements(boardId))
+      deleteIds = collectCascadeDeleteIds(cascadeSource, changeSet.deletes)
+      metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'hgetall' })
+    }
+
     const deletedIdSet = new Set(deleteIds)
     const upserts = normalizeUpserts(changeSet.upserts)
       .filter((element) => !deletedIdSet.has(element.id))
@@ -97,6 +127,8 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
 
     const pipeline = redis.pipeline()
     const elementsKey = boardElementsKey(boardId)
+    const dirtyElementIdsKey = boardDirtyElementIdsKey(boardId)
+    const deletedElementIdsKey = boardDeletedElementIdsKey(boardId)
 
     for (const element of persistedChange.upserts) {
       pipeline.hset(elementsKey, element.id, JSON.stringify(element))
@@ -112,9 +144,26 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
     }
 
     pipeline.sadd(DIRTY_BOARDS_KEY, boardId)
+    pipeline.sadd(ACTIVE_BOARDS_KEY, boardId)
     pipeline.setnx(boardDirtySinceKey(boardId), serverTimestamp.toString())
     pipeline.set(boardLastActiveKey(boardId), serverTimestamp.toString())
+    if (persistedChange.upserts.length > 0) {
+      pipeline.sadd(dirtyElementIdsKey, ...persistedChange.upserts.map((element) => element.id))
+      pipeline.srem(deletedElementIdsKey, ...persistedChange.upserts.map((element) => element.id))
+    }
+    if (persistedChange.deletes.length > 0) {
+      pipeline.sadd(deletedElementIdsKey, ...persistedChange.deletes)
+      pipeline.srem(dirtyElementIdsKey, ...persistedChange.deletes)
+    }
     await pipeline.exec()
+    metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'pipeline.exec' })
+    metrics.observeTiming('mutation.apply_change_set_ms', Date.now() - startedAt)
+    metrics.logStructured('mutation.change_set', {
+      boardId,
+      upserts: persistedChange.upserts.length,
+      deletes: persistedChange.deletes.length,
+      trackChangeLog,
+    })
 
     return persistedChange
   }
@@ -187,6 +236,7 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
     getElement,
     setElement,
     deleteElement,
+    getElementsByIds,
     getSequence,
     peekSequence,
     isDuplicate,

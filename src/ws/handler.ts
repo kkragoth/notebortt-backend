@@ -17,6 +17,9 @@ const PRESENCE_RATE_LIMIT_MAX_PER_SECOND = 20
 const ROOM_FLUSH_GRACE_PERIOD_MS = 30_000
 const MUTATION_BATCH_WINDOW_MS = 12
 const MUTATION_BATCH_MAX_SIZE = 25
+const MAX_INBOUND_MESSAGE_BYTES = 128 * 1024
+const DEFAULT_PRESENCE_WRITE_THROTTLE_MS = 3_000
+const DEFAULT_PRESENCE_WRITE_JITTER_MS = 400
 
 interface PendingMutationBatch {
   mutations: Mutation[]
@@ -28,16 +31,26 @@ interface FlushBatchOptions {
   sendAcks: boolean
 }
 
+interface WebSocketHandlerOptions {
+  presenceWriteThrottleMs?: number
+  presenceWriteJitterMs?: number
+}
+
 export function createWebSocketHandler(
   roomManager: BoardRoomManager,
   boardStateService: BoardStateService,
   mutationProcessor: MutationProcessor,
   heartbeat: HeartbeatService,
   pubRedis: Redis,
+  options: WebSocketHandlerOptions = {},
 ) {
+  const presenceWriteThrottleMs = options.presenceWriteThrottleMs ?? DEFAULT_PRESENCE_WRITE_THROTTLE_MS
+  const presenceWriteJitterMs = options.presenceWriteJitterMs ?? DEFAULT_PRESENCE_WRITE_JITTER_MS
   const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager)
   const gracePeriodTimers = new Map<string, NodeJS.Timeout>()
   const pendingMutationBatches = new Map<string, PendingMutationBatch>()
+  const lastPresenceWriteAtByConnection = new Map<string, number>()
+  const presenceJitterByConnection = new Map<string, number>()
 
   function cancelGracePeriod(boardId: string): void {
     const timer = gracePeriodTimers.get(boardId)
@@ -175,14 +188,33 @@ export function createWebSocketHandler(
     }, MUTATION_BATCH_WINDOW_MS)
   }
 
+  function shouldWritePresence(connectionId: string): boolean {
+    const now = Date.now()
+    const lastWriteAt = lastPresenceWriteAtByConnection.get(connectionId) ?? 0
+    const jitter = presenceJitterByConnection.get(connectionId)
+      ?? Math.floor(Math.random() * (presenceWriteJitterMs + 1))
+    presenceJitterByConnection.set(connectionId, jitter)
+    const effectiveWindow = Math.max(0, presenceWriteThrottleMs + jitter)
+
+    if ((now - lastWriteAt) >= effectiveWindow) {
+      lastPresenceWriteAtByConnection.set(connectionId, now)
+      return true
+    }
+
+    return false
+  }
+
   async function refreshConnectionActivity(
     boardId: string,
     userId: string,
     sessionId: string,
     connectionId: string,
+    forceWrite = false,
   ): Promise<void> {
-    await boardStateService.touchViewerSession(boardId, sessionId)
-    await boardStateService.trackClient(boardId, userId, connectionId)
+    if (forceWrite || shouldWritePresence(connectionId)) {
+      await boardStateService.touchViewerSession(boardId, sessionId)
+      await boardStateService.trackClient(boardId, userId, connectionId)
+    }
     heartbeat.handleActivity(boardId, connectionId)
   }
 
@@ -219,8 +251,18 @@ export function createWebSocketHandler(
 
     ws.on('message', async (raw: Buffer) => {
       try {
+        if (raw.length > MAX_INBOUND_MESSAGE_BYTES) {
+          ws.close(1009, 'Message too large')
+          return
+        }
+
         const message = parseClientMessage(raw.toString())
-        if (!message) return
+        if (!message) {
+          if (ws.readyState === 1) {
+            ws.send(serialize({ type: 'ERROR', message: 'Invalid WebSocket message' }))
+          }
+          return
+        }
 
         if (message.type === 'MUTATION') {
           if (permission !== 'edit') {
@@ -280,8 +322,7 @@ export function createWebSocketHandler(
         }
 
         if (message.type === 'PONG') {
-          await boardStateService.touchViewerSession(boardId, sessionId)
-          await boardStateService.trackClient(boardId, userId, connectionId)
+          await refreshConnectionActivity(boardId, userId, sessionId, connectionId, true)
           heartbeat.handlePong(boardId, connectionId)
           return
         }
@@ -298,6 +339,8 @@ export function createWebSocketHandler(
         }
         await flushMutationBatch(boardId, userId, connectionId, ws, { sendAcks: false })
         pendingMutationBatches.delete(connectionId)
+        lastPresenceWriteAtByConnection.delete(connectionId)
+        presenceJitterByConnection.delete(connectionId)
 
         const leaveResult = roomManager.leaveRoom(boardId, connectionId)
         if (!leaveResult.client) {

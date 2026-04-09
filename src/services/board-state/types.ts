@@ -29,4 +29,5 @@ export interface BoardSnapshot {
 export interface ApplyChangeSetOptions {
   trackChangeLog?: boolean
   trackChanges?: boolean
+  baseElementsForCascadeDelete?: Record<string, BoardElement>
 }

@@ -17,6 +17,11 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_EXPIRES_IN: z.string().default('15m'),
   REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().default(7),
+  ENABLE_INCREMENTAL_PERSISTENCE: z.coerce.boolean().default(true),
+  ENABLE_TARGETED_MUTATION_READS: z.coerce.boolean().default(true),
+  PRESENCE_WRITE_THROTTLE_MS: z.coerce.number().int().min(0).default(3000),
+  PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
+  ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
 })
 
 export interface AppConfig {
@@ -32,6 +37,11 @@ export interface AppConfig {
   jwtSecret: string
   jwtExpiresIn: string
   refreshTokenExpiresDays: number
+  enableIncrementalPersistence: boolean
+  enableTargetedMutationReads: boolean
+  presenceWriteThrottleMs: number
+  presenceWriteJitterMs: number
+  enableCleanupActiveIndex: boolean
 }
 
 export function loadConfig(): AppConfig {
@@ -53,5 +63,10 @@ export function loadConfig(): AppConfig {
     jwtSecret: parsed.JWT_SECRET,
     jwtExpiresIn: parsed.JWT_EXPIRES_IN,
     refreshTokenExpiresDays: parsed.REFRESH_TOKEN_EXPIRES_DAYS,
+    enableIncrementalPersistence: parsed.ENABLE_INCREMENTAL_PERSISTENCE,
+    enableTargetedMutationReads: parsed.ENABLE_TARGETED_MUTATION_READS,
+    presenceWriteThrottleMs: parsed.PRESENCE_WRITE_THROTTLE_MS,
+    presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
+    enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
   }
 }

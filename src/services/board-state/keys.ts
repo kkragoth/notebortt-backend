@@ -1,6 +1,7 @@
 export const SEEN_TTL_SECONDS = 300
 export const CHANGE_LOG_MAX_LENGTH = 2000
 export const DIRTY_BOARDS_KEY = 'boards:dirty'
+export const ACTIVE_BOARDS_KEY = 'boards:active'
 export const VIEWER_SESSION_TTL_MS = 90_000
 export const CLIENT_LEASE_TTL_SECONDS = 90
 export const COLLAB_MODE_COOLDOWN_MS = 90_000
@@ -37,6 +38,14 @@ export function boardViewerSessionsKey(boardId: string): string {
 
 export function boardLastActiveKey(boardId: string): string {
   return `board:${boardId}:last_active`
+}
+
+export function boardDirtyElementIdsKey(boardId: string): string {
+  return `board:${boardId}:dirty_element_ids`
+}
+
+export function boardDeletedElementIdsKey(boardId: string): string {
+  return `board:${boardId}:deleted_element_ids`
 }
 
 export function boardDirtySinceKey(boardId: string): string {

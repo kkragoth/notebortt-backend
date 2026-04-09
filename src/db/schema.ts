@@ -26,7 +26,9 @@ export const refreshTokens = pgTable('refresh_tokens', {
   tokenHash: text('token_hash').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-})
+}, (table) => [
+  index('idx_refresh_tokens_hash_expires').on(table.tokenHash, table.expiresAt),
+])
 
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -43,6 +45,7 @@ export const workspaceMembers = pgTable('workspace_members', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   uniqueIndex('workspace_member_idx').on(table.workspaceId, table.userId),
+  index('idx_workspace_members_user').on(table.userId),
   check('valid_workspace_role', sql`${table.role} IN ('owner', 'admin', 'member')`),
 ])
 
@@ -73,7 +76,9 @@ export const boards = pgTable('boards', {
   previewUpdatedAt: timestamp('preview_updated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-})
+}, (table) => [
+  index('idx_boards_workspace').on(table.workspaceId),
+])
 
 export const boardShares = pgTable('board_shares', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -84,6 +89,7 @@ export const boardShares = pgTable('board_shares', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   uniqueIndex('board_share_user_idx').on(table.boardId, table.userId),
+  index('idx_board_shares_user').on(table.userId),
   check('valid_share_permission', sql`${table.permission} IN ('view', 'edit')`),
 ])
 

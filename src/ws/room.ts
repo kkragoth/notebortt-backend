@@ -29,14 +29,12 @@ export function getUserColor(userId: string): string {
 export function createBoardRoomManager() {
   const rooms = new Map<string, {
     connections: Map<string, ConnectedClient>
-    sessions: Map<string, string>
   }>()
 
   function getOrCreateRoom(boardId: string) {
     if (!rooms.has(boardId)) {
       rooms.set(boardId, {
         connections: new Map(),
-        sessions: new Map(),
       })
     }
 
@@ -45,30 +43,16 @@ export function createBoardRoomManager() {
 
   function joinRoom(boardId: string, client: ConnectedClient): ConnectedClient | null {
     const room = getOrCreateRoom(boardId)
-    const replacedConnectionId = room.sessions.get(client.sessionId)
-    const replacedClient = replacedConnectionId
-      ? room.connections.get(replacedConnectionId) ?? null
-      : null
-
-    if (replacedConnectionId) {
-      room.connections.delete(replacedConnectionId)
-    }
-
     room.connections.set(client.connectionId, client)
-    room.sessions.set(client.sessionId, client.connectionId)
-
-    if (!replacedClient) {
-      broadcastToRoom(boardId, {
-        type: 'USER_JOINED',
-        sessionId: client.sessionId,
-        userId: client.userId,
-        userName: client.userName,
-        avatarUrl: client.avatarUrl ?? null,
-        color: client.color,
-      }, client.connectionId)
-    }
-
-    return replacedClient
+    broadcastToRoom(boardId, {
+      type: 'USER_JOINED',
+      sessionId: client.sessionId,
+      userId: client.userId,
+      userName: client.userName,
+      avatarUrl: client.avatarUrl ?? null,
+      color: client.color,
+    }, client.connectionId)
+    return null
   }
 
   function leaveRoom(boardId: string, connectionId: string): {
@@ -86,11 +70,8 @@ export function createBoardRoomManager() {
     }
 
     room.connections.delete(connectionId)
-
-    const activeConnectionId = room.sessions.get(client.sessionId)
-    const sessionStillActive = activeConnectionId !== undefined && activeConnectionId !== connectionId
-    if (!sessionStillActive && activeConnectionId === connectionId) {
-      room.sessions.delete(client.sessionId)
+    const sessionStillActive = [...room.connections.values()].some((member) => member.sessionId === client.sessionId)
+    if (!sessionStillActive) {
       broadcastToRoom(boardId, { type: 'USER_LEFT', sessionId: client.sessionId, userId: client.userId })
     }
 

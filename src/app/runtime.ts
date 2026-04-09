@@ -4,6 +4,7 @@ import { createDb } from '../db/client.js'
 import { createAuthMiddleware } from '../middleware/auth.js'
 import { createRedisClient } from '../redis/client.js'
 import { createMutationProcessor } from '../mutations/processor.js'
+import { createRuntimeMetrics } from '../observability/metrics.js'
 import { createAuthService } from '../services/auth.service.js'
 import { createBoardPersistenceService } from '../services/board-persistence.service.js'
 import { createBoardPreviewRenderer } from '../services/board-preview.service.js'
@@ -23,23 +24,34 @@ export function createAppRuntime(config: AppConfig) {
   const redis = createRedisClient(config.redisRealtimeUrl)
   const pubRedis = createRedisClient(config.redisRealtimeUrl)
   const jobsRedis = createRedisClient(config.redisJobsUrl)
-  const wss = new WebSocketServer({ noServer: true })
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
 
   const authService = createAuthService(config)
   const authMiddleware = createAuthMiddleware(authService)
   const userService = createUserService(db)
   const workspaceService = createWorkspaceService(db)
   const boardService = createBoardService(db)
-  const boardStateService = createBoardStateService(redis, db)
+  const metrics = createRuntimeMetrics()
+  const boardStateService = createBoardStateService(redis, db, {
+    enableIncrementalPersistence: config.enableIncrementalPersistence,
+    metrics,
+  })
   const boardPersistenceService = createBoardPersistenceService(boardStateService)
-  const redisCleanupService = createRedisCleanupService(redis, boardStateService)
+  const redisCleanupService = createRedisCleanupService(redis, boardStateService, {
+    useActiveIndex: config.enableCleanupActiveIndex,
+  })
   const boardPreviewRenderer = createBoardPreviewRenderer()
   const previewJobService = createPreviewJobService(db, jobsRedis, boardPreviewRenderer)
-  const mutationProcessor = createMutationProcessor(boardStateService)
+  const mutationProcessor = createMutationProcessor(boardStateService, {
+    enableTargetedReads: config.enableTargetedMutationReads,
+  })
   const roomManager = createBoardRoomManager()
   const heartbeat = createHeartbeatService(roomManager)
-  const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis)
-  const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService)
+  const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis, {
+    presenceWriteThrottleMs: config.presenceWriteThrottleMs,
+    presenceWriteJitterMs: config.presenceWriteJitterMs,
+  })
+  const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService, config.corsOrigin)
 
   return {
     config,
@@ -62,6 +74,7 @@ export function createAppRuntime(config: AppConfig) {
     heartbeat,
     wsHandler,
     upgradeHandler,
+    metrics,
   }
 }
 

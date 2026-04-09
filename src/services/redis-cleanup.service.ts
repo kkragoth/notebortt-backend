@@ -1,5 +1,6 @@
 import type Redis from 'ioredis'
 import type { BoardStateService } from './board-state.service.js'
+import { ACTIVE_BOARDS_KEY } from './board-state/keys.js'
 
 const LAST_ACTIVE_KEY_PATTERN = 'board:*:last_active'
 const BOARD_SEQ_KEY_PATTERN = 'board:*:seq'
@@ -13,6 +14,10 @@ const TRANSIENT_KEY_PATTERNS = [
   'remote_cursors:*',
   'cursor:*',
 ]
+
+interface RedisCleanupOptions {
+  useActiveIndex?: boolean
+}
 
 function extractBoardIdFromLastActiveKey(key: string): string | null {
   const match = key.match(/^board:(.+):last_active$/)
@@ -92,12 +97,51 @@ async function isIdleBeyondThreshold(redis: Redis, key: string, idleThresholdSec
   return Number.isFinite(idleSeconds) && idleSeconds >= idleThresholdSeconds
 }
 
-export function createRedisCleanupService(redis: Redis, boardStateService: BoardStateService) {
+export function createRedisCleanupService(
+  redis: Redis,
+  boardStateService: BoardStateService,
+  options: RedisCleanupOptions = {},
+) {
   let isWorkerRunning = false
+  const useActiveIndex = options.useActiveIndex ?? true
 
   async function findInactiveBoardCandidates(idleTtlMs: number, limit: number): Promise<string[]> {
-    const inactiveByLastActive = await scanLastActiveBoardIds(redis, idleTtlMs, limit)
-    const candidates = new Set(inactiveByLastActive)
+    const candidates = new Set<string>()
+    let activeIndexedBoards: string[] = []
+
+    if (useActiveIndex) {
+      activeIndexedBoards = await redis.srandmember(ACTIVE_BOARDS_KEY, Math.max(limit * 3, limit))
+      for (const boardId of activeIndexedBoards) {
+        const rawLastActive = await redis.get(`board:${boardId}:last_active`)
+        if (!rawLastActive) {
+          continue
+        }
+        const lastActive = parseInt(rawLastActive, 10)
+        if (Number.isFinite(lastActive) && Date.now() - lastActive >= idleTtlMs) {
+          candidates.add(boardId)
+        }
+        if (candidates.size >= limit) {
+          break
+        }
+      }
+    }
+
+    if (candidates.size < limit) {
+      const inactiveByLastActive = await scanLastActiveBoardIds(redis, idleTtlMs, limit)
+      for (const boardId of inactiveByLastActive) {
+        candidates.add(boardId)
+      }
+    }
+
+    console.log(JSON.stringify({
+      event: 'cleanup.scan_volume',
+      candidateSource: 'active_index_plus_last_active',
+      activeIndexSample: activeIndexedBoards.length,
+      candidateCount: candidates.size,
+      limit,
+      at: new Date().toISOString(),
+    }))
+
     const idleThresholdSeconds = toIdleSeconds(idleTtlMs)
 
     if (candidates.size >= limit) {
@@ -187,9 +231,11 @@ export function createRedisCleanupService(redis: Redis, boardStateService: Board
   ): Promise<string[]> {
     const idleThresholdSeconds = toIdleSeconds(idleTtlMs)
     const deleted: string[] = []
+    let scanned = 0
 
     for (const pattern of TRANSIENT_KEY_PATTERNS) {
       const keys = await scanKeysByPattern(redis, pattern, scanLimit)
+      scanned += keys.length
       for (const key of keys) {
         const ttl = await redis.ttl(key)
         if (ttl === -2 || ttl > 0) {
@@ -205,6 +251,13 @@ export function createRedisCleanupService(redis: Redis, boardStateService: Board
         deleted.push(key)
       }
     }
+
+    console.log(JSON.stringify({
+      event: 'cleanup.transient_scan_volume',
+      scanned,
+      deleted: deleted.length,
+      at: new Date().toISOString(),
+    }))
 
     return deleted
   }

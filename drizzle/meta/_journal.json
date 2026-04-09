@@ -29,6 +29,13 @@
       "when": 1775515800000,
       "tag": "0003_preview_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775732400000,
+      "tag": "0004_security_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

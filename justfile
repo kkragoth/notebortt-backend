@@ -22,21 +22,21 @@ dev:
     npm run dev
 
 dev-docker:
-    docker compose -f deploy/docker/docker-compose.yml --profile dev --profile debug up --build --remove-orphans
+    docker compose -f docker-compose.yml --profile dev --profile debug up --build --remove-orphans
 
 infra-up:
-    docker compose -f deploy/docker/docker-compose.yml --profile debug up -d postgres redis-realtime redis-jobs adminer redis-commander
+    docker compose -f docker-compose.yml --profile debug up -d postgres redis-realtime redis-jobs adminer redis-commander
     @echo "Waiting for services..."
     @sleep 2
-    @docker compose -f deploy/docker/docker-compose.yml ps
+    @docker compose -f docker-compose.yml ps
 
 debug-ui-up:
-    docker compose -f deploy/docker/docker-compose.yml --profile debug up -d adminer redis-commander
+    docker compose -f docker-compose.yml --profile debug up -d adminer redis-commander
     @echo "Adminer: http://localhost:8081"
     @echo "Redis Commander: http://localhost:8082"
 
 infra-down:
-    docker compose -f deploy/docker/docker-compose.yml down
+    docker compose -f docker-compose.yml down
 
 db-migrate:
     npx drizzle-kit migrate
@@ -51,7 +51,7 @@ db-seed:
     npx tsx src/db/seed.ts
 
 db-reset:
-    docker compose -f deploy/docker/docker-compose.yml exec postgres \
+    docker compose -f docker-compose.yml exec postgres \
         psql -U notecanva -c "DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
     just db-migrate
     just db-seed
@@ -69,12 +69,34 @@ debug-state boardId='' limit='20':
     @curl -s "http://localhost:8080/debug/state?boardId={{boardId}}&limit={{limit}}" | python3 -m json.tool
 
 logs:
-    docker compose -f deploy/docker/docker-compose.yml logs -f
+    docker compose -f docker-compose.yml logs -f
 
 clean:
-    docker compose -f deploy/docker/docker-compose.yml down -v
+    docker compose -f docker-compose.yml down -v
     rm -rf node_modules dist
 
 prepare:
     npm install
-    docker compose -f deploy/docker/docker-compose.yml pull
+    docker compose -f docker-compose.yml pull
+
+setup-ssl:
+    @if [ -z "$API_DOMAIN" ] || [ -z "$LETSENCRYPT_EMAIL" ]; then \
+        echo "API_DOMAIN and LETSENCRYPT_EMAIL must be set in .env"; \
+        exit 1; \
+    fi
+    docker compose -f docker-compose.yml up -d nginx
+    docker compose -f docker-compose.yml run --rm certbot \
+        certonly --webroot -w /var/www/certbot \
+        -d "$API_DOMAIN" \
+        --email "$LETSENCRYPT_EMAIL" \
+        --agree-tos --no-eff-email
+    docker compose -f docker-compose.yml restart nginx
+
+run-deploy:
+    docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs backend nginx
+    docker compose -f docker-compose.yml --profile tools run --rm migrator
+    docker compose -f docker-compose.yml restart nginx
+
+deploy:
+    just setup-ssl
+    just run-deploy

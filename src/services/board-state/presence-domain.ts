@@ -1,13 +1,15 @@
 import type Redis from 'ioredis'
-import { CLIENT_LEASE_TTL_SECONDS, COLLAB_MODE_COOLDOWN_MS, VIEWER_SESSION_TTL_MS, boardClientLeaseKey, boardClientsKey, boardCollabModeUntilKey, boardLastActiveKey, boardViewerSessionsKey, clientMember } from './keys.js'
+import type { RuntimeMetrics } from '../../observability/metrics.js'
+import { ACTIVE_BOARDS_KEY, CLIENT_LEASE_TTL_SECONDS, COLLAB_MODE_COOLDOWN_MS, VIEWER_SESSION_TTL_MS, boardClientLeaseKey, boardClientsKey, boardCollabModeUntilKey, boardLastActiveKey, boardViewerSessionsKey, clientMember } from './keys.js'
 import type { BoardSyncWriteMode } from './types.js'
 
 interface PresenceDomainDeps {
   waitForBoardLoad: (boardId: string) => Promise<void>
+  metrics: RuntimeMetrics
 }
 
 export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps) {
-  const { waitForBoardLoad } = deps
+  const { waitForBoardLoad, metrics } = deps
 
   async function extendCollabMode(boardId: string): Promise<void> {
     const collabUntil = Date.now() + COLLAB_MODE_COOLDOWN_MS
@@ -27,7 +29,9 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
       .pipeline()
       .sadd(boardClientsKey(boardId), member)
       .set(boardClientLeaseKey(boardId, member), '1', 'EX', CLIENT_LEASE_TTL_SECONDS)
+      .sadd(ACTIVE_BOARDS_KEY, boardId)
       .exec()
+    metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' })
 
     const clientCount = await redis.scard(boardClientsKey(boardId))
     await extendCollabModeIfNeeded(boardId, clientCount)
@@ -88,7 +92,9 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
       .zadd(boardViewerSessionsKey(boardId), now, sessionId)
       .zremrangebyscore(boardViewerSessionsKey(boardId), 0, minActiveTimestamp)
       .set(boardLastActiveKey(boardId), now.toString())
+      .sadd(ACTIVE_BOARDS_KEY, boardId)
       .exec()
+    metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' })
 
     const viewerCount = await redis.zcard(boardViewerSessionsKey(boardId))
     await extendCollabModeIfNeeded(boardId, viewerCount)
@@ -109,7 +115,13 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
 
   async function touchLastActive(boardId: string): Promise<void> {
     await waitForBoardLoad(boardId)
-    await redis.set(boardLastActiveKey(boardId), Date.now().toString())
+    const now = Date.now()
+    await redis
+      .pipeline()
+      .set(boardLastActiveKey(boardId), now.toString())
+      .sadd(ACTIVE_BOARDS_KEY, boardId)
+      .exec()
+    metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' })
   }
 
   async function getSyncWriteMode(boardId: string): Promise<BoardSyncWriteMode> {
