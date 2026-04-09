@@ -87,17 +87,22 @@ export function createUpgradeHandler(
 
   return async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
     try {
-      const url = new URL(request.url!, `http://${request.headers.host}`)
-      const origin = request.headers.origin
-
-      if (!isTrustedOrigin(origin, allowedOrigins)) {
-        console.warn('[WS Upgrade] Rejected untrusted origin', { origin })
+      const rawUrl = request.url
+      if (!rawUrl) {
         socket.destroy()
         return
       }
 
+      const url = new URL(rawUrl, `http://${request.headers.host}`)
       const boardId = parseBoardIdFromPath(url.pathname)
       if (!boardId) {
+        // Not a raw board websocket endpoint. Let other upgrade handlers (e.g. Socket.IO) process it.
+        return
+      }
+
+      const origin = request.headers.origin
+      if (!isTrustedOrigin(origin, allowedOrigins)) {
+        console.warn('[WS Upgrade] Rejected untrusted origin', { origin, path: url.pathname })
         socket.destroy()
         return
       }
