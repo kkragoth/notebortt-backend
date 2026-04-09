@@ -4,6 +4,7 @@ import type { AppRuntime } from './runtime.js'
 import { createCorsMiddleware } from '../middleware/cors.js'
 import { createAuthRouter } from '../routes/auth.js'
 import { createBoardRouter } from '../routes/boards.js'
+import { createBillingRouter, createBillingWebhookRouter } from '../routes/billing.js'
 import { createDebugRouter } from '../routes/debug.js'
 import { healthRoute } from '../routes/health.js'
 import { createOpenApiRouter } from '../routes/openapi.js'
@@ -15,8 +16,9 @@ export function createApp(runtime: AppRuntime) {
   const app = express()
 
   app.use(createCorsMiddleware(runtime.config.corsOrigin))
-  app.use(express.json())
   app.use(cookieParser())
+  app.use('/', createBillingWebhookRouter(runtime.billingService))
+  app.use(express.json())
 
   app.get('/health', healthRoute(runtime.db, runtime.redis))
   app.use('/debug', createDebugRouter(runtime))
@@ -24,6 +26,7 @@ export function createApp(runtime: AppRuntime) {
   app.use('/swagger', createSwaggerRouter(runtime.config))
   app.use('/auth', createAuthRouter(runtime.config, runtime.authService, runtime.userService, runtime.db))
   app.use('/users', createUserRouter(runtime.userService, runtime.authMiddleware))
+  app.use('/', createBillingRouter(runtime.billingService, runtime.authMiddleware))
   app.use('/', createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware))
   app.use('/', createBoardRouter(
     runtime.boardService,

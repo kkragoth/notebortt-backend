@@ -22,6 +22,14 @@ const envSchema = z.object({
   PRESENCE_WRITE_THROTTLE_MS: z.coerce.number().int().min(0).default(3000),
   PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
   ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
+  STRIPE_BILLING_ENABLED: z.coerce.boolean().default(false),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_PRICE_STARTUP: z.string().optional(),
+  STRIPE_PRICE_BUSINESS: z.string().optional(),
+  STRIPE_CHECKOUT_SUCCESS_URL: z.string().optional(),
+  STRIPE_CHECKOUT_CANCEL_URL: z.string().optional(),
+  STRIPE_PORTAL_RETURN_URL: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
 })
 
 export interface AppConfig {
@@ -42,6 +50,14 @@ export interface AppConfig {
   presenceWriteThrottleMs: number
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
+  stripeBillingEnabled: boolean
+  stripeSecretKey: string | null
+  stripePriceStartup: string | null
+  stripePriceBusiness: string | null
+  stripeCheckoutSuccessUrl: string | null
+  stripeCheckoutCancelUrl: string | null
+  stripePortalReturnUrl: string | null
+  stripeWebhookSecret: string | null
 }
 
 export function loadConfig(): AppConfig {
@@ -68,5 +84,13 @@ export function loadConfig(): AppConfig {
     presenceWriteThrottleMs: parsed.PRESENCE_WRITE_THROTTLE_MS,
     presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
     enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
+    stripeBillingEnabled: parsed.STRIPE_BILLING_ENABLED,
+    stripeSecretKey: parsed.STRIPE_SECRET_KEY ?? null,
+    stripePriceStartup: parsed.STRIPE_PRICE_STARTUP ?? null,
+    stripePriceBusiness: parsed.STRIPE_PRICE_BUSINESS ?? null,
+    stripeCheckoutSuccessUrl: parsed.STRIPE_CHECKOUT_SUCCESS_URL ?? null,
+    stripeCheckoutCancelUrl: parsed.STRIPE_CHECKOUT_CANCEL_URL ?? null,
+    stripePortalReturnUrl: parsed.STRIPE_PORTAL_RETURN_URL ?? null,
+    stripeWebhookSecret: parsed.STRIPE_WEBHOOK_SECRET ?? null,
   }
 }

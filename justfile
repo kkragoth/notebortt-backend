@@ -15,6 +15,7 @@ dev:
     just infra-up
     just debug-ui-up
     just db-migrate
+    just db-seed
     @echo "Swagger UI: http://localhost:8080/swagger"
     @echo "OpenAPI JSON: http://localhost:8080/openapi.json"
     @echo "Adminer: http://localhost:8081"
@@ -22,7 +23,13 @@ dev:
     npm run dev
 
 dev-docker:
-    docker compose -f docker-compose.yml --profile dev --profile debug up --build --remove-orphans
+    docker compose -f docker-compose.yml --profile debug up -d --build --remove-orphans
+    docker compose -f docker-compose.yml --profile tools run --rm migrator
+    just db-seed
+    @echo "Backend (via nginx): http://localhost"
+    @echo "Adminer: http://localhost:8081"
+    @echo "Redis Commander: http://localhost:8082"
+    @docker compose -f docker-compose.yml ps
 
 infra-up:
     docker compose -f docker-compose.yml --profile debug up -d postgres redis-realtime redis-jobs adminer redis-commander

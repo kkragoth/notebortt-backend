@@ -12,6 +12,7 @@ import { createBoardStateService } from '../services/board-state.service.js'
 import { createRedisCleanupService } from '../services/redis-cleanup.service.js'
 import { createBoardService } from '../services/board.service.js'
 import { createPreviewJobService } from '../services/preview-job.service.js'
+import { createBillingService } from '../services/billing.service.js'
 import { createUserService } from '../services/user.service.js'
 import { createWorkspaceService } from '../services/workspace.service.js'
 import { createHeartbeatService } from '../ws/heartbeat.js'
@@ -31,6 +32,7 @@ export function createAppRuntime(config: AppConfig) {
   const userService = createUserService(db)
   const workspaceService = createWorkspaceService(db)
   const boardService = createBoardService(db)
+  const billingService = createBillingService(config, db, userService, workspaceService, boardService)
   const metrics = createRuntimeMetrics()
   const boardStateService = createBoardStateService(redis, db, {
     enableIncrementalPersistence: config.enableIncrementalPersistence,
@@ -65,6 +67,7 @@ export function createAppRuntime(config: AppConfig) {
     userService,
     workspaceService,
     boardService,
+    billingService,
     boardStateService,
     boardPersistenceService,
     redisCleanupService,

@@ -36,6 +36,13 @@
       "when": 1775732400000,
       "tag": "0004_security_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1775737200000,
+      "tag": "0005_billing_webhook_tables",
+      "breakpoints": true
     }
   ]
 }
