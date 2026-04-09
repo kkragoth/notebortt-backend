@@ -23,6 +23,11 @@ import {
 
 type PresenceTypingField = 'title' | 'body' | null
 
+type ContextSnapshot = {
+  context: SocketBoardContext
+  version: number
+}
+
 function parseAllowedOrigins(raw: string): string[] {
   return raw.split(',').map((value) => value.trim()).filter((value) => value.length > 0)
 }
@@ -75,41 +80,114 @@ export function createSocketIoRealtimeServer(
 
   io.on('connection', (socket) => {
     let boardContext: SocketBoardContext | null = null
+    let boardContextVersion = 0
     let identity: SocketIdentity | null = null
     let lastTickId = -1
+    let latestJoinAttempt = 0
 
-    socket.on('board:join', async (rawPayload: unknown) => {
+    function setBoardContext(next: SocketBoardContext | null): void {
+      boardContext = next
+      boardContextVersion += 1
+      if (!next) {
+        lastTickId = -1
+      }
+    }
+
+    function takeContextSnapshot(expectedBoardId?: string): ContextSnapshot | null {
+      if (!boardContext) {
+        return null
+      }
+      if (expectedBoardId && boardContext.boardId !== expectedBoardId) {
+        return null
+      }
+      return { context: boardContext, version: boardContextVersion }
+    }
+
+    function isSnapshotActive(snapshot: ContextSnapshot): boolean {
+      if (!socket.connected || !boardContext) {
+        return false
+      }
+      if (snapshot.version !== boardContextVersion) {
+        return false
+      }
+      return (
+        snapshot.context.boardId === boardContext.boardId
+        && snapshot.context.sessionId === boardContext.sessionId
+      )
+    }
+
+    function registerHandler(event: string, handler: (payload: unknown) => Promise<void>): void {
+      socket.on(event, (payload: unknown) => {
+        void (async () => {
+          try {
+            await handler(payload)
+          } catch (error) {
+            console.error('[socketio] unhandled handler error', {
+              event,
+              socketId: socket.id,
+              error,
+            })
+            if (socket.connected) {
+              socket.emit('sync:error', { message: 'Internal realtime server error' })
+            }
+          }
+        })()
+      })
+    }
+
+    registerHandler('board:join', async (rawPayload) => {
       const payload = parseBoardJoinPayload(rawPayload)
       if (!payload) {
         socket.emit('sync:error', { message: 'Invalid board join payload' })
         return
       }
 
+      const joinAttempt = ++latestJoinAttempt
+      const isJoinActive = () => socket.connected && joinAttempt === latestJoinAttempt
+
       identity = identity ?? await resolveSocketIdentity(socket, deps)
+      if (!isJoinActive() || !identity) {
+        return
+      }
+
       const shareToken = payload.shareToken ?? (typeof socket.handshake.query.shareToken === 'string'
         ? socket.handshake.query.shareToken
         : undefined)
       const access = await deps.boardService.checkBoardAccess(payload.boardId, identity.authUserId, shareToken)
+      if (!isJoinActive()) {
+        return
+      }
       if (!access.hasAccess) {
         socket.emit('sync:error', { message: 'No access to board' })
         return
       }
 
-      if (boardContext && boardContext.boardId !== payload.boardId) {
-        const previousParticipant = participantsStore.removeParticipant(boardContext.boardId, socket.id)
+      const previousContext = boardContext
+      if (previousContext && previousContext.boardId !== payload.boardId) {
+        const previousParticipant = participantsStore.removeParticipant(previousContext.boardId, socket.id)
         if (previousParticipant) {
-          emitUserLeft(boardContext.boardId, previousParticipant)
+          emitUserLeft(previousContext.boardId, previousParticipant)
         }
-        socket.leave(boardContext.boardId)
+        socket.leave(previousContext.boardId)
       }
 
       await deps.boardStateService.loadBoard(payload.boardId)
+      if (!isJoinActive()) {
+        return
+      }
       await deps.boardStateService.trackClient(payload.boardId, identity.runtimeUserId, socket.id)
+      if (!isJoinActive()) {
+        return
+      }
       await deps.boardStateService.touchViewerSession(payload.boardId, payload.sessionId)
+      if (!isJoinActive()) {
+        return
+      }
+
       socket.join(payload.boardId)
 
       const color = getUserColor(identity.runtimeUserId)
-      boardContext = {
+      const nextContext: SocketBoardContext = {
         boardId: payload.boardId,
         permission: access.permission === 'edit' ? 'edit' : 'view',
         sessionId: payload.sessionId,
@@ -118,6 +196,7 @@ export function createSocketIoRealtimeServer(
         avatarUrl: identity.avatarUrl,
         color,
       }
+      setBoardContext(nextContext)
 
       const participants = participantsStore.getRoomParticipantMap(payload.boardId)
       for (const existingParticipant of participants.values()) {
@@ -144,27 +223,39 @@ export function createSocketIoRealtimeServer(
       })
 
       const snapshot = await deps.boardStateService.getSnapshot(payload.boardId)
+      if (!isJoinActive() || !boardContext || boardContext.sessionId !== payload.sessionId) {
+        return
+      }
+
       socket.emit('board:snapshot', {
         elements: snapshot.elements,
         lastSequence: snapshot.sequence,
       })
     })
 
-    socket.on('mutation:batch', async (rawPayload: unknown) => {
+    registerHandler('mutation:batch', async (rawPayload) => {
       const payload = parseMutationBatchPayload(rawPayload)
-      if (!payload || !boardContext || payload.boardId !== boardContext.boardId) {
+      const snapshot = payload ? takeContextSnapshot(payload.boardId) : null
+      if (!payload || !snapshot) {
         socket.emit('sync:error', { message: 'Invalid mutation batch payload' })
         return
       }
-      if (boardContext.permission !== 'edit') {
+      if (snapshot.context.permission !== 'edit') {
         socket.emit('sync:error', { message: 'No edit access to this board' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(boardContext.boardId, boardContext.sessionId)
-      await deps.boardStateService.trackClient(boardContext.boardId, boardContext.userId, socket.id)
+      await deps.boardStateService.touchViewerSession(snapshot.context.boardId, snapshot.context.sessionId)
+      await deps.boardStateService.trackClient(snapshot.context.boardId, snapshot.context.userId, socket.id)
+      if (!isSnapshotActive(snapshot)) {
+        return
+      }
 
-      const results = await deps.mutationProcessor.processBatch(payload.mutations, boardContext.userId)
+      const results = await deps.mutationProcessor.processBatch(payload.mutations, snapshot.context.userId)
+      if (!isSnapshotActive(snapshot)) {
+        return
+      }
+
       const acknowledgedIds: string[] = []
       let latestSequence: number | undefined
 
@@ -185,52 +276,58 @@ export function createSocketIoRealtimeServer(
         }
 
         if (result.status === 'applied' && result.change) {
-          await publishElementsChanged(payload.boardId, boardContext.userId, result.change, socket.id)
+          await publishElementsChanged(payload.boardId, snapshot.context.userId, result.change, socket.id)
         }
       }
 
-      socket.emit('mutation:ack', { mutationIds: acknowledgedIds, sequence: latestSequence })
+      if (socket.connected && isSnapshotActive(snapshot)) {
+        socket.emit('mutation:ack', { mutationIds: acknowledgedIds, sequence: latestSequence })
+      }
     })
 
-    socket.on('crdt:update', async (rawPayload: unknown) => {
+    registerHandler('crdt:update', async (rawPayload) => {
       const payload = parseCrdtUpdatePayload(rawPayload)
-      if (!payload || !boardContext || payload.boardId !== boardContext.boardId) {
+      const snapshot = payload ? takeContextSnapshot(payload.boardId) : null
+      if (!payload || !snapshot) {
         socket.emit('sync:error', { message: 'Invalid CRDT update payload' })
         return
       }
-      if (boardContext.permission !== 'edit') {
+      if (snapshot.context.permission !== 'edit') {
         socket.emit('sync:error', { message: 'No edit access to this board' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(boardContext.boardId, boardContext.sessionId)
-      await deps.boardStateService.trackClient(boardContext.boardId, boardContext.userId, socket.id)
-      crdtStore.applyRemoteUpdate(payload.boardId, boardContext.userId, payload.update)
+      await deps.boardStateService.touchViewerSession(snapshot.context.boardId, snapshot.context.sessionId)
+      await deps.boardStateService.trackClient(snapshot.context.boardId, snapshot.context.userId, socket.id)
+      if (!isSnapshotActive(snapshot)) {
+        return
+      }
+
+      crdtStore.applyRemoteUpdate(payload.boardId, snapshot.context.userId, payload.update)
       socket.to(payload.boardId).emit('crdt:update', { boardId: payload.boardId, update: payload.update })
     })
 
-    socket.on('presence:update', async (rawPayload: unknown) => {
+    registerHandler('presence:update', async (rawPayload) => {
       const payload = parsePresenceUpdatePayload(rawPayload)
-      const currentContext = boardContext
-      if (!payload || !currentContext || payload.boardId !== currentContext.boardId) {
+      const snapshot = payload ? takeContextSnapshot(payload.boardId) : null
+      if (!payload || !snapshot) {
         socket.emit('sync:error', { message: 'Invalid presence payload' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(currentContext.boardId, currentContext.sessionId)
-      await deps.boardStateService.trackClient(currentContext.boardId, currentContext.userId, socket.id)
-
-      if (boardContext !== currentContext) {
+      await deps.boardStateService.touchViewerSession(snapshot.context.boardId, snapshot.context.sessionId)
+      await deps.boardStateService.trackClient(snapshot.context.boardId, snapshot.context.userId, socket.id)
+      if (!isSnapshotActive(snapshot)) {
         return
       }
 
       const typingField: PresenceTypingField = payload.typingField
       socket.to(payload.boardId).emit('PRESENCE', {
-        sessionId: currentContext.sessionId,
-        userId: currentContext.userId,
-        userName: currentContext.userName,
-        avatarUrl: currentContext.avatarUrl,
-        color: currentContext.color,
+        sessionId: snapshot.context.sessionId,
+        userId: snapshot.context.userId,
+        userName: snapshot.context.userName,
+        avatarUrl: snapshot.context.avatarUrl,
+        color: snapshot.context.color,
         cursor: payload.cursor,
         selectedIds: payload.selectedIds,
         draggedIds: payload.draggedIds,
@@ -239,10 +336,10 @@ export function createSocketIoRealtimeServer(
       })
     })
 
-    socket.on('realtime:tick', async (rawPayload: unknown) => {
+    registerHandler('realtime:tick', async (rawPayload) => {
       const payload = parseRealtimeTickPayload(rawPayload)
-      const currentContext = boardContext
-      if (!payload || !currentContext || payload.boardId !== currentContext.boardId) {
+      const snapshot = payload ? takeContextSnapshot(payload.boardId) : null
+      if (!payload || !snapshot) {
         socket.emit('sync:error', { message: 'Invalid realtime tick payload' })
         return
       }
@@ -252,31 +349,30 @@ export function createSocketIoRealtimeServer(
       }
       lastTickId = payload.tickId
 
-      if (payload.moves.length > 0 && currentContext.permission !== 'edit') {
+      if (payload.moves.length > 0 && snapshot.context.permission !== 'edit') {
         socket.emit('sync:error', { message: 'No edit access to this board' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(currentContext.boardId, currentContext.sessionId)
-      await deps.boardStateService.trackClient(currentContext.boardId, currentContext.userId, socket.id)
-
-      if (boardContext !== currentContext) {
+      await deps.boardStateService.touchViewerSession(snapshot.context.boardId, snapshot.context.sessionId)
+      await deps.boardStateService.trackClient(snapshot.context.boardId, snapshot.context.userId, socket.id)
+      if (!isSnapshotActive(snapshot)) {
         return
       }
 
       if (payload.moves.length > 0) {
-        tickPersistence.queueMoves(payload.boardId, currentContext.userId, payload.moves)
+        tickPersistence.queueMoves(payload.boardId, snapshot.context.userId, payload.moves)
       }
 
       const typingField: PresenceTypingField = payload.typingField
       socket.to(payload.boardId).emit('realtime:tick', {
         boardId: payload.boardId,
         tickId: payload.tickId,
-        sessionId: currentContext.sessionId,
-        userId: currentContext.userId,
-        userName: currentContext.userName,
-        avatarUrl: currentContext.avatarUrl,
-        color: currentContext.color,
+        sessionId: snapshot.context.sessionId,
+        userId: snapshot.context.userId,
+        userName: snapshot.context.userName,
+        avatarUrl: snapshot.context.avatarUrl,
+        color: snapshot.context.color,
         cursor: payload.cursor,
         selectedIds: payload.selectedIds,
         draggedIds: payload.draggedIds,
@@ -288,22 +384,23 @@ export function createSocketIoRealtimeServer(
       })
     })
 
-    socket.on('disconnect', async () => {
-      if (!boardContext) {
+    registerHandler('disconnect', async () => {
+      const snapshot = takeContextSnapshot()
+      if (!snapshot) {
         return
       }
 
-      await tickPersistence.flushTickMoves(boardContext.boardId)
-      await crdtStore.flushNow(boardContext.boardId)
-      await deps.boardStateService.removeClient(boardContext.boardId, boardContext.userId, socket.id)
-      await deps.boardStateService.removeViewerSession(boardContext.boardId, boardContext.sessionId)
+      setBoardContext(null)
 
-      const participant = participantsStore.removeParticipant(boardContext.boardId, socket.id)
+      await tickPersistence.flushTickMoves(snapshot.context.boardId)
+      await crdtStore.flushNow(snapshot.context.boardId)
+      await deps.boardStateService.removeClient(snapshot.context.boardId, snapshot.context.userId, socket.id)
+      await deps.boardStateService.removeViewerSession(snapshot.context.boardId, snapshot.context.sessionId)
+
+      const participant = participantsStore.removeParticipant(snapshot.context.boardId, socket.id)
       if (participant) {
-        emitUserLeft(boardContext.boardId, participant)
+        emitUserLeft(snapshot.context.boardId, participant)
       }
-
-      boardContext = null
     })
   })
 
