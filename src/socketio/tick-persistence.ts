@@ -19,6 +19,20 @@ export function createTickPersistenceManager(
   const tickPersistMaxWaitTimers = new Map<string, NodeJS.Timeout>()
   const tickPersistUserByBoard = new Map<string, string>()
 
+  function clearTimers(boardId: string): void {
+    const debounceTimer = tickPersistDebounceTimers.get(boardId)
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      tickPersistDebounceTimers.delete(boardId)
+    }
+
+    const maxWaitTimer = tickPersistMaxWaitTimers.get(boardId)
+    if (maxWaitTimer) {
+      clearTimeout(maxWaitTimer)
+      tickPersistMaxWaitTimers.delete(boardId)
+    }
+  }
+
   async function flushTickMoves(boardId: string): Promise<void> {
     const pendingMoves = pendingTickMovesByBoard.get(boardId)
     if (!pendingMoves || pendingMoves.size === 0) {
@@ -33,17 +47,8 @@ export function createTickPersistenceManager(
     }))
 
     pendingMoves.clear()
-    const debounceTimer = tickPersistDebounceTimers.get(boardId)
-    if (debounceTimer) {
-      clearTimeout(debounceTimer)
-      tickPersistDebounceTimers.delete(boardId)
-    }
-
-    const maxWaitTimer = tickPersistMaxWaitTimers.get(boardId)
-    if (maxWaitTimer) {
-      clearTimeout(maxWaitTimer)
-      tickPersistMaxWaitTimers.delete(boardId)
-    }
+    clearTimers(boardId)
+    pendingTickMovesByBoard.delete(boardId)
 
     if (moves.length === 0) {
       return
@@ -62,6 +67,7 @@ export function createTickPersistenceManager(
         await options.onPersistedChange(boardId, userId, result.change, `tick:${boardId}`)
       }
     }
+    tickPersistUserByBoard.delete(boardId)
   }
 
   function scheduleTickPersist(boardId: string): void {
@@ -102,8 +108,15 @@ export function createTickPersistenceManager(
     scheduleTickPersist(boardId)
   }
 
+  function clearBoard(boardId: string): void {
+    clearTimers(boardId)
+    pendingTickMovesByBoard.delete(boardId)
+    tickPersistUserByBoard.delete(boardId)
+  }
+
   return {
     flushTickMoves,
     queueMoves,
+    clearBoard,
   }
 }

@@ -17,6 +17,7 @@ const healthResponseSchema = z.object({
   postgres: z.enum(['ok', 'error']).meta({ example: 'ok' }),
   redis: z.enum(['ok', 'error']).meta({ example: 'ok' }),
   uptime: z.number().int().meta({ example: 412 }),
+  openWebSocketConnections: z.number().int().nonnegative().meta({ example: 3 }),
 }).meta({ id: 'HealthResponse' })
 
 const debugStateResponseSchema = z.object({

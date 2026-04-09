@@ -148,8 +148,21 @@ export function createCrdtRoomStore(
     return flush(boardId)
   }
 
+  function clearRoom(boardId: string): void {
+    const room = rooms.get(boardId)
+    if (!room) {
+      return
+    }
+
+    clearTimers(room)
+    room.pendingMoves.clear()
+    room.doc.destroy()
+    rooms.delete(boardId)
+  }
+
   return {
     applyRemoteUpdate,
     flushNow,
+    clearRoom,
   }
 }

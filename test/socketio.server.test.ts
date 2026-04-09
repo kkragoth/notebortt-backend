@@ -171,4 +171,26 @@ describe('createSocketIoRealtimeServer', () => {
       y: 77,
     })
   })
+
+  it('removes disconnected participants before the same user rejoins', async () => {
+    activeHarness = await createHarness()
+    const first = await connectSocket(activeHarness)
+
+    first.emit('board:join', { boardId: 'board-3', lastSequence: 0, sessionId: 'session-old' })
+    await once(first, 'board:snapshot')
+
+    const userLeftPromise = once(first, 'disconnect')
+    first.disconnect()
+    await userLeftPromise
+
+    const next = await connectSocket(activeHarness)
+    const unexpectedJoined = vi.fn()
+
+    next.on('USER_JOINED', unexpectedJoined)
+    next.emit('board:join', { boardId: 'board-3', lastSequence: 0, sessionId: 'session-new' })
+    await once(next, 'board:snapshot')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(unexpectedJoined).not.toHaveBeenCalled()
+  })
 })
