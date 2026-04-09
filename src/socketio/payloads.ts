@@ -37,6 +37,8 @@ export interface RealtimeTickPayload {
   draggedIds: string[]
   focusedElementId: string | null
   typingField: 'title' | 'body' | null
+  presenceState: 'active' | 'away' | 'interacting'
+  presenceMessage: string | null
   moves: Array<{ id: string; x: number; y: number }>
 }
 
@@ -213,6 +215,12 @@ export function parseRealtimeTickPayload(payload: unknown): RealtimeTickPayload 
   const typingField = payload.typingField === 'title' || payload.typingField === 'body'
     ? payload.typingField
     : null
+  const presenceState = payload.presenceState === 'away' || payload.presenceState === 'interacting'
+    ? payload.presenceState
+    : 'active'
+  const presenceMessage = typeof payload.presenceMessage === 'string' && payload.presenceMessage.length > 0
+    ? payload.presenceMessage
+    : null
 
   return {
     boardId,
@@ -222,6 +230,8 @@ export function parseRealtimeTickPayload(payload: unknown): RealtimeTickPayload 
     draggedIds: parseIdList(payload.draggedIds),
     focusedElementId: typeof payload.focusedElementId === 'string' ? payload.focusedElementId : null,
     typingField,
+    presenceState,
+    presenceMessage,
     moves: parseMoves(payload.moves),
   }
 }

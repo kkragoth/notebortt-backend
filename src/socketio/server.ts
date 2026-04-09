@@ -211,21 +211,26 @@ export function createSocketIoRealtimeServer(
 
     socket.on('presence:update', async (rawPayload: unknown) => {
       const payload = parsePresenceUpdatePayload(rawPayload)
-      if (!payload || !boardContext || payload.boardId !== boardContext.boardId) {
+      const currentContext = boardContext
+      if (!payload || !currentContext || payload.boardId !== currentContext.boardId) {
         socket.emit('sync:error', { message: 'Invalid presence payload' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(boardContext.boardId, boardContext.sessionId)
-      await deps.boardStateService.trackClient(boardContext.boardId, boardContext.userId, socket.id)
+      await deps.boardStateService.touchViewerSession(currentContext.boardId, currentContext.sessionId)
+      await deps.boardStateService.trackClient(currentContext.boardId, currentContext.userId, socket.id)
+
+      if (boardContext !== currentContext) {
+        return
+      }
 
       const typingField: PresenceTypingField = payload.typingField
       socket.to(payload.boardId).emit('PRESENCE', {
-        sessionId: boardContext.sessionId,
-        userId: boardContext.userId,
-        userName: boardContext.userName,
-        avatarUrl: boardContext.avatarUrl,
-        color: boardContext.color,
+        sessionId: currentContext.sessionId,
+        userId: currentContext.userId,
+        userName: currentContext.userName,
+        avatarUrl: currentContext.avatarUrl,
+        color: currentContext.color,
         cursor: payload.cursor,
         selectedIds: payload.selectedIds,
         draggedIds: payload.draggedIds,
@@ -236,7 +241,8 @@ export function createSocketIoRealtimeServer(
 
     socket.on('realtime:tick', async (rawPayload: unknown) => {
       const payload = parseRealtimeTickPayload(rawPayload)
-      if (!payload || !boardContext || payload.boardId !== boardContext.boardId) {
+      const currentContext = boardContext
+      if (!payload || !currentContext || payload.boardId !== currentContext.boardId) {
         socket.emit('sync:error', { message: 'Invalid realtime tick payload' })
         return
       }
@@ -246,32 +252,38 @@ export function createSocketIoRealtimeServer(
       }
       lastTickId = payload.tickId
 
-      if (payload.moves.length > 0 && boardContext.permission !== 'edit') {
+      if (payload.moves.length > 0 && currentContext.permission !== 'edit') {
         socket.emit('sync:error', { message: 'No edit access to this board' })
         return
       }
 
-      await deps.boardStateService.touchViewerSession(boardContext.boardId, boardContext.sessionId)
-      await deps.boardStateService.trackClient(boardContext.boardId, boardContext.userId, socket.id)
+      await deps.boardStateService.touchViewerSession(currentContext.boardId, currentContext.sessionId)
+      await deps.boardStateService.trackClient(currentContext.boardId, currentContext.userId, socket.id)
+
+      if (boardContext !== currentContext) {
+        return
+      }
 
       if (payload.moves.length > 0) {
-        tickPersistence.queueMoves(payload.boardId, boardContext.userId, payload.moves)
+        tickPersistence.queueMoves(payload.boardId, currentContext.userId, payload.moves)
       }
 
       const typingField: PresenceTypingField = payload.typingField
       socket.to(payload.boardId).emit('realtime:tick', {
         boardId: payload.boardId,
         tickId: payload.tickId,
-        sessionId: boardContext.sessionId,
-        userId: boardContext.userId,
-        userName: boardContext.userName,
-        avatarUrl: boardContext.avatarUrl,
-        color: boardContext.color,
+        sessionId: currentContext.sessionId,
+        userId: currentContext.userId,
+        userName: currentContext.userName,
+        avatarUrl: currentContext.avatarUrl,
+        color: currentContext.color,
         cursor: payload.cursor,
         selectedIds: payload.selectedIds,
         draggedIds: payload.draggedIds,
         focusedElementId: payload.focusedElementId,
         typingField,
+        presenceState: payload.presenceState,
+        presenceMessage: payload.presenceMessage,
         moves: payload.moves,
       })
     })
