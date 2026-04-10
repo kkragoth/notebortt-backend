@@ -56,6 +56,37 @@ services:
     ports:
       - "8082:8081"
 
+  backend-dev:
+    image: node:22-alpine
+    profiles: ["dev"]
+    working_dir: /app
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_REALTIME_URL: redis://redis-realtime:6379
+      REDIS_JOBS_URL: redis://redis-jobs:6379
+      PORT: "8080"
+      NODE_ENV: development
+      CORS_ORIGIN: http://localhost:8080,http://localhost:5173,http://localhost:3000
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "250"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-realtime:
+        condition: service_started
+      redis-jobs:
+        condition: service_started
+    volumes:
+      - .:/app
+      - backend_dev_node_modules:/app/node_modules
+    ports:
+      - "8080:8080"
+    stdin_open: true
+    tty: true
+    command: sh -lc "npm ci && npm run dev"
+
   backend:
     build:
       context: .
@@ -125,5 +156,6 @@ volumes:
   postgres_data:
   redis_realtime_data:
   redis_jobs_data:
+  backend_dev_node_modules:
   certbot_www:
   letsencrypt:

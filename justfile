@@ -10,17 +10,15 @@ repair-node-modules:
     @node -e "const fs = require('fs'); const path = require('path'); const { execSync } = require('child_process'); const platform = process.platform; const arch = process.arch; const map = { darwin: { arm64: '@esbuild/darwin-arm64', x64: '@esbuild/darwin-x64' }, linux: { arm64: '@esbuild/linux-arm64', x64: '@esbuild/linux-x64' } }; const expected = map[platform]?.[arch]; if (!expected) process.exit(0); const nodeModules = path.join(process.cwd(), 'node_modules'); const expectedPath = path.join(nodeModules, expected); if (!fs.existsSync(nodeModules)) { console.log('Installing dependencies for local platform...'); execSync('npm ci', { stdio: 'inherit' }); process.exit(0); } if (fs.existsSync(expectedPath)) process.exit(0); console.log('Detected cross-platform node_modules. Reinstalling for local platform...'); fs.rmSync(nodeModules, { recursive: true, force: true }); execSync('npm ci', { stdio: 'inherit' });"
 
 dev:
-    just ensure-node
-    just repair-node-modules
-    just infra-up
-    just debug-ui-up
-    just db-migrate
-    just db-seed
+    docker compose -f docker-compose.yml --profile debug up -d --build --remove-orphans postgres redis-realtime redis-jobs adminer redis-commander
+    docker compose -f docker-compose.yml run --rm backend-dev sh -lc "npm ci && npm run db:migrate"
+    docker compose -f docker-compose.yml run --rm backend-dev sh -lc "npm ci && npm run db:seed"
+    docker compose -f docker-compose.yml --profile dev up --build --remove-orphans backend-dev
+    @echo "Backend (dev container): http://localhost:8080"
     @echo "Swagger UI: http://localhost:8080/swagger"
     @echo "OpenAPI JSON: http://localhost:8080/openapi.json"
     @echo "Adminer: http://localhost:8081"
     @echo "Redis Commander: http://localhost:8082"
-    npm run dev
 
 dev-docker:
     docker compose -f docker-compose.yml --profile debug up -d --build --remove-orphans
