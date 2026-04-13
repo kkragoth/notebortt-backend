@@ -6,6 +6,7 @@ import {
   boardIdParamsSchema,
   canCreateBoards,
   canDeleteBoards,
+  requireBoardAccess,
   getWorkspaceRoleForBoard,
   parseOrSendBadRequest,
   workspaceIdParamsSchema,
@@ -26,7 +27,7 @@ export function createBoardManagementRoutes(deps: BoardRouteDeps) {
       return
     }
 
-    const boardList = await deps.boardService.getBoardsForWorkspace(params.wid)
+    const boardList = await deps.boardService.getBoardsForWorkspace(params.wid, userId)
     res.json({ boards: toRecord(boardList) })
   })
 
@@ -111,6 +112,46 @@ export function createBoardManagementRoutes(deps: BoardRouteDeps) {
 
     await deps.boardService.deleteBoard(params.id)
     res.sendStatus(204)
+  })
+
+  router.put('/boards/:id/favorite', async (req, res) => {
+    const userId = req.userId!
+    const params = parseOrSendBadRequest(boardIdParamsSchema, req.params, res)
+    if (!params) return
+
+    const access = await requireBoardAccess(deps, params.id, userId)
+    if (!access.hasAccess) {
+      sendForbidden(res)
+      return
+    }
+
+    const board = await deps.boardService.setBoardFavorite(params.id, userId, true)
+    if (!board) {
+      sendForbidden(res)
+      return
+    }
+
+    res.json(board)
+  })
+
+  router.delete('/boards/:id/favorite', async (req, res) => {
+    const userId = req.userId!
+    const params = parseOrSendBadRequest(boardIdParamsSchema, req.params, res)
+    if (!params) return
+
+    const access = await requireBoardAccess(deps, params.id, userId)
+    if (!access.hasAccess) {
+      sendForbidden(res)
+      return
+    }
+
+    const board = await deps.boardService.setBoardFavorite(params.id, userId, false)
+    if (!board) {
+      sendForbidden(res)
+      return
+    }
+
+    res.json(board)
   })
 
   router.post('/boards/:id/leave', async (req, res) => {

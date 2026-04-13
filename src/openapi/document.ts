@@ -104,6 +104,27 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
           },
         },
       },
+      '/workspaces/{wid}': {
+        patch: {
+          summary: 'Rename workspace',
+          requestParams: {
+            path: z.object({
+              wid: z.string().meta({
+                description: 'Workspace id',
+                example: 'workspace-123',
+              }),
+            }),
+          },
+          requestBody: {
+            content: {
+              'application/json': { schema: createWorkspaceBodySchema },
+            },
+          },
+          responses: {
+            '200': { description: 'Workspace updated' },
+          },
+        },
+      },
       '/auth/callback': {
         get: {
           summary: 'OAuth callback',

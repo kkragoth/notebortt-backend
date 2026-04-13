@@ -25,7 +25,7 @@ export function createBoardAccessRoutes(deps: BoardRouteDeps) {
       return
     }
 
-    const board = await deps.boardService.getBoard(params.id)
+    const board = await deps.boardService.getBoard(params.id, req.userId)
     if (!board) {
       sendNotFound(res, 'Board not found')
       return

@@ -85,7 +85,7 @@ services:
       - "8080:8080"
     stdin_open: true
     tty: true
-    command: sh -lc "npm ci && npm run dev"
+    command: sh -lc "npm ci && npm run db:migrate && npm run dev"
 
   backend:
     build:

@@ -49,6 +49,19 @@ export function createBoardInvitationRoutes(deps: BoardRouteDeps) {
     }
   })
 
+  router.delete('/sharing/pending-invites/:token', async (req, res) => {
+    const userId = req.userId!
+    const params = parseOrSendBadRequest(inviteTokenParamsSchema, req.params, res)
+    if (!params) return
+
+    try {
+      await deps.boardService.declinePendingInvitationByToken(params.token, userId)
+      res.sendStatus(204)
+    } catch (error) {
+      sendNotFound(res, error instanceof Error ? error.message : 'Invitation not found')
+    }
+  })
+
   router.get('/sharing/pending-invites', async (req, res) => {
     const userId = req.userId!
     const invites = await deps.boardService.listPendingInvitesForUser(userId)

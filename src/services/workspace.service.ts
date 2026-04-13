@@ -5,6 +5,7 @@ import { workspaces, workspaceMembers, workspaceInvitations, users } from '../db
 
 const INVITATION_TOKEN_BYTES = 32
 const INVITATION_EXPIRES_DAYS = 7
+const INVITATION_STATUS_PENDING = 'pending'
 
 function buildInvitationExpiry(): Date {
   const expiresAt = new Date()
@@ -18,6 +19,17 @@ function generateInvitationToken(): string {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
+}
+
+function trimEmail(email: string): string {
+  return email.trim()
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: string }).code === '23505'
 }
 
 export class WorkspaceInvitationError extends Error {
@@ -44,6 +56,16 @@ export function createWorkspaceService(db: Database) {
 
       return workspace
     })
+  }
+
+  async function renameWorkspace(workspaceId: string, name: string) {
+    const [workspace] = await db
+      .update(workspaces)
+      .set({ name, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId))
+      .returning()
+
+    return workspace ?? null
   }
 
   async function getWorkspacesForUser(userId: string) {
@@ -82,6 +104,60 @@ export function createWorkspaceService(db: Database) {
     return rows
   }
 
+  async function deleteWorkspaceMember(workspaceId: string, memberId: string) {
+    const memberRows = await db
+      .select({
+        id: workspaceMembers.id,
+        role: workspaceMembers.role,
+      })
+      .from(workspaceMembers)
+      .where(and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.id, memberId),
+      ))
+      .limit(1)
+
+    const member = memberRows[0]
+    if (!member) {
+      return false
+    }
+
+    if (member.role === 'owner') {
+      return false
+    }
+
+    await db
+      .delete(workspaceMembers)
+      .where(eq(workspaceMembers.id, memberId))
+
+    return true
+  }
+
+  async function getWorkspaceInvitations(workspaceId: string) {
+    const rows = await db
+      .select({
+        id: workspaceInvitations.id,
+        workspaceId: workspaceInvitations.workspaceId,
+        invitedBy: workspaceInvitations.invitedBy,
+        email: workspaceInvitations.email,
+        emailLower: workspaceInvitations.emailLower,
+        role: workspaceInvitations.role,
+        status: workspaceInvitations.status,
+        token: workspaceInvitations.token,
+        expiresAt: workspaceInvitations.expiresAt,
+        respondedAt: workspaceInvitations.respondedAt,
+        createdAt: workspaceInvitations.createdAt,
+        updatedAt: workspaceInvitations.updatedAt,
+        invitedByName: users.name,
+        invitedByEmail: users.email,
+      })
+      .from(workspaceInvitations)
+      .innerJoin(users, eq(workspaceInvitations.invitedBy, users.id))
+      .where(eq(workspaceInvitations.workspaceId, workspaceId))
+
+    return rows
+  }
+
   async function isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
     const result = await db
       .select({ id: workspaceMembers.id })
@@ -103,22 +179,98 @@ export function createWorkspaceService(db: Database) {
   }
 
   async function createInvitation(workspaceId: string, email: string, role: string, invitedBy: string) {
-    const token = generateInvitationToken()
-    const expiresAt = buildInvitationExpiry()
+    const emailRaw = trimEmail(email)
     const emailLower = normalizeEmail(email)
 
-    const [invitation] = await db
-      .insert(workspaceInvitations)
-      .values({ workspaceId, emailLower, role, invitedBy, token, expiresAt })
-      .returning()
+    const existingPending = await db
+      .select({
+        id: workspaceInvitations.id,
+        workspaceId: workspaceInvitations.workspaceId,
+        invitedBy: workspaceInvitations.invitedBy,
+        email: workspaceInvitations.email,
+        emailLower: workspaceInvitations.emailLower,
+        role: workspaceInvitations.role,
+        status: workspaceInvitations.status,
+        token: workspaceInvitations.token,
+        expiresAt: workspaceInvitations.expiresAt,
+        respondedAt: workspaceInvitations.respondedAt,
+        createdAt: workspaceInvitations.createdAt,
+        updatedAt: workspaceInvitations.updatedAt,
+      })
+      .from(workspaceInvitations)
+      .where(and(
+        eq(workspaceInvitations.workspaceId, workspaceId),
+        eq(workspaceInvitations.emailLower, emailLower),
+        eq(workspaceInvitations.status, INVITATION_STATUS_PENDING),
+      ))
+      .limit(1)
 
-    return invitation
+    if (existingPending.length > 0) {
+      return existingPending[0]!
+    }
+
+    const token = generateInvitationToken()
+    const expiresAt = buildInvitationExpiry()
+
+    try {
+      const [invitation] = await db
+        .insert(workspaceInvitations)
+        .values({
+          workspaceId,
+          email: emailRaw,
+          emailLower,
+          role,
+          invitedBy,
+          status: INVITATION_STATUS_PENDING,
+          token,
+          expiresAt,
+        })
+        .returning()
+
+      return invitation
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const [pendingInvitation] = await db
+          .select()
+          .from(workspaceInvitations)
+          .where(and(
+            eq(workspaceInvitations.workspaceId, workspaceId),
+            eq(workspaceInvitations.emailLower, emailLower),
+            eq(workspaceInvitations.status, INVITATION_STATUS_PENDING),
+          ))
+          .limit(1)
+
+        if (pendingInvitation) {
+          return pendingInvitation
+        }
+      }
+
+      throw error
+    }
   }
 
   async function getInvitation(token: string) {
     const result = await db
-      .select()
+      .select({
+        id: workspaceInvitations.id,
+        workspaceId: workspaceInvitations.workspaceId,
+        workspaceName: workspaces.name,
+        invitedBy: workspaceInvitations.invitedBy,
+        email: workspaceInvitations.email,
+        emailLower: workspaceInvitations.emailLower,
+        role: workspaceInvitations.role,
+        status: workspaceInvitations.status,
+        token: workspaceInvitations.token,
+        expiresAt: workspaceInvitations.expiresAt,
+        respondedAt: workspaceInvitations.respondedAt,
+        createdAt: workspaceInvitations.createdAt,
+        updatedAt: workspaceInvitations.updatedAt,
+        invitedByName: users.name,
+        invitedByEmail: users.email,
+      })
       .from(workspaceInvitations)
+      .innerJoin(users, eq(workspaceInvitations.invitedBy, users.id))
+      .innerJoin(workspaces, eq(workspaceInvitations.workspaceId, workspaces.id))
       .where(eq(workspaceInvitations.token, token))
       .limit(1)
 
@@ -188,8 +340,11 @@ export function createWorkspaceService(db: Database) {
 
   return {
     createWorkspace,
+    renameWorkspace,
     getWorkspacesForUser,
     getWorkspaceMembers,
+    deleteWorkspaceMember,
+    getWorkspaceInvitations,
     isWorkspaceMember,
     getWorkspaceMemberRole,
     createInvitation,

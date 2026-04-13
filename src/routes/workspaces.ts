@@ -14,6 +14,11 @@ const invitationTokenParamsSchema = z.object({
   token: z.string().trim().min(1),
 })
 
+const workspaceMemberParamsSchema = z.object({
+  wid: z.string().trim().min(1),
+  memberId: z.string().trim().min(1),
+})
+
 export function createWorkspaceRouter(workspaceService: WorkspaceService, authMiddleware: RequestHandler) {
   const router = Router()
 
@@ -36,6 +41,37 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
     res.status(201).json(workspace)
   })
 
+  router.patch('/workspaces/:wid', authMiddleware, async (req, res) => {
+    const userId = req.userId!
+    const params = parseWithSchema(workspaceIdParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const wid = params.data.wid
+    const parsed = parseWithSchema(createWorkspaceBodySchema, req.body)
+
+    if (!parsed.success) {
+      sendBadRequest(res, parsed.error.error)
+      return
+    }
+
+    const memberRole = await workspaceService.getWorkspaceMemberRole(wid, userId)
+    const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin'
+    if (!isOwnerOrAdmin) {
+      sendForbidden(res)
+      return
+    }
+
+    const workspace = await workspaceService.renameWorkspace(wid, parsed.data.name)
+    if (!workspace) {
+      sendNotFound(res, 'Workspace not found')
+      return
+    }
+
+    res.json(workspace)
+  })
+
   router.get('/workspaces/:wid/members', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const params = parseWithSchema(workspaceIdParamsSchema, req.params)
@@ -53,6 +89,50 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
 
     const members = await workspaceService.getWorkspaceMembers(wid)
     res.json({ members: toRecord(members) })
+  })
+
+  router.delete('/workspaces/:wid/members/:memberId', authMiddleware, async (req, res) => {
+    const userId = req.userId!
+    const params = parseWithSchema(workspaceMemberParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+
+    const memberRole = await workspaceService.getWorkspaceMemberRole(params.data.wid, userId)
+    const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin'
+    if (!isOwnerOrAdmin) {
+      sendForbidden(res)
+      return
+    }
+
+    const removed = await workspaceService.deleteWorkspaceMember(params.data.wid, params.data.memberId)
+    if (!removed) {
+      sendNotFound(res, 'Member not found')
+      return
+    }
+
+    res.sendStatus(204)
+  })
+
+  router.get('/workspaces/:wid/invitations', authMiddleware, async (req, res) => {
+    const userId = req.userId!
+    const params = parseWithSchema(workspaceIdParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const wid = params.data.wid
+
+    const memberRole = await workspaceService.getWorkspaceMemberRole(wid, userId)
+    const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin'
+    if (!isOwnerOrAdmin) {
+      sendForbidden(res)
+      return
+    }
+
+    const invitations = await workspaceService.getWorkspaceInvitations(wid)
+    res.json({ invitations: toRecord(invitations) })
   })
 
   router.post('/workspaces/:wid/invitations', authMiddleware, async (req, res) => {

@@ -57,6 +57,7 @@ export const workspaceInvitations = pgTable('workspace_invitations', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   invitedBy: uuid('invited_by').notNull().references(() => users.id),
+  email: text('email').notNull(),
   emailLower: text('email_lower').notNull(),
   role: text('role').notNull().default('viewer'),
   status: text('status').notNull().default('pending'),
@@ -107,6 +108,16 @@ export const boardMembers = pgTable('board_members', {
   uniqueIndex('board_member_user_idx').on(table.boardId, table.userId),
   index('idx_board_members_user').on(table.userId),
   check('valid_board_member_permission', sql`${table.permission} IN ('view', 'edit')`),
+])
+
+export const boardFavorites = pgTable('board_favorites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (table) => [
+  uniqueIndex('board_favorite_user_idx').on(table.boardId, table.userId),
+  index('idx_board_favorites_user').on(table.userId),
 ])
 
 export const boardInvitations = pgTable('board_invitations', {

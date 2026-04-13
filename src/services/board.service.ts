@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto'
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { boardInvitations, boardMembers, boards, elements, users, workspaceMembers } from '../db/schema.js'
+import { boardFavorites, boardInvitations, boardMembers, boards, elements, users, workspaceInvitations, workspaceMembers, workspaces } from '../db/schema.js'
 import {
   BOARD_PERMISSION_EDIT,
   BOARD_PERMISSION_VIEW,
@@ -14,6 +14,14 @@ import { buildDuplicatedElements, normalizeEmail, workspaceRoleToBoardPermission
 
 const INVITATION_TOKEN_BYTES = 32
 const INVITATION_EXPIRES_DAYS = 7
+const POSTGRES_UNDEFINED_TABLE = '42P01'
+
+function isMissingRelationError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: string }).code === POSTGRES_UNDEFINED_TABLE
+}
 
 function buildInvitationExpiry(): Date {
   const expiresAt = new Date()
@@ -33,11 +41,53 @@ export function createBoardService(db: Database) {
   type AccessibleBoard = typeof boards.$inferSelect & {
     permission: BoardPermission
     accessSource: 'workspace' | 'board_member'
+    isFavorite: boolean
+    favoriteCreatedAt: Date | null
   }
 
-  async function getBoard(boardId: string) {
+  async function getFavoriteBoardMap(userId: string) {
+    try {
+      const rows = await db
+        .select({
+          boardId: boardFavorites.boardId,
+          createdAt: boardFavorites.createdAt,
+        })
+        .from(boardFavorites)
+        .where(eq(boardFavorites.userId, userId))
+
+      return new Map(rows.map((row) => [row.boardId, row.createdAt ?? null] as const))
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        return new Map<string, Date | null>()
+      }
+
+      throw error
+    }
+  }
+
+  async function getBoard(boardId: string, userId?: string) {
     const result = await db.select().from(boards).where(eq(boards.id, boardId)).limit(1)
-    return result[0] ?? null
+    const board = result[0] ?? null
+    if (!board) {
+      return null
+    }
+
+    const favoriteCreatedAt = userId ? await getBoardFavoriteCreatedAt(boardId, userId) : null
+    return {
+      ...board,
+      isFavorite: favoriteCreatedAt !== null,
+      favoriteCreatedAt,
+    }
+  }
+
+  async function getBoardFavoriteCreatedAt(boardId: string, userId: string) {
+    const rows = await db
+      .select({ createdAt: boardFavorites.createdAt })
+      .from(boardFavorites)
+      .where(and(eq(boardFavorites.boardId, boardId), eq(boardFavorites.userId, userId)))
+      .limit(1)
+
+    return rows[0]?.createdAt ?? null
   }
 
   async function getBoardMemberPermission(boardId: string, userId: string) {
@@ -69,11 +119,20 @@ export function createBoardService(db: Database) {
     return board
   }
 
-  async function getBoardsForWorkspace(workspaceId: string) {
-    return db.select().from(boards).where(eq(boards.workspaceId, workspaceId))
+  async function getBoardsForWorkspace(workspaceId: string, userId: string) {
+    const favoriteBoardMap = await getFavoriteBoardMap(userId)
+    const rows = await db.select().from(boards).where(eq(boards.workspaceId, workspaceId))
+
+    return rows.map((board) => ({
+      ...board,
+      isFavorite: favoriteBoardMap.has(board.id),
+      favoriteCreatedAt: favoriteBoardMap.get(board.id) ?? null,
+    }))
   }
 
   async function listAccessibleBoards(userId: string): Promise<AccessibleBoard[]> {
+    const favoriteBoardMap = await getFavoriteBoardMap(userId)
+
     const workspaceBoards = await db
       .select({
         id: boards.id,
@@ -127,6 +186,8 @@ export function createBoardService(db: Database) {
         ...board,
         permission: workspaceRoleToBoardPermission(board.permission),
         accessSource: 'workspace',
+        isFavorite: favoriteBoardMap.has(board.id),
+        favoriteCreatedAt: favoriteBoardMap.get(board.id) ?? null,
       })
     }
 
@@ -139,6 +200,8 @@ export function createBoardService(db: Database) {
         ...board,
         permission: board.permission === BOARD_PERMISSION_EDIT ? BOARD_PERMISSION_EDIT : BOARD_PERMISSION_VIEW,
         accessSource: 'board_member',
+        isFavorite: favoriteBoardMap.has(board.id),
+        favoriteCreatedAt: favoriteBoardMap.get(board.id) ?? null,
       })
     }
 
@@ -320,8 +383,9 @@ export function createBoardService(db: Database) {
       return []
     }
 
-    const invitations = await db
+    const boardInvitationsRows = await db
       .select({
+        kind: sql`'board'`.as('kind'),
         id: boardInvitations.id,
         token: boardInvitations.token,
         boardId: boardInvitations.boardId,
@@ -339,8 +403,30 @@ export function createBoardService(db: Database) {
         eq(boardInvitations.status, INVITATION_STATUS_PENDING),
       ))
 
-    return invitations.map((invitation) => ({
+    const workspaceInvitationsRows = await db
+      .select({
+        kind: sql`'workspace'`.as('kind'),
+        id: workspaceInvitations.id,
+        token: workspaceInvitations.token,
+        workspaceId: workspaceInvitations.workspaceId,
+        workspaceName: workspaces.name,
+        role: workspaceInvitations.role,
+        createdAt: workspaceInvitations.createdAt,
+        createdBy: users.name,
+        status: workspaceInvitations.status,
+      })
+      .from(workspaceInvitations)
+      .innerJoin(workspaces, eq(workspaceInvitations.workspaceId, workspaces.id))
+      .innerJoin(users, eq(workspaceInvitations.invitedBy, users.id))
+      .where(and(
+        eq(workspaceInvitations.emailLower, normalizeEmail(userEmail)),
+        eq(workspaceInvitations.status, INVITATION_STATUS_PENDING),
+      ))
+
+    return [
+      ...boardInvitationsRows.map((invitation) => ({
       id: invitation.id,
+      kind: 'board' as const,
       token: invitation.token,
       notificationId: null,
       boardId: invitation.boardId,
@@ -349,7 +435,20 @@ export function createBoardService(db: Database) {
       createdAt: invitation.createdAt ? new Date(invitation.createdAt).getTime() : Date.now(),
       createdBy: invitation.createdBy,
       status: invitation.status as 'pending' | 'accepted' | 'revoked' | 'expired',
-    }))
+      })),
+      ...workspaceInvitationsRows.map((invitation) => ({
+        id: invitation.id,
+        kind: 'workspace' as const,
+        token: invitation.token,
+        notificationId: null,
+        workspaceId: invitation.workspaceId,
+        workspaceName: invitation.workspaceName,
+        role: invitation.role as 'admin' | 'editor' | 'viewer',
+        createdAt: invitation.createdAt ? new Date(invitation.createdAt).getTime() : Date.now(),
+        createdBy: invitation.createdBy,
+        status: invitation.status as 'pending' | 'accepted' | 'revoked' | 'expired',
+      })),
+    ]
   }
 
   async function acceptBoardInvitationByToken(token: string, userId: string) {
@@ -403,6 +502,70 @@ export function createBoardService(db: Database) {
           updatedAt: new Date(),
         })
         .where(eq(boardInvitations.id, invitation.id))
+      })
+  }
+
+  async function declinePendingInvitationByToken(token: string, userId: string) {
+    const userRows = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+
+    const userEmail = userRows[0]?.email
+    if (!userEmail) {
+      throw new Error('User not found')
+    }
+
+    const normalizedEmail = normalizeEmail(userEmail)
+
+    return db.transaction(async (tx) => {
+      const boardInvitationRows = await tx
+        .select()
+        .from(boardInvitations)
+        .where(and(
+          eq(boardInvitations.token, token),
+          eq(boardInvitations.emailLower, normalizedEmail),
+          eq(boardInvitations.status, INVITATION_STATUS_PENDING),
+        ))
+        .limit(1)
+
+      const boardInvitation = boardInvitationRows[0]
+      if (boardInvitation) {
+        await tx
+          .update(boardInvitations)
+          .set({
+            status: INVITATION_STATUS_REVOKED,
+            respondedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(boardInvitations.id, boardInvitation.id))
+        return
+      }
+
+      const workspaceInvitationRows = await tx
+        .select()
+        .from(workspaceInvitations)
+        .where(and(
+          eq(workspaceInvitations.token, token),
+          eq(workspaceInvitations.emailLower, normalizedEmail),
+          eq(workspaceInvitations.status, INVITATION_STATUS_PENDING),
+        ))
+        .limit(1)
+
+      const workspaceInvitation = workspaceInvitationRows[0]
+      if (!workspaceInvitation) {
+        throw new Error('Invitation not found')
+      }
+
+      await tx
+        .update(workspaceInvitations)
+        .set({
+          status: 'declined',
+          respondedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(workspaceInvitations.id, workspaceInvitation.id))
     })
   }
 
@@ -500,6 +663,39 @@ export function createBoardService(db: Database) {
       .where(and(eq(boardMembers.boardId, boardId), eq(boardMembers.userId, userId)))
   }
 
+  async function setBoardFavorite(boardId: string, userId: string, isFavorite: boolean) {
+    const access = await checkBoardAccess(boardId, userId)
+    if (!access.hasAccess) {
+      return null
+    }
+
+    try {
+      if (isFavorite) {
+        await db
+          .insert(boardFavorites)
+          .values({ boardId, userId, createdAt: new Date() })
+          .onConflictDoUpdate({
+            target: [boardFavorites.boardId, boardFavorites.userId],
+            set: {
+              createdAt: new Date(),
+            },
+          })
+      } else {
+        await db
+          .delete(boardFavorites)
+          .where(and(eq(boardFavorites.boardId, boardId), eq(boardFavorites.userId, userId)))
+      }
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        return null
+      }
+
+      throw error
+    }
+
+    return getBoard(boardId, userId)
+  }
+
   return {
     createBoard,
     getBoardsForWorkspace,
@@ -517,6 +713,7 @@ export function createBoardService(db: Database) {
     createBoardInvitation,
     listPendingInvitesForUser,
     acceptBoardInvitationByToken,
+    declinePendingInvitationByToken,
     revokeBoardInvitation,
     getBoardInvitationIds,
     expireInvitations,
@@ -524,6 +721,7 @@ export function createBoardService(db: Database) {
     duplicateBoard,
     deleteBoard,
     leaveBoard,
+    setBoardFavorite,
   }
 }
 
