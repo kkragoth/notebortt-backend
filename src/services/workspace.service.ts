@@ -39,6 +39,7 @@ export function createWorkspaceService(db: Database) {
         workspaceId: workspace.id,
         userId: ownerId,
         role: 'owner',
+        addedBy: null,
       })
 
       return workspace
@@ -67,7 +68,9 @@ export function createWorkspaceService(db: Database) {
         workspaceId: workspaceMembers.workspaceId,
         userId: workspaceMembers.userId,
         role: workspaceMembers.role,
+        addedBy: workspaceMembers.addedBy,
         createdAt: workspaceMembers.createdAt,
+        updatedAt: workspaceMembers.updatedAt,
         name: users.name,
         email: users.email,
         avatarUrl: users.avatarUrl,
@@ -102,10 +105,11 @@ export function createWorkspaceService(db: Database) {
   async function createInvitation(workspaceId: string, email: string, role: string, invitedBy: string) {
     const token = generateInvitationToken()
     const expiresAt = buildInvitationExpiry()
+    const emailLower = normalizeEmail(email)
 
     const [invitation] = await db
       .insert(workspaceInvitations)
-      .values({ workspaceId, email, role, invitedBy, token, expiresAt })
+      .values({ workspaceId, emailLower, role, invitedBy, token, expiresAt })
       .returning()
 
     return invitation
@@ -145,14 +149,14 @@ export function createWorkspaceService(db: Database) {
         throw new WorkspaceInvitationError('not_found', 'Invitation not found')
       }
 
-      if (normalizeEmail(invitation.email) !== normalizeEmail(currentUserEmail)) {
+      if (invitation.emailLower !== normalizeEmail(currentUserEmail)) {
         throw new WorkspaceInvitationError('wrong_user', 'Invitation email does not match current user')
       }
 
       const now = new Date()
       const acceptedRows = await tx
         .update(workspaceInvitations)
-        .set({ status: 'accepted' })
+        .set({ status: 'accepted', respondedAt: new Date(), updatedAt: new Date() })
         .where(and(
           eq(workspaceInvitations.id, invitation.id),
           eq(workspaceInvitations.status, 'pending'),
@@ -168,6 +172,8 @@ export function createWorkspaceService(db: Database) {
         workspaceId: invitation.workspaceId,
         userId,
         role: invitation.role,
+        addedBy: invitation.invitedBy,
+        updatedAt: new Date(),
       }).onConflictDoNothing()
 
       const workspaceRows = await tx

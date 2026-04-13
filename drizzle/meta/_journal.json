@@ -43,6 +43,13 @@
       "when": 1775737200000,
       "tag": "0005_billing_webhook_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776069420000,
+      "tag": "0006_iam_boards_workspaces",
+      "breakpoints": true
     }
   ]
 }

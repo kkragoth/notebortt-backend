@@ -1,20 +1,38 @@
 import { randomBytes } from 'crypto'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, ne } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { boards, boardInvitations, boardShares, elements, users, workspaceMembers } from '../db/schema.js'
+import { boardInvitations, boardMembers, boards, elements, users, workspaceMembers } from '../db/schema.js'
 import {
   BOARD_PERMISSION_EDIT,
+  BOARD_PERMISSION_VIEW,
   INVITATION_STATUS_ACCEPTED,
   INVITATION_STATUS_PENDING,
   INVITATION_STATUS_REVOKED,
   type BoardPermission,
 } from './board.service.constants.js'
-import { buildDuplicatedElements, normalizeEmail, roleToPermission } from './board.service.utils.js'
+import { buildDuplicatedElements, normalizeEmail, workspaceRoleToBoardPermission } from './board.service.utils.js'
+
+const INVITATION_TOKEN_BYTES = 32
+const INVITATION_EXPIRES_DAYS = 7
+
+function buildInvitationExpiry(): Date {
+  const expiresAt = new Date()
+  expiresAt.setDate(expiresAt.getDate() + INVITATION_EXPIRES_DAYS)
+  return expiresAt
+}
+
+function generateInvitationToken(): string {
+  return randomBytes(INVITATION_TOKEN_BYTES).toString('hex')
+}
+
+function generateLinkShareToken(): string {
+  return randomBytes(24).toString('hex')
+}
 
 export function createBoardService(db: Database) {
   type AccessibleBoard = typeof boards.$inferSelect & {
     permission: BoardPermission
-    accessSource: 'workspace' | 'share'
+    accessSource: 'workspace' | 'board_member'
   }
 
   async function getBoard(boardId: string) {
@@ -22,14 +40,14 @@ export function createBoardService(db: Database) {
     return result[0] ?? null
   }
 
-  async function getBoardUserShare(boardId: string, userId: string) {
+  async function getBoardMemberPermission(boardId: string, userId: string) {
     const rows = await db
-      .select({ permission: boardShares.permission })
-      .from(boardShares)
-      .where(and(eq(boardShares.boardId, boardId), eq(boardShares.userId, userId)))
+      .select({ permission: boardMembers.permission })
+      .from(boardMembers)
+      .where(and(eq(boardMembers.boardId, boardId), eq(boardMembers.userId, userId)))
       .limit(1)
 
-    return rows[0] ?? null
+    return rows[0]?.permission as BoardPermission | undefined
   }
 
   async function getWorkspaceBoardMembershipPermission(workspaceId: string, userId: string): Promise<BoardPermission | null> {
@@ -39,17 +57,11 @@ export function createBoardService(db: Database) {
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
       .limit(1)
 
-    return rows.length > 0 ? BOARD_PERMISSION_EDIT : null
-  }
+    if (rows.length === 0) {
+      return null
+    }
 
-  async function getBoardLinkAccess(boardId: string, shareToken: string) {
-    const rows = await db
-      .select({ permission: boardShares.permission })
-      .from(boardShares)
-      .where(and(eq(boardShares.token, shareToken), eq(boardShares.boardId, boardId), isNull(boardShares.userId)))
-      .limit(1)
-
-    return rows[0] ?? null
+    return workspaceRoleToBoardPermission(rows[0]!.role)
   }
 
   async function createBoard(workspaceId: string, name: string) {
@@ -72,6 +84,9 @@ export function createBoardService(db: Database) {
         previewSvg: boards.previewSvg,
         previewVersion: boards.previewVersion,
         previewUpdatedAt: boards.previewUpdatedAt,
+        linkShareEnabled: boards.linkShareEnabled,
+        linkShareToken: boards.linkShareToken,
+        linkSharePermission: boards.linkSharePermission,
         createdAt: boards.createdAt,
         updatedAt: boards.updatedAt,
         permission: workspaceMembers.role,
@@ -82,7 +97,7 @@ export function createBoardService(db: Database) {
         eq(workspaceMembers.userId, userId),
       ))
 
-    const directShares = await db
+    const directBoardMembers = await db
       .select({
         id: boards.id,
         workspaceId: boards.workspaceId,
@@ -92,14 +107,17 @@ export function createBoardService(db: Database) {
         previewSvg: boards.previewSvg,
         previewVersion: boards.previewVersion,
         previewUpdatedAt: boards.previewUpdatedAt,
+        linkShareEnabled: boards.linkShareEnabled,
+        linkShareToken: boards.linkShareToken,
+        linkSharePermission: boards.linkSharePermission,
         createdAt: boards.createdAt,
         updatedAt: boards.updatedAt,
-        permission: boardShares.permission,
+        permission: boardMembers.permission,
       })
       .from(boards)
-      .innerJoin(boardShares, and(
-        eq(boards.id, boardShares.boardId),
-        eq(boardShares.userId, userId),
+      .innerJoin(boardMembers, and(
+        eq(boards.id, boardMembers.boardId),
+        eq(boardMembers.userId, userId),
       ))
 
     const deduped = new Map<string, AccessibleBoard>()
@@ -107,20 +125,20 @@ export function createBoardService(db: Database) {
     for (const board of workspaceBoards) {
       deduped.set(board.id, {
         ...board,
-        permission: 'edit',
+        permission: workspaceRoleToBoardPermission(board.permission),
         accessSource: 'workspace',
       })
     }
 
-    for (const board of directShares) {
+    for (const board of directBoardMembers) {
       if (deduped.has(board.id)) {
         continue
       }
 
       deduped.set(board.id, {
         ...board,
-        permission: board.permission === 'edit' ? 'edit' : 'view',
-        accessSource: 'share',
+        permission: board.permission === BOARD_PERMISSION_EDIT ? BOARD_PERMISSION_EDIT : BOARD_PERMISSION_VIEW,
+        accessSource: 'board_member',
       })
     }
 
@@ -151,78 +169,117 @@ export function createBoardService(db: Database) {
       return { hasAccess: false, permission: null }
     }
 
-    if (userId) {
-      const memberPermission = await getWorkspaceBoardMembershipPermission(board.workspaceId, userId)
-      if (memberPermission) {
-        return { hasAccess: true, permission: memberPermission }
-      }
-
-      const share = await getBoardUserShare(boardId, userId)
-      if (share) {
-        return { hasAccess: true, permission: share.permission as BoardPermission }
-      }
+    if (shareToken && board.linkShareEnabled && board.linkShareToken === shareToken) {
+      return { hasAccess: true, permission: board.linkSharePermission as BoardPermission }
     }
 
-    if (shareToken) {
-      const shareLink = await getBoardLinkAccess(boardId, shareToken)
-      if (shareLink) {
-        return { hasAccess: true, permission: shareLink.permission as BoardPermission }
+    if (userId) {
+      const directPermission = await getBoardMemberPermission(boardId, userId)
+      if (directPermission) {
+        return { hasAccess: true, permission: directPermission }
+      }
+
+      const workspacePermission = await getWorkspaceBoardMembershipPermission(board.workspaceId, userId)
+      if (workspacePermission) {
+        return { hasAccess: true, permission: workspacePermission }
       }
     }
 
     return { hasAccess: false, permission: null }
   }
 
-  async function createBoardShare(boardId: string, userId: string | undefined, permission: string) {
-    const isPublicLink = !userId
-    const token = isPublicLink ? randomBytes(24).toString('hex') : undefined
+  async function getBoardMembers(boardId: string) {
+    return db.select().from(boardMembers).where(eq(boardMembers.boardId, boardId))
+  }
 
-    const [share] = await db
-      .insert(boardShares)
-      .values({ boardId, userId: userId ?? null, permission, token })
+  async function upsertBoardMember(boardId: string, userId: string, permission: BoardPermission, addedBy?: string) {
+    const [member] = await db
+      .insert(boardMembers)
+      .values({ boardId, userId, permission, addedBy: addedBy ?? null })
+      .onConflictDoUpdate({
+        target: [boardMembers.boardId, boardMembers.userId],
+        set: {
+          permission,
+          addedBy: addedBy ?? null,
+          updatedAt: new Date(),
+        },
+      })
       .returning()
 
-    return share
+    return member
   }
 
-  async function createBoardLink(boardId: string, permission: 'view' | 'edit') {
-    return createBoardShare(boardId, undefined, permission)
+  async function updateBoardMemberPermission(boardId: string, memberId: string, permission: BoardPermission) {
+    await db
+      .update(boardMembers)
+      .set({ permission, updatedAt: new Date() })
+      .where(and(eq(boardMembers.id, memberId), eq(boardMembers.boardId, boardId)))
   }
 
-  async function revokeBoardLink(boardId: string, shareId: string) {
-    await db.delete(boardShares).where(and(eq(boardShares.id, shareId), eq(boardShares.boardId, boardId), isNull(boardShares.userId)))
+  async function deleteBoardMember(boardId: string, memberId: string) {
+    await db
+      .delete(boardMembers)
+      .where(and(eq(boardMembers.id, memberId), eq(boardMembers.boardId, boardId)))
+  }
+
+  async function setBoardLinkShare(boardId: string, enabled: boolean, permission: BoardPermission) {
+    const nextToken = enabled ? generateLinkShareToken() : null
+
+    const [board] = await db
+      .update(boards)
+      .set({
+        linkShareEnabled: enabled,
+        linkSharePermission: permission,
+        linkShareToken: nextToken,
+        updatedAt: new Date(),
+      })
+      .where(eq(boards.id, boardId))
+      .returning({
+        id: boards.id,
+        linkShareEnabled: boards.linkShareEnabled,
+        linkSharePermission: boards.linkSharePermission,
+        linkShareToken: boards.linkShareToken,
+      })
+
+    return board ?? null
+  }
+
+  async function rotateBoardLinkShareToken(boardId: string) {
+    const [board] = await db
+      .update(boards)
+      .set({
+        linkShareToken: generateLinkShareToken(),
+        updatedAt: new Date(),
+      })
+      .where(eq(boards.id, boardId))
+      .returning({
+        id: boards.id,
+        linkShareEnabled: boards.linkShareEnabled,
+        linkSharePermission: boards.linkSharePermission,
+        linkShareToken: boards.linkShareToken,
+      })
+
+    return board ?? null
   }
 
   async function getShareByToken(token: string) {
     const rows = await db
-      .select({ boardId: boardShares.boardId, permission: boardShares.permission })
-      .from(boardShares)
-      .where(and(eq(boardShares.token, token), isNull(boardShares.userId)))
+      .select({ boardId: boards.id, permission: boards.linkSharePermission })
+      .from(boards)
+      .where(and(
+        eq(boards.linkShareToken, token),
+        eq(boards.linkShareEnabled, true),
+      ))
       .limit(1)
 
     return rows[0] ?? null
   }
 
-  async function getBoardShares(boardId: string) {
-    return db.select().from(boardShares).where(eq(boardShares.boardId, boardId))
-  }
-
-  async function deleteBoardShare(shareId: string) {
-    await db.delete(boardShares).where(eq(boardShares.id, shareId))
-  }
-
-  async function updateBoardSharePermission(boardId: string, shareId: string, permission: 'view' | 'edit') {
-    await db
-      .update(boardShares)
-      .set({ permission })
-      .where(and(eq(boardShares.id, shareId), eq(boardShares.boardId, boardId)))
-  }
-
-  async function createBoardInvitation(boardId: string, invitedBy: string, email: string, role: 'editor' | 'viewer') {
+  async function createBoardInvitation(boardId: string, invitedBy: string, email: string, permission: BoardPermission) {
     const normalizedEmail = normalizeEmail(email)
 
     const existingPending = await db
-      .select({ id: boardInvitations.id })
+      .select({ id: boardInvitations.id, token: boardInvitations.token })
       .from(boardInvitations)
       .where(and(
         eq(boardInvitations.boardId, boardId),
@@ -232,7 +289,7 @@ export function createBoardService(db: Database) {
       .limit(1)
 
     if (existingPending.length > 0) {
-      return { inviteId: existingPending[0].id }
+      return { inviteId: existingPending[0]!.id, token: existingPending[0]!.token }
     }
 
     const [invitation] = await db
@@ -241,12 +298,14 @@ export function createBoardService(db: Database) {
         boardId,
         invitedBy,
         emailLower: normalizedEmail,
-        role,
+        permission,
         status: INVITATION_STATUS_PENDING,
+        token: generateInvitationToken(),
+        expiresAt: buildInvitationExpiry(),
       })
-      .returning({ id: boardInvitations.id })
+      .returning({ id: boardInvitations.id, token: boardInvitations.token })
 
-    return { inviteId: invitation.id }
+    return { inviteId: invitation!.id, token: invitation!.token }
   }
 
   async function listPendingInvitesForUser(userId: string) {
@@ -264,9 +323,10 @@ export function createBoardService(db: Database) {
     const invitations = await db
       .select({
         id: boardInvitations.id,
+        token: boardInvitations.token,
         boardId: boardInvitations.boardId,
         boardTitle: boards.name,
-        role: boardInvitations.role,
+        permission: boardInvitations.permission,
         createdAt: boardInvitations.createdAt,
         createdBy: users.name,
         status: boardInvitations.status,
@@ -281,17 +341,18 @@ export function createBoardService(db: Database) {
 
     return invitations.map((invitation) => ({
       id: invitation.id,
+      token: invitation.token,
       notificationId: null,
       boardId: invitation.boardId,
       boardTitle: invitation.boardTitle,
-      role: invitation.role as 'editor' | 'viewer',
+      permission: invitation.permission as BoardPermission,
       createdAt: invitation.createdAt ? new Date(invitation.createdAt).getTime() : Date.now(),
       createdBy: invitation.createdBy,
       status: invitation.status as 'pending' | 'accepted' | 'revoked' | 'expired',
     }))
   }
 
-  async function acceptBoardInvitation(boardId: string, inviteId: string, userId: string) {
+  async function acceptBoardInvitationByToken(token: string, userId: string) {
     const userRows = await db
       .select({ email: users.email })
       .from(users)
@@ -308,8 +369,7 @@ export function createBoardService(db: Database) {
         .select()
         .from(boardInvitations)
         .where(and(
-          eq(boardInvitations.id, inviteId),
-          eq(boardInvitations.boardId, boardId),
+          eq(boardInvitations.token, token),
           eq(boardInvitations.emailLower, normalizeEmail(userEmail)),
           eq(boardInvitations.status, INVITATION_STATUS_PENDING),
         ))
@@ -320,23 +380,28 @@ export function createBoardService(db: Database) {
         throw new Error('Invitation not found')
       }
 
-      const existingShareRows = await tx
-        .select({ id: boardShares.id })
-        .from(boardShares)
-        .where(and(eq(boardShares.boardId, boardId), eq(boardShares.userId, userId)))
-        .limit(1)
-
-      if (existingShareRows.length === 0) {
-        await tx.insert(boardShares).values({
-          boardId,
+      await tx
+        .insert(boardMembers)
+        .values({
+          boardId: invitation.boardId,
           userId,
-          permission: roleToPermission(invitation.role),
+          permission: invitation.permission,
         })
-      }
+        .onConflictDoUpdate({
+          target: [boardMembers.boardId, boardMembers.userId],
+          set: {
+            permission: invitation.permission,
+            updatedAt: new Date(),
+          },
+        })
 
       await tx
         .update(boardInvitations)
-        .set({ status: INVITATION_STATUS_ACCEPTED })
+        .set({
+          status: INVITATION_STATUS_ACCEPTED,
+          respondedAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(eq(boardInvitations.id, invitation.id))
     })
   }
@@ -344,7 +409,11 @@ export function createBoardService(db: Database) {
   async function revokeBoardInvitation(boardId: string, inviteId: string) {
     await db
       .update(boardInvitations)
-      .set({ status: INVITATION_STATUS_REVOKED })
+      .set({
+        status: INVITATION_STATUS_REVOKED,
+        respondedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(and(eq(boardInvitations.id, inviteId), eq(boardInvitations.boardId, boardId)))
   }
 
@@ -364,8 +433,15 @@ export function createBoardService(db: Database) {
 
     await db
       .update(boardInvitations)
-      .set({ status: 'expired' })
-      .where(inArray(boardInvitations.id, inviteIds))
+      .set({
+        status: 'expired',
+        respondedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        inArray(boardInvitations.id, inviteIds),
+        ne(boardInvitations.status, 'accepted'),
+      ))
   }
 
   async function renameBoard(boardId: string, name: string) {
@@ -420,8 +496,8 @@ export function createBoardService(db: Database) {
 
   async function leaveBoard(boardId: string, userId: string) {
     await db
-      .delete(boardShares)
-      .where(and(eq(boardShares.boardId, boardId), eq(boardShares.userId, userId)))
+      .delete(boardMembers)
+      .where(and(eq(boardMembers.boardId, boardId), eq(boardMembers.userId, userId)))
   }
 
   return {
@@ -431,16 +507,16 @@ export function createBoardService(db: Database) {
     listAccessibleBoards,
     getBoardElements,
     checkBoardAccess,
-    createBoardShare,
-    createBoardLink,
-    revokeBoardLink,
-    getBoardShares,
-    deleteBoardShare,
-    updateBoardSharePermission,
+    getBoardMembers,
+    upsertBoardMember,
+    updateBoardMemberPermission,
+    deleteBoardMember,
+    setBoardLinkShare,
+    rotateBoardLinkShareToken,
     getShareByToken,
     createBoardInvitation,
     listPendingInvitesForUser,
-    acceptBoardInvitation,
+    acceptBoardInvitationByToken,
     revokeBoardInvitation,
     getBoardInvitationIds,
     expireInvitations,

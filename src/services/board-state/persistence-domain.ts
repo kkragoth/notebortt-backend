@@ -348,7 +348,9 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
       redis.zcard(DIRTY_BOARDS_BY_AGE_KEY),
     ])
     metrics.incrementCounter('redis.commands', 2, { category: 'state', command: 'zrangebyscore_or_zcard' })
-    metrics.logStructured('board.dirty_backlog', { dirtyBoards: dirtyBacklog, sampleSize: boardIds.length })
+    if (dirtyBacklog > 0) {
+      metrics.logStructured('board.dirty_backlog', { dirtyBoards: dirtyBacklog, sampleSize: boardIds.length })
+    }
     const persisted: string[] = []
 
     for (const boardId of boardIds) {

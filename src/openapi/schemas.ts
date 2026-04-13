@@ -13,9 +13,9 @@ export const createWorkspaceInvitationBodySchema = z.object({
     description: 'Email address to invite',
     example: 'teammate@example.com',
   }),
-  role: z.enum(['owner', 'admin', 'member']).optional().meta({
+  role: z.enum(['admin', 'editor', 'viewer']).optional().meta({
     description: 'Workspace role for the invited user',
-    example: 'member',
+    example: 'viewer',
   }),
 }).meta({ id: 'CreateWorkspaceInvitationBody' })
 
@@ -31,18 +31,29 @@ export const createBoardInviteBodySchema = z.object({
     description: 'Email address to invite to the board',
     example: 'editor@example.com',
   }),
-  role: z.enum(['editor', 'viewer']).optional().meta({
-    description: 'Board invite role',
-    example: 'viewer',
+  permission: z.enum(['view', 'edit']).optional().meta({
+    description: 'Board invite permission',
+    example: 'view',
   }),
 }).meta({ id: 'CreateBoardInviteBody' })
 
-export const updateBoardSharePermissionBodySchema = z.object({
+export const updateBoardMemberPermissionBodySchema = z.object({
   permission: z.enum(['view', 'edit']).meta({
-    description: 'Shared permission',
+    description: 'Board member permission',
     example: 'edit',
   }),
-}).meta({ id: 'UpdateBoardSharePermissionBody' })
+}).meta({ id: 'UpdateBoardMemberPermissionBody' })
+
+export const setBoardLinkSharingBodySchema = z.object({
+  enabled: z.boolean().meta({
+    description: 'Whether link sharing is enabled',
+    example: true,
+  }),
+  permission: z.enum(['view', 'edit']).optional().meta({
+    description: 'Permission granted via link when enabled',
+    example: 'edit',
+  }),
+}).meta({ id: 'SetBoardLinkSharingBody' })
 
 export const debugStateQuerySchema = z.object({
   boardId: z.string().optional().meta({

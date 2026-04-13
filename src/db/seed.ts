@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { loadConfig } from '../config.js'
 import { createDb } from './client.js'
 import { users, workspaces, workspaceMembers, boards } from './schema.js'
@@ -59,6 +60,9 @@ async function seedDevUser(db: ReturnType<typeof createDb>, devUser: DevUser, wi
 async function seed() {
   const config = loadConfig()
   const db = createDb(config.databaseUrl)
+
+  console.log('[Seed] Applying pending migrations...')
+  await migrate(db, { migrationsFolder: 'drizzle' })
 
   console.log('[Seed] Inserting dev users (idempotent)...')
 

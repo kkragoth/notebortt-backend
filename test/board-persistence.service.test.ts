@@ -17,4 +17,20 @@ describe('board persistence worker policy', () => {
       retryDelayMs: 250,
     })
   })
+
+  it('starts the worker with a 30s poll interval by default', () => {
+    const boardStateService = {
+      persistDirtyBoards: vi.fn().mockResolvedValue([]),
+    } as any
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockReturnValue(0 as any)
+    const service = createBoardPersistenceService(boardStateService)
+
+    try {
+      service.startWorker()
+
+      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000)
+    } finally {
+      setIntervalSpy.mockRestore()
+    }
+  })
 })

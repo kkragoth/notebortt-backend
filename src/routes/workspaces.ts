@@ -1,9 +1,18 @@
 import { Router } from 'express'
 import type { RequestHandler } from 'express'
+import { z } from 'zod'
 import { sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
 import { createWorkspaceBodySchema, createWorkspaceInvitationBodySchema } from '../openapi/schemas.js'
 import { WorkspaceInvitationError, type WorkspaceService } from '../services/workspace.service.js'
+
+const workspaceIdParamsSchema = z.object({
+  wid: z.string().trim().min(1),
+})
+
+const invitationTokenParamsSchema = z.object({
+  token: z.string().trim().min(1),
+})
 
 export function createWorkspaceRouter(workspaceService: WorkspaceService, authMiddleware: RequestHandler) {
   const router = Router()
@@ -29,7 +38,12 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
 
   router.get('/workspaces/:wid/members', authMiddleware, async (req, res) => {
     const userId = req.userId!
-    const wid = req.params['wid'] as string
+    const params = parseWithSchema(workspaceIdParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const wid = params.data.wid
 
     const isMember = await workspaceService.isWorkspaceMember(wid, userId)
     if (!isMember) {
@@ -43,7 +57,12 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
 
   router.post('/workspaces/:wid/invitations', authMiddleware, async (req, res) => {
     const userId = req.userId!
-    const wid = req.params['wid'] as string
+    const params = parseWithSchema(workspaceIdParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const wid = params.data.wid
     const parsed = parseWithSchema(createWorkspaceInvitationBodySchema, req.body)
 
     if (!parsed.success) {
@@ -51,7 +70,7 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
       return
     }
 
-    const inviteRole = parsed.data.role ?? 'member'
+    const inviteRole = parsed.data.role ?? 'viewer'
 
     const memberRole = await workspaceService.getWorkspaceMemberRole(wid, userId)
     const isOwnerOrAdmin = memberRole === 'owner' || memberRole === 'admin'
@@ -65,7 +84,12 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
   })
 
   router.get('/invitations/:token', async (req, res) => {
-    const token = req.params['token'] as string
+    const params = parseWithSchema(invitationTokenParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const token = params.data.token
     const invitation = await workspaceService.getInvitation(token)
 
     if (!invitation) {
@@ -78,7 +102,12 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
 
   router.post('/invitations/:token/accept', authMiddleware, async (req, res) => {
     const userId = req.userId!
-    const token = req.params['token'] as string
+    const params = parseWithSchema(invitationTokenParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+    const token = params.data.token
 
     try {
       const workspace = await workspaceService.acceptInvitation(token, userId)

@@ -67,6 +67,12 @@ test:
 test-watch:
     npx vitest
 
+build:
+    npm run build
+
+build-docker:
+    docker compose -f docker-compose.yml build backend
+
 health:
     @curl -s http://localhost:8080/health | python3 -m json.tool
 

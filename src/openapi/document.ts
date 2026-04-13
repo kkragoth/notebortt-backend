@@ -9,7 +9,8 @@ import {
   devLoginBodySchema,
   debugStateQuerySchema,
   refreshTokenCookieSchema,
-  updateBoardSharePermissionBodySchema,
+  setBoardLinkSharingBodySchema,
+  updateBoardMemberPermissionBodySchema,
 } from './schemas.js'
 
 const healthResponseSchema = z.object({
@@ -213,22 +214,40 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
           },
         },
       },
-      '/boards/{id}/shares/{shareId}': {
+      '/boards/{id}/members/{memberId}': {
         patch: {
-          summary: 'Update board share permission',
+          summary: 'Update board member permission',
           requestParams: {
             path: z.object({
               id: z.string().meta({ description: 'Board id', example: 'board-123' }),
-              shareId: z.string().meta({ description: 'Share id', example: 'share-123' }),
+              memberId: z.string().meta({ description: 'Board member id', example: 'member-123' }),
             }),
           },
           requestBody: {
             content: {
-              'application/json': { schema: updateBoardSharePermissionBodySchema },
+              'application/json': { schema: updateBoardMemberPermissionBodySchema },
             },
           },
           responses: {
-            '204': { description: 'Share updated' },
+            '204': { description: 'Member updated' },
+          },
+        },
+      },
+      '/boards/{id}/link-sharing': {
+        patch: {
+          summary: 'Set board link-sharing policy',
+          requestParams: {
+            path: z.object({
+              id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+            }),
+          },
+          requestBody: {
+            content: {
+              'application/json': { schema: setBoardLinkSharingBodySchema },
+            },
+          },
+          responses: {
+            '200': { description: 'Link sharing updated' },
           },
         },
       },

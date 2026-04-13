@@ -35,62 +35,78 @@ export const workspaces = pgTable('workspaces', {
   name: text('name').notNull(),
   ownerId: uuid('owner_id').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 })
 
 export const workspaceMembers = pgTable('workspace_members', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  role: text('role').notNull().default('member'),
+  role: text('role').notNull().default('viewer'),
+  addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   uniqueIndex('workspace_member_idx').on(table.workspaceId, table.userId),
+  uniqueIndex('workspace_single_owner_idx').on(table.workspaceId).where(sql`${table.role} = 'owner'`),
   index('idx_workspace_members_user').on(table.userId),
-  check('valid_workspace_role', sql`${table.role} IN ('owner', 'admin', 'member')`),
+  check('valid_workspace_role', sql`${table.role} IN ('owner', 'admin', 'editor', 'viewer')`),
 ])
 
 export const workspaceInvitations = pgTable('workspace_invitations', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   invitedBy: uuid('invited_by').notNull().references(() => users.id),
-  email: text('email').notNull(),
-  role: text('role').notNull().default('member'),
+  emailLower: text('email_lower').notNull(),
+  role: text('role').notNull().default('viewer'),
   status: text('status').notNull().default('pending'),
   token: text('token').notNull().unique(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  respondedAt: timestamp('responded_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
-  uniqueIndex('invitation_unique_idx').on(table.workspaceId, table.email, table.status),
-  check('valid_invite_role', sql`${table.role} IN ('admin', 'member')`),
-  check('valid_invite_status', sql`${table.status} IN ('pending', 'accepted', 'declined', 'expired')`),
+  uniqueIndex('workspace_invitation_pending_idx').on(table.workspaceId, table.emailLower, table.status),
+  check('valid_workspace_invite_role', sql`${table.role} IN ('admin', 'editor', 'viewer')`),
+  check('valid_workspace_invite_status', sql`${table.status} IN ('pending', 'accepted', 'declined', 'expired', 'revoked')`),
 ])
 
 export const boards = pgTable('boards', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  currentCommitId: uuid('current_commit_id'),
+  currentCommitId: uuid('current_commit_id').references((): any => commits.id, { onDelete: 'set null' }),
   currentBranch: text('current_branch').default('main'),
   previewSvg: text('preview_svg'),
   previewVersion: text('preview_version'),
   previewUpdatedAt: timestamp('preview_updated_at', { withTimezone: true }),
+  linkShareEnabled: boolean('link_share_enabled').notNull().default(false),
+  linkShareToken: text('link_share_token').unique(),
+  linkSharePermission: text('link_share_permission').notNull().default('view'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   index('idx_boards_workspace').on(table.workspaceId),
+  index('idx_boards_link_token').on(table.linkShareToken),
+  check('valid_link_share_permission', sql`${table.linkSharePermission} IN ('view', 'edit')`),
+  check(
+    'link_share_token_required_when_enabled',
+    sql`NOT ${table.linkShareEnabled} OR ${table.linkShareToken} IS NOT NULL`,
+  ),
 ])
 
-export const boardShares = pgTable('board_shares', {
+export const boardMembers = pgTable('board_members', {
   id: uuid('id').primaryKey().defaultRandom(),
   boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   permission: text('permission').notNull().default('view'),
-  token: text('token').unique(),
+  addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
-  uniqueIndex('board_share_user_idx').on(table.boardId, table.userId),
-  index('idx_board_shares_user').on(table.userId),
-  check('valid_share_permission', sql`${table.permission} IN ('view', 'edit')`),
+  uniqueIndex('board_member_user_idx').on(table.boardId, table.userId),
+  index('idx_board_members_user').on(table.userId),
+  check('valid_board_member_permission', sql`${table.permission} IN ('view', 'edit')`),
 ])
 
 export const boardInvitations = pgTable('board_invitations', {
@@ -98,14 +114,17 @@ export const boardInvitations = pgTable('board_invitations', {
   boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
   invitedBy: uuid('invited_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
   emailLower: text('email_lower').notNull(),
-  role: text('role').notNull().default('viewer'),
+  permission: text('permission').notNull().default('view'),
   status: text('status').notNull().default('pending'),
-  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  token: text('token').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  respondedAt: timestamp('responded_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   index('idx_board_invitations_email').on(table.emailLower),
   uniqueIndex('board_invitation_pending_idx').on(table.boardId, table.emailLower, table.status),
-  check('valid_board_invitation_role', sql`${table.role} IN ('editor', 'viewer')`),
+  check('valid_board_invitation_permission', sql`${table.permission} IN ('view', 'edit')`),
   check('valid_board_invitation_status', sql`${table.status} IN ('pending', 'accepted', 'revoked', 'expired')`),
 ])
 
@@ -129,6 +148,7 @@ export const mutations = pgTable('mutations', {
   clientTs: timestamp('client_ts', { withTimezone: true }).notNull(),
   serverTs: timestamp('server_ts', { withTimezone: true }).defaultNow(),
   userId: uuid('user_id').references(() => users.id),
+  sessionId: text('session_id'),
 }, (table) => [
   uniqueIndex('mutation_board_seq_idx').on(table.boardId, table.sequence),
   check('valid_operation_type', sql`${table.operationType} IN ('CREATE_ELEMENT','UPDATE_ELEMENT','DELETE_ELEMENTS','MOVE_ELEMENTS','UPDATE_ELEMENTS','REORDER_ELEMENT')`),
@@ -156,7 +176,7 @@ export const billingCustomerLinks = pgTable('billing_customer_links', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   uniqueIndex('billing_customer_links_stripe_customer_idx').on(table.stripeCustomerId),
-  uniqueIndex('billing_customer_links_user_idx').on(table.userId),
+  uniqueIndex('billing_customer_links_user_idx').on(table.userId).where(sql`${table.userId} IS NOT NULL`),
   index('billing_customer_links_org_idx').on(table.organizationId),
 ])
 

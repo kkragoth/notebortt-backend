@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { elements } from '../db/schema.js'
-import { BOARD_PERMISSION_EDIT, BOARD_PERMISSION_VIEW, BOARD_ROLE_EDITOR, type BoardPermission } from './board.service.constants.js'
+import { BOARD_PERMISSION_EDIT, BOARD_PERMISSION_VIEW, type BoardPermission } from './board.service.constants.js'
 
 const REMAPPABLE_ID_KEYS = new Set([
   'id',
@@ -32,8 +32,8 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
-export function roleToPermission(role: string): BoardPermission {
-  return role === BOARD_ROLE_EDITOR ? BOARD_PERMISSION_EDIT : BOARD_PERMISSION_VIEW
+export function workspaceRoleToBoardPermission(role: string): BoardPermission {
+  return role === 'viewer' ? BOARD_PERMISSION_VIEW : BOARD_PERMISSION_EDIT
 }
 
 export function remapElementData(value: unknown, idMap: Map<string, string>, keyHint = ''): unknown {
