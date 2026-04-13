@@ -57,6 +57,13 @@
       "when": 1776073200000,
       "tag": "0007_board_favorites",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1776076800000,
+      "tag": "0008_table_element_kind",
+      "breakpoints": true
     }
   ]
 }

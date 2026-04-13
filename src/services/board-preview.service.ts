@@ -66,6 +66,26 @@ interface ColumnElement {
   columnDefs?: ColumnDef[]
 }
 
+interface TableColumn {
+  id: string
+  width: number
+  colType: string
+}
+
+interface TableRow {
+  id: string
+}
+
+interface TableElement {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  tableColumns?: TableColumn[]
+  tableRows?: TableRow[]
+}
+
 const NOTE_COLOR_KEYS = new Set(['amber', 'orange', 'red', 'green', 'emerald', 'teal', 'blue', 'sky', 'purple', 'violet', 'pink', 'gray'])
 
 function normalizeElement(row: RawElementRow): Record<string, unknown> {
@@ -177,10 +197,93 @@ function layoutContainedNotes(column: ColumnElement, notes: NoteElement[]): Prev
   return previewNotes
 }
 
+function calcTableSections(table: TableElement): PreviewGrid['sections'] {
+  const columns = table.tableColumns ?? []
+  const rows = table.tableRows ?? []
+  if (columns.length === 0 || rows.length === 0) {
+    return []
+  }
+
+  const headerHeight = 40
+  const rowHeight = 28
+  let colX = table.x + 36
+  const colStartMap = new Map<string, number>()
+  for (const col of columns) {
+    colStartMap.set(col.id, colX)
+    colX += col.width
+  }
+
+  const sections: PreviewGrid['sections'] = []
+  for (const rowIdx of rows.keys()) {
+    const y = table.y + headerHeight + rowIdx * rowHeight
+    for (const col of columns) {
+      sections.push({
+        x: colStartMap.get(col.id) ?? table.x,
+        y,
+        width: Math.max(1, col.width),
+        height: rowHeight,
+      })
+    }
+  }
+  return sections
+}
+
+function layoutTableContainedNotes(table: TableElement, notes: NoteElement[]): PreviewNote[] {
+  const columns = table.tableColumns ?? []
+  const rows = table.tableRows ?? []
+  const noteCols = columns.filter((col) => col.colType === 'NOTE')
+  if (noteCols.length === 0 || rows.length === 0) {
+    return []
+  }
+
+  const colSet = new Set(noteCols.map((col) => col.id))
+  const rowSet = new Set(rows.map((row) => row.id))
+  const colLeft = new Map<string, number>()
+  let accX = table.x + 36
+  for (const col of columns) {
+    colLeft.set(col.id, accX)
+    accX += col.width
+  }
+
+  const grouped = new Map<string, NoteElement[]>()
+  for (const note of notes) {
+    if (!note.containerColumnId) continue
+    const [colId, rowId] = note.containerColumnId.split(':')
+    if (!colSet.has(colId) || !rowSet.has(rowId)) continue
+    const key = `${colId}:${rowId}`
+    const current = grouped.get(key) ?? []
+    current.push(note)
+    grouped.set(key, current)
+  }
+
+  const preview: PreviewNote[] = []
+  const headerHeight = 40
+  const rowHeight = 28
+  for (const [key, cellNotes] of grouped.entries()) {
+    const [colId, rowId] = key.split(':')
+    const col = columns.find((item) => item.id === colId)
+    const rowIndex = rows.findIndex((row) => row.id === rowId)
+    if (!col || rowIndex < 0) continue
+    let cursorY = table.y + headerHeight + rowIndex * rowHeight + 2
+    const startX = (colLeft.get(colId) ?? table.x) + 2
+    const ordered = [...cellNotes].sort((a, b) => (a.containerOrder ?? 0) - (b.containerOrder ?? 0))
+    for (const note of ordered) {
+      const width = Math.max(16, Math.min(col.width - 8, note.customWidth ?? note.width ?? 120))
+      const height = Math.max(18, Math.min(60, note.computedLayoutHeight ?? 28))
+      const colorKey = NOTE_COLOR_KEYS.has(note.color ?? '') ? (note.color as string) : 'amber'
+      preview.push({ x: startX, y: cursorY, width, height, colorKey })
+      cursorY += height + 2
+    }
+  }
+
+  return preview
+}
+
 function buildBoardPreviewModel(rows: RawElementRow[]): PreviewModel {
   const normalized = rows.map(normalizeElement)
   const notes = sortById(normalized.filter((item) => item.kind === 'NOTE') as unknown as NoteElement[])
   const columns = sortById(normalized.filter((item) => item.kind === 'COLUMN') as unknown as ColumnElement[])
+  const tables = sortById(normalized.filter((item) => item.kind === 'TABLE') as unknown as TableElement[])
 
   const freeNotes = notes
     .filter((note) => !note.containerId)
@@ -199,6 +302,9 @@ function buildBoardPreviewModel(rows: RawElementRow[]): PreviewModel {
   const containedNotes = columns.flatMap((column) =>
     layoutContainedNotes(column, notes.filter((note) => note.containerId === column.id)),
   )
+  const tableContainedNotes = tables.flatMap((table) =>
+    layoutTableContainedNotes(table, notes.filter((note) => note.containerId === table.id)),
+  )
 
   const grids = columns.map((column) => ({
     x: column.x,
@@ -207,10 +313,17 @@ function buildBoardPreviewModel(rows: RawElementRow[]): PreviewModel {
     height: column.height,
     sections: calcColumnSections(column),
   }))
+  const tableGrids = tables.map((table) => ({
+    x: table.x,
+    y: table.y,
+    width: table.width,
+    height: table.height,
+    sections: calcTableSections(table),
+  }))
 
   return {
-    notes: [...freeNotes, ...containedNotes],
-    grids,
+    notes: [...freeNotes, ...containedNotes, ...tableContainedNotes],
+    grids: [...grids, ...tableGrids],
   }
 }
 
