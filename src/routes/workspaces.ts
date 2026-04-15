@@ -7,7 +7,7 @@ import { createWorkspaceBodySchema, createWorkspaceInvitationBodySchema } from '
 import { WorkspaceInvitationError, type WorkspaceService } from '../services/workspace.service.js'
 
 const workspaceIdParamsSchema = z.object({
-  wid: z.string().trim().min(1),
+  wid: z.string().trim().uuid(),
 })
 
 const invitationTokenParamsSchema = z.object({
@@ -15,8 +15,8 @@ const invitationTokenParamsSchema = z.object({
 })
 
 const workspaceMemberParamsSchema = z.object({
-  wid: z.string().trim().min(1),
-  memberId: z.string().trim().min(1),
+  wid: z.string().trim().uuid(),
+  memberId: z.string().trim().uuid(),
 })
 
 export function createWorkspaceRouter(workspaceService: WorkspaceService, authMiddleware: RequestHandler) {

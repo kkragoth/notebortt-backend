@@ -5,6 +5,7 @@ import { createBoardLoadDomain } from './board-state/load-domain.js'
 import { createBoardPersistenceDomain } from './board-state/persistence-domain.js'
 import { createBoardPresenceDomain } from './board-state/presence-domain.js'
 import { createBoardStateDomain } from './board-state/state-domain.js'
+import { createBoardMutationLockDomain } from './board-state/mutation-lock-domain.js'
 
 export type {
   ApplyChangeSetOptions,
@@ -31,6 +32,7 @@ export function createBoardStateService(redis: Redis, db: Database, options: Boa
     waitForBoardLoad: loadDomain.waitForBoardLoad,
     metrics,
   })
+  const mutationLockDomain = createBoardMutationLockDomain(redis)
   const persistenceDomain = createBoardPersistenceDomain(redis, db, {
     waitForBoardLoad: loadDomain.waitForBoardLoad,
     getElements: stateDomain.getElements,
@@ -60,6 +62,7 @@ export function createBoardStateService(redis: Redis, db: Database, options: Boa
     touchLastActive: presenceDomain.touchLastActive,
     applyChangeSet: stateDomain.applyChangeSet,
     getChangesAfter: stateDomain.getChangesAfter,
+    withBoardMutationLock: mutationLockDomain.withBoardMutationLock,
     persistBoard: persistenceDomain.persistBoard,
     persistDirtyBoards: persistenceDomain.persistDirtyBoards,
     getBoardMetrics: persistenceDomain.getBoardMetrics,

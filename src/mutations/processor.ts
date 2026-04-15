@@ -23,7 +23,7 @@ export function createMutationProcessor(
   const boardMutationLocks = new Map<string, Promise<void>>()
   const metrics = boardStateService.metrics
 
-  async function withBoardMutationLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
+  async function withLocalBoardMutationLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
     const previous = boardMutationLocks.get(boardId) ?? Promise.resolve()
     let release!: () => void
     const current = new Promise<void>((resolve) => {
@@ -41,6 +41,14 @@ export function createMutationProcessor(
         boardMutationLocks.delete(boardId)
       }
     }
+  }
+
+  async function withBoardMutationLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
+    if (typeof boardStateService.withBoardMutationLock === 'function') {
+      return boardStateService.withBoardMutationLock(boardId, task)
+    }
+
+    return withLocalBoardMutationLock(boardId, task)
   }
 
   function toUpsertFromCache(

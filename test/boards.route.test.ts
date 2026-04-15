@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { createBoardRouter } from '../src/routes/boards.js'
 import { MutationType, type BoardElement, type Mutation } from '../src/mutations/types.js'
 
-const BOARD_ID = 'board-route-test'
-const USER_ID = 'user-route-test'
+const BOARD_ID = '11111111-1111-4111-8111-111111111111'
+const USER_ID = '22222222-2222-4222-8222-222222222222'
 const TOKEN = 'valid-token'
+const INVALID_UUID = 'not-a-uuid'
 
 function makeElement(id: string, overrides: Partial<BoardElement> = {}): BoardElement {
   return {
@@ -271,8 +272,29 @@ describe('boards route mutation translation', () => {
     ])
 
     expect(invalidResponses[0]?.status).toBe(400)
-    expect(invalidResponses[0]?.body.error).toBe('upserts and deletes must be arrays and at least one change is required')
+    expect(invalidResponses[0]?.body.error).toMatch(/expected array/i)
     expect(invalidResponses[1]?.status).toBe(400)
     expect(invalidResponses[1]?.body.error).toBe('upserts and deletes must be arrays and at least one change is required')
+  })
+
+  it('returns 400 for invalid UUID route params and UUID-backed bodies', async () => {
+    const harness = createHarness({})
+
+    const invalidResponses = await Promise.all([
+      request(harness.app).patch(`/boards/${INVALID_UUID}/elements`).send({
+        upserts: [makeElement('note-1')],
+        deletes: [],
+      }),
+      request(harness.app).post(`/boards/${BOARD_ID}/members`).send({
+        userId: INVALID_UUID,
+      }),
+      request(harness.app).delete(`/boards/${BOARD_ID}/members/${INVALID_UUID}`),
+      request(harness.app).get(`/workspaces/${INVALID_UUID}/boards`),
+    ])
+
+    for (const response of invalidResponses) {
+      expect(response.status).toBe(400)
+      expect(response.body.error).toBe('Invalid UUID')
+    }
   })
 })

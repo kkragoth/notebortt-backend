@@ -19,22 +19,24 @@ export interface BoardRouteDeps {
   previewJobService: PreviewJobService
 }
 
+const uuidParamSchema = z.string().trim().uuid()
+
 export const boardIdParamsSchema = z.object({
-  id: z.string().trim().min(1),
+  id: uuidParamSchema,
 })
 
 export const workspaceIdParamsSchema = z.object({
-  wid: z.string().trim().min(1),
+  wid: uuidParamSchema,
 })
 
 export const boardMemberParamsSchema = z.object({
-  id: z.string().trim().min(1),
-  memberId: z.string().trim().min(1),
+  id: uuidParamSchema,
+  memberId: uuidParamSchema,
 })
 
 export const boardInviteParamsSchema = z.object({
-  id: z.string().trim().min(1),
-  inviteId: z.string().trim().min(1),
+  id: uuidParamSchema,
+  inviteId: uuidParamSchema,
 })
 
 export const inviteTokenParamsSchema = z.object({
@@ -42,7 +44,7 @@ export const inviteTokenParamsSchema = z.object({
 })
 
 export const presenceParamsSchema = z.object({
-  id: z.string().trim().min(1),
+  id: uuidParamSchema,
   sessionId: z.string().trim().min(1),
 })
 
@@ -118,7 +120,7 @@ export const presenceBodySchema = z.object({
 })
 
 export const upsertBoardMemberBodySchema = z.object({
-  userId: z.string().trim().min(1),
+  userId: uuidParamSchema,
   permission: z.enum(['view', 'edit']).optional(),
 })
 

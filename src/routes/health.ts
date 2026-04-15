@@ -14,6 +14,12 @@ const HealthStatus = {
 } as const
 
 type ServiceStatus = typeof HealthStatus.OK | typeof HealthStatus.ERROR
+type BoardStateStatus = typeof HealthStatus.OK | typeof HealthStatus.DEGRADED
+type BoardStateHealth = {
+  dirtyBacklog: number
+  lastDirtyAt: number | null
+  timeSinceLastDirtyMs: number | null
+}
 
 async function checkPostgres(db: Database): Promise<ServiceStatus> {
   try {
@@ -37,48 +43,68 @@ function uptimeSeconds(): number {
   return Math.floor((Date.now() - startTime) / 1000)
 }
 
-function isAllHealthy(postgresStatus: ServiceStatus, redisStatus: ServiceStatus): boolean {
-  return postgresStatus === HealthStatus.OK && redisStatus === HealthStatus.OK
+function isAllHealthy(
+  postgresStatus: ServiceStatus,
+  redisStatus: ServiceStatus,
+  boardStateStatus: BoardStateStatus,
+): boolean {
+  return postgresStatus === HealthStatus.OK && redisStatus === HealthStatus.OK && boardStateStatus === HealthStatus.OK
 }
 
 async function getBoardStateHealth(redis: Redis): Promise<{
-  dirtyBacklog: number
-  lastDirtyAt: number | null
-  timeSinceLastDirtyMs: number | null
+  status: BoardStateStatus
+  boardState: BoardStateHealth
 }> {
-  const [dirtyBacklog, latestDirtyWithScore] = await Promise.all([
-    redis.zcard(DIRTY_BOARDS_BY_AGE_KEY),
-    redis.zrevrange(DIRTY_BOARDS_BY_AGE_KEY, 0, 0, 'WITHSCORES'),
-  ])
+  try {
+    const [dirtyBacklog, latestDirtyWithScore] = await Promise.all([
+      redis.zcard(DIRTY_BOARDS_BY_AGE_KEY),
+      redis.zrevrange(DIRTY_BOARDS_BY_AGE_KEY, 0, 0, 'WITHSCORES'),
+    ])
 
-  if (latestDirtyWithScore.length < 2) {
-    return {
-      dirtyBacklog,
-      lastDirtyAt: null,
-      timeSinceLastDirtyMs: null,
+    if (latestDirtyWithScore.length < 2) {
+      return {
+        status: HealthStatus.OK,
+        boardState: {
+          dirtyBacklog,
+          lastDirtyAt: null,
+          timeSinceLastDirtyMs: null,
+        },
+      }
     }
-  }
 
-  const rawScore = latestDirtyWithScore[1]
-  const lastDirtyAt = typeof rawScore === 'string' ? parseInt(rawScore, 10) : NaN
-  const validLastDirtyAt = Number.isFinite(lastDirtyAt) ? lastDirtyAt : null
+    const rawScore = latestDirtyWithScore[1]
+    const lastDirtyAt = typeof rawScore === 'string' ? parseInt(rawScore, 10) : NaN
+    const validLastDirtyAt = Number.isFinite(lastDirtyAt) ? lastDirtyAt : null
 
-  return {
-    dirtyBacklog,
-    lastDirtyAt: validLastDirtyAt,
-    timeSinceLastDirtyMs: validLastDirtyAt === null ? null : Math.max(0, Date.now() - validLastDirtyAt),
+    return {
+      status: HealthStatus.OK,
+      boardState: {
+        dirtyBacklog,
+        lastDirtyAt: validLastDirtyAt,
+        timeSinceLastDirtyMs: validLastDirtyAt === null ? null : Math.max(0, Date.now() - validLastDirtyAt),
+      },
+    }
+  } catch {
+    return {
+      status: HealthStatus.DEGRADED,
+      boardState: {
+        dirtyBacklog: 0,
+        lastDirtyAt: null,
+        timeSinceLastDirtyMs: null,
+      },
+    }
   }
 }
 
 export function healthRoute(db: Database, redis: Redis) {
   return async (_req: Request, res: Response) => {
-    const [postgresStatus, redisStatus, boardState] = await Promise.all([
+    const [postgresStatus, redisStatus, boardStateHealth] = await Promise.all([
       checkPostgres(db),
       checkRedis(redis),
       getBoardStateHealth(redis),
     ])
 
-    const healthy = isAllHealthy(postgresStatus, redisStatus)
+    const healthy = isAllHealthy(postgresStatus, redisStatus, boardStateHealth.status)
     const status = healthy ? HealthStatus.OK : HealthStatus.DEGRADED
     const statusCode = healthy ? 200 : 503
 
@@ -88,7 +114,7 @@ export function healthRoute(db: Database, redis: Redis) {
       redis: redisStatus,
       uptime: uptimeSeconds(),
       openWebSocketConnections: getOpenSocketIoConnections(),
-      boardState,
+      boardState: boardStateHealth.boardState,
     })
   }
 }
