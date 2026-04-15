@@ -19,6 +19,11 @@ const healthResponseSchema = z.object({
   redis: z.enum(['ok', 'error']).meta({ example: 'ok' }),
   uptime: z.number().int().meta({ example: 412 }),
   openWebSocketConnections: z.number().int().nonnegative().meta({ example: 3 }),
+  boardState: z.object({
+    dirtyBacklog: z.number().int().nonnegative().meta({ example: 0 }),
+    lastDirtyAt: z.number().int().nullable().meta({ example: null }),
+    timeSinceLastDirtyMs: z.number().int().nonnegative().nullable().meta({ example: null }),
+  }),
 }).meta({ id: 'HealthResponse' })
 
 const debugStateResponseSchema = z.object({

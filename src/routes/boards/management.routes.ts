@@ -111,6 +111,7 @@ export function createBoardManagementRoutes(deps: BoardRouteDeps) {
     }
 
     await deps.boardService.deleteBoard(params.id)
+    await deps.boardStateService.flushBoard(params.id)
     res.sendStatus(204)
   })
 

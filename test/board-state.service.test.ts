@@ -2,6 +2,13 @@ import { describe, it, expect, afterEach, afterAll, vi } from 'vitest'
 import { createRedisClient } from '../src/redis/client.js'
 import { createBoardStateService } from '../src/services/board-state.service.js'
 import type { BoardElement } from '../src/mutations/types.js'
+import {
+  DIRTY_BOARDS_BY_AGE_KEY,
+  DIRTY_BOARDS_KEY,
+  boardDirtyElementIdsKey,
+  boardElementsKey,
+  boardSeqKey,
+} from '../src/services/board-state/keys.js'
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
 const redis = createRedisClient(REDIS_URL)
@@ -378,5 +385,80 @@ describe('flushBoard', () => {
     const elem = await redis.exists(`board:${TEST_BOARD_ID}:elements`)
     expect(seq).toBe(0)
     expect(elem).toBe(0)
+  })
+
+  it('evicts Redis board state when persistence hits missing-board foreign key', async () => {
+    const boardId = `persist-fk-board-${Date.now()}`
+    const fkError = {
+      cause: {
+        code: '23503',
+        constraint_name: 'elements_board_id_boards_id_fk',
+      },
+    }
+    const tx = {
+      delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          onConflictDoUpdate: vi.fn().mockRejectedValue(fkError),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      })),
+    }
+    const dbWithFkFailure = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ id: boardId }]),
+        })),
+      })),
+      transaction: vi.fn(async (callback: (value: typeof tx) => Promise<void>) => callback(tx)),
+    } as any
+    const serviceWithFkFailure = createBoardStateService(redis, dbWithFkFailure)
+
+    await redis.set(boardSeqKey(boardId), '1')
+    await redis.hset(boardElementsKey(boardId), 'el-1', JSON.stringify(makeElement('el-1')))
+    await redis.sadd(boardDirtyElementIdsKey(boardId), 'el-1')
+    await redis.sadd(DIRTY_BOARDS_KEY, boardId)
+    await redis.zadd(DIRTY_BOARDS_BY_AGE_KEY, Date.now(), boardId)
+
+    await expect(serviceWithFkFailure.persistBoard(boardId)).resolves.toBeUndefined()
+
+    expect(await redis.exists(boardSeqKey(boardId))).toBe(0)
+    expect(await redis.sismember(DIRTY_BOARDS_KEY, boardId)).toBe(0)
+    expect(await redis.zscore(DIRTY_BOARDS_BY_AGE_KEY, boardId)).toBeNull()
+
+    await serviceWithFkFailure.flushBoard(boardId)
+  })
+
+  it('evicts Redis board state when dirty board id is not a uuid', async () => {
+    const boardId = `test-board-${Date.now()}`
+    const dbWithUuidTypeGuard = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockRejectedValue({
+            cause: {
+              code: '22P02',
+              message: `invalid input syntax for type uuid: "${boardId}"`,
+            },
+          }),
+        })),
+      })),
+    } as any
+    const serviceWithInvalidUuidGuard = createBoardStateService(redis, dbWithUuidTypeGuard)
+
+    await redis.set(boardSeqKey(boardId), '1')
+    await redis.hset(boardElementsKey(boardId), 'el-1', JSON.stringify(makeElement('el-1')))
+    await redis.sadd(boardDirtyElementIdsKey(boardId), 'el-1')
+    await redis.sadd(DIRTY_BOARDS_KEY, boardId)
+    await redis.zadd(DIRTY_BOARDS_BY_AGE_KEY, Date.now(), boardId)
+
+    await expect(serviceWithInvalidUuidGuard.persistBoard(boardId)).resolves.toBeUndefined()
+
+    expect(await redis.exists(boardSeqKey(boardId))).toBe(0)
+    expect(await redis.sismember(DIRTY_BOARDS_KEY, boardId)).toBe(0)
+    expect(await redis.zscore(DIRTY_BOARDS_BY_AGE_KEY, boardId)).toBeNull()
+
+    await serviceWithInvalidUuidGuard.flushBoard(boardId)
   })
 })

@@ -54,6 +54,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
     enableIncrementalPersistence,
   } = deps
   const persistLocks = new Map<string, Promise<void>>()
+  const UUID_V4_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
   async function withPersistLock(boardId: string, task: () => Promise<void>): Promise<void> {
     const previous = persistLocks.get(boardId) ?? Promise.resolve()
@@ -120,6 +121,99 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
       type: kind,
       data,
       updatedAt: serverTimestamp,
+    }
+  }
+
+  async function boardExists(boardId: string): Promise<boolean> {
+    const rows = await db
+      .select({ id: boards.id })
+      .from(boards)
+      .where(eq(boards.id, boardId))
+
+    return rows.length > 0
+  }
+
+  function isUuidLike(value: string): boolean {
+    return UUID_V4_LIKE.test(value)
+  }
+
+  function collectErrorChain(error: unknown): unknown[] {
+    const chain: unknown[] = []
+    const seen = new Set<unknown>()
+    let current: unknown = error
+
+    while (current && !seen.has(current)) {
+      chain.push(current)
+      seen.add(current)
+      current = (current as { cause?: unknown }).cause
+    }
+
+    return chain
+  }
+
+  function isMissingBoardForeignKeyViolation(error: unknown): boolean {
+    const chain = collectErrorChain(error)
+
+    return chain.some((candidate) => {
+      const inspected = candidate as {
+        code?: string
+        constraint_name?: string
+        message?: string
+        detail?: string
+      }
+
+      if (inspected.code !== '23503') {
+        return false
+      }
+
+      if (inspected.constraint_name === 'elements_board_id_boards_id_fk') {
+        return true
+      }
+
+      const details = `${inspected.message ?? ''} ${inspected.detail ?? ''}`
+      return details.includes('elements_board_id_boards_id_fk')
+        || details.includes('is not present in table "boards"')
+    })
+  }
+
+  function isInvalidUuidError(error: unknown): boolean {
+    const chain = collectErrorChain(error)
+    return chain.some((candidate) => {
+      const inspected = candidate as {
+        code?: string
+        message?: string
+        detail?: string
+      }
+
+      if (inspected.code === '22P02') {
+        return true
+      }
+
+      const text = `${inspected.message ?? ''} ${inspected.detail ?? ''}`.toLowerCase()
+      return text.includes('invalid input syntax for type uuid')
+    })
+  }
+
+  async function clearInvalidBoardState(boardId: string): Promise<void> {
+    await flushBoard(boardId)
+    metrics.logStructured('board.flush_skipped_invalid_id', { boardId })
+  }
+
+  async function clearMissingBoardState(boardId: string): Promise<void> {
+    await flushBoard(boardId)
+    metrics.logStructured('board.flush_skipped_missing_parent', { boardId })
+  }
+
+  async function boardExistsSafely(boardId: string): Promise<boolean> {
+    try {
+      return await boardExists(boardId)
+    } catch (error) {
+      if (isInvalidUuidError(error)) {
+        await clearInvalidBoardState(boardId)
+        return false
+      }
+
+      throw error
     }
   }
 
@@ -210,6 +304,16 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
   async function persistBoard(boardId: string): Promise<void> {
     await waitForBoardLoad(boardId)
     await withPersistLock(boardId, async () => {
+      if (!isUuidLike(boardId)) {
+        await clearInvalidBoardState(boardId)
+        return
+      }
+
+      if (!(await boardExistsSafely(boardId))) {
+        await clearMissingBoardState(boardId)
+        return
+      }
+
       const isLoaded = await redis.exists(boardSeqKey(boardId))
       if (isLoaded !== 1) {
         await redis
@@ -226,9 +330,24 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
       const snapshotSequence = await peekSequence(boardId)
       const snapshotDirtyEpoch = await getDirtyEpoch(boardId)
       const serverTimestamp = new Date()
-      const persistedCounts = enableIncrementalPersistence
-        ? await persistBoardIncremental(boardId, serverTimestamp)
-        : { upserts: await persistBoardFullSnapshot(boardId, serverTimestamp), deletes: 0 }
+      let persistedCounts: { upserts: number; deletes: number }
+      try {
+        persistedCounts = enableIncrementalPersistence
+          ? await persistBoardIncremental(boardId, serverTimestamp)
+          : { upserts: await persistBoardFullSnapshot(boardId, serverTimestamp), deletes: 0 }
+      } catch (error) {
+        if (isMissingBoardForeignKeyViolation(error)) {
+          await clearMissingBoardState(boardId)
+          return
+        }
+
+        if (isInvalidUuidError(error)) {
+          await clearInvalidBoardState(boardId)
+          return
+        }
+
+        throw error
+      }
 
       const flushCompletedAt = Date.now()
       const cleared = await redis.eval(
@@ -343,14 +462,8 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
     const retryDelayMs = typeof options === 'number' ? 0 : Math.max(0, options.retryDelayMs ?? 250)
     const now = Date.now()
     const maxScore = minDirtyAgeMs > 0 ? (now - minDirtyAgeMs).toString() : '+inf'
-    const [boardIds, dirtyBacklog] = await Promise.all([
-      redis.zrangebyscore(DIRTY_BOARDS_BY_AGE_KEY, '-inf', maxScore, 'LIMIT', 0, limit),
-      redis.zcard(DIRTY_BOARDS_BY_AGE_KEY),
-    ])
-    metrics.incrementCounter('redis.commands', 2, { category: 'state', command: 'zrangebyscore_or_zcard' })
-    if (dirtyBacklog > 0) {
-      metrics.logStructured('board.dirty_backlog', { dirtyBoards: dirtyBacklog, sampleSize: boardIds.length })
-    }
+    const boardIds = await redis.zrangebyscore(DIRTY_BOARDS_BY_AGE_KEY, '-inf', maxScore, 'LIMIT', 0, limit)
+    metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'zrangebyscore' })
     const persisted: string[] = []
 
     for (const boardId of boardIds) {

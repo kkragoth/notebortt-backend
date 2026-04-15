@@ -133,14 +133,16 @@ export function createRedisCleanupService(
       }
     }
 
-    console.log(JSON.stringify({
-      event: 'cleanup.scan_volume',
-      candidateSource: 'active_index_plus_last_active',
-      activeIndexSample: activeIndexedBoards.length,
-      candidateCount: candidates.size,
-      limit,
-      at: new Date().toISOString(),
-    }))
+    if (candidates.size > 0) {
+      console.log(JSON.stringify({
+        event: 'cleanup.scan_volume',
+        candidateSource: 'active_index_plus_last_active',
+        activeIndexSample: activeIndexedBoards.length,
+        candidateCount: candidates.size,
+        limit,
+        at: new Date().toISOString(),
+      }))
+    }
 
     const idleThresholdSeconds = toIdleSeconds(idleTtlMs)
 
@@ -252,12 +254,14 @@ export function createRedisCleanupService(
       }
     }
 
-    console.log(JSON.stringify({
-      event: 'cleanup.transient_scan_volume',
-      scanned,
-      deleted: deleted.length,
-      at: new Date().toISOString(),
-    }))
+    if (deleted.length > 0) {
+      console.log(JSON.stringify({
+        event: 'cleanup.transient_scan_volume',
+        scanned,
+        deleted: deleted.length,
+        at: new Date().toISOString(),
+      }))
+    }
 
     return deleted
   }
