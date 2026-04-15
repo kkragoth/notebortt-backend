@@ -30,6 +30,7 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_CANCEL_URL: z.string().optional(),
   STRIPE_PORTAL_RETURN_URL: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  APP_ROLE: z.enum(['all', 'api', 'realtime', 'worker']).default('all'),
 })
 
 export interface AppConfig {
@@ -58,6 +59,7 @@ export interface AppConfig {
   stripeCheckoutCancelUrl: string | null
   stripePortalReturnUrl: string | null
   stripeWebhookSecret: string | null
+  appRole: 'all' | 'api' | 'realtime' | 'worker'
 }
 
 export function loadConfig(): AppConfig {
@@ -92,5 +94,6 @@ export function loadConfig(): AppConfig {
     stripeCheckoutCancelUrl: parsed.STRIPE_CHECKOUT_CANCEL_URL ?? null,
     stripePortalReturnUrl: parsed.STRIPE_PORTAL_RETURN_URL ?? null,
     stripeWebhookSecret: parsed.STRIPE_WEBHOOK_SECRET ?? null,
+    appRole: parsed.APP_ROLE,
   }
 }

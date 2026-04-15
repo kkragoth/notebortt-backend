@@ -1,5 +1,7 @@
 # Production Deploy with Docker Compose
 
+For Kubernetes baseline manifests and split-service deployment notes, see `docs/k8s-migration-baseline.md`.
+
 Deployment files are at repository root (`docker-compose.yml`, `Dockerfile`, `nginx/templates`).
 
 ## 1) Edit root env file

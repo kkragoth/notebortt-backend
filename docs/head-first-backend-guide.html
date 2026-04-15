@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Note Canva Backend — Head First Guide</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+    :root {
+      --bg: #0b0d12;
+      --s1: #0f1218;
+      --s2: #151b26;
+      --s3: #1c2233;
+      --border: #232a3c;
+      --text: #dde4f0;
+      --text2: #9ba9c3;
+      --text3: #647290;
+      --blue: #4d9eff;
+      --green: #2dd98f;
+      --yellow: #f7c84e;
+      --red: #f06e6e;
+      --purple: #a78bfa;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Inter', sans-serif;
+      --nav-w: 300px;
+      --content-w: 900px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      display: flex;
+      justify-content: center;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: calc(var(--nav-w) + var(--content-w) + 4rem);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav {
+      width: var(--nav-w);
+      min-width: var(--nav-w);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--border);
+      background: var(--s1);
+      padding-bottom: 2rem;
+    }
+
+    .nav-head { padding: 1.1rem 1.2rem; border-bottom: 1px solid var(--border); }
+    .nav-title { font-weight: 700; font-size: 0.9rem; }
+    .nav-sub { color: var(--text3); font-family: var(--mono); font-size: 0.65rem; margin-top: 0.15rem; }
+    .nav-group {
+      padding: 0.9rem 1.2rem 0.35rem;
+      color: var(--text3);
+      font-family: var(--mono);
+      font-size: 0.58rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    nav a {
+      color: var(--text2);
+      text-decoration: none;
+      display: block;
+      padding: 0.26rem 1.2rem;
+      border-left: 2px solid transparent;
+      font-size: 0.78rem;
+    }
+    nav a:hover { color: var(--text); border-left-color: var(--blue); background: var(--s2); }
+
+    main { flex: 1; max-width: var(--content-w); padding: 2.4rem 3rem 6rem; }
+
+    h1 { font-size: 2rem; line-height: 1.2; margin-bottom: 0.6rem; }
+    h2 { font-size: 1.2rem; margin: 2.2rem 0 0.8rem; }
+    h3 { font-size: 1rem; margin: 1.3rem 0 0.5rem; color: var(--text); }
+    p { color: var(--text2); margin-bottom: 0.7rem; }
+    li { color: var(--text2); margin-left: 1.25rem; margin-bottom: 0.3rem; }
+
+    .hero {
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, #101725, #121722 40%, #111920);
+      border-radius: 12px;
+      padding: 1.2rem 1.3rem;
+      margin-bottom: 1.4rem;
+    }
+    .pill {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      padding: 0.2rem 0.45rem;
+      border: 1px solid #2b4e84;
+      color: var(--blue);
+      background: #132642;
+      border-radius: 99px;
+      margin-bottom: 0.55rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .box {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--yellow);
+      background: var(--s1);
+      border-radius: 8px;
+      padding: 0.8rem 0.9rem;
+      margin: 0.8rem 0;
+    }
+    .box strong { color: var(--yellow); }
+
+    .cw {
+      border: 1px solid var(--border);
+      background: #0e131d;
+      border-radius: 8px;
+      margin: 0.9rem 0;
+      overflow: hidden;
+    }
+    .ch {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.45rem 0.65rem;
+      background: #131a27;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 0.64rem;
+      color: var(--text3);
+    }
+    pre {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.55;
+      padding: 0.85rem 0.9rem;
+      overflow: auto;
+      color: #c5d5ee;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 0.9rem 0;
+      font-size: 0.82rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.52rem 0.6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--s2); color: var(--text); font-weight: 600; }
+    tr:nth-child(even) td { background: #101622; }
+
+    .iq {
+      border: 1px solid #2d364f;
+      background: #101829;
+      border-radius: 10px;
+      padding: 0.8rem 0.9rem;
+      margin: 0.7rem 0;
+    }
+    .iq .q {
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 0.45rem;
+      font-size: 0.9rem;
+    }
+    .diagram-wrap {
+      border: 1px solid var(--border);
+      background: #0f1725;
+      border-radius: 10px;
+      padding: 0.7rem;
+      margin: 0.9rem 0 1rem;
+      overflow: auto;
+    }
+    .diagram-title {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      color: var(--text3);
+      margin-bottom: 0.5rem;
+    }
+
+    code { font-family: var(--mono); font-size: 0.85em; color: #d4e0f8; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+    @media (max-width: 980px) {
+      nav { display: none; }
+      .shell { max-width: 100%; }
+      main { padding: 1.2rem 1rem 4rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <div class="nav-head">
+        <div class="nav-title">Note Canva Backend Guide</div>
+        <div class="nav-sub">Head First · Practical · Interview-ready</div>
+      </div>
+
+      <div class="nav-group">Chapter 1 · Foundations</div>
+      <a href="#c1-map">Project map</a>
+      <a href="#c1-zod">Minimal Zod + Express</a>
+      <a href="#c1-task-a">Task A: board maxDimensions</a>
+      <a href="#c1-task-b">Task B: AI nodes + connectors</a>
+      <a href="#c1-glossary">Architecture glossary</a>
+      <a href="#c1-interview">Interview questions</a>
+
+      <div class="nav-group">Chapter 2 · Realtime</div>
+      <a href="#c2-transport">WS vs Socket.IO now</a>
+      <a href="#c2-redis">Redis model + fanouts</a>
+      <a href="#c2-scale">Scaling plan</a>
+      <a href="#c2-interview">Interview questions</a>
+
+      <div class="nav-group">Chapter 3 · Billing</div>
+      <a href="#c3-overview">Stripe architecture</a>
+      <a href="#c3-flow">Checkout + webhook flow</a>
+      <a href="#c3-hardening">Production hardening</a>
+      <a href="#c3-interview">Interview questions</a>
+
+      <div class="nav-group">Chapter 4 · Extension Playbook</div>
+      <a href="#c4-read">How to read this codebase</a>
+      <a href="#c4-trace">Trace any request</a>
+      <a href="#c4-frontend">Frontend mental mapping</a>
+      <a href="#c4-debug">Debug playbooks</a>
+      <a href="#c4-interview">Interview questions</a>
+    </nav>
+
+    <main>
+      <div class="hero">
+        <div class="pill">HEAD FIRST BACKEND</div>
+        <h1>Learn This Backend Like You Built It</h1>
+        <p>This guide is built from your current codebase, not generic Express tutorials. Goal: move you from “frontend-level backend intuition” to “I can safely extend this system”.</p>
+        <p>Source backend: <code>note-canva-backend</code>. Source style inspiration: your <code>enterprise-devops-guide-mobile-v5.html</code>.</p>
+      </div>
+
+      <h2 id="c1-map">Chapter 1: Project Map + Build Mental Model</h2>
+      <h3>High-level overview first (pseudocode)</h3>
+      <div class="cw">
+        <div class="ch"><span>Backend mental model</span><span>pseudo</span></div>
+        <pre>boot():
+  config = loadConfig()
+  runtime = buildRuntime(config)
+
+  if role includes API:
+    mount express routes
+    (auth, workspaces, boards, billing, docs)
+
+  if role includes Realtime:
+    start socket.io handlers
+    start raw websocket upgrade handler
+
+  if role includes Worker:
+    start persistence worker
+    start redis cleanup worker
+    start preview worker</pre>
+      </div>
+
+      <h3>Concrete pass (real files)</h3>
+      <p>First mental model: one process can play three roles using <code>APP_ROLE</code> in <code>src/index.ts</code>.</p>
+      <ul>
+        <li><code>api</code>: Express routes (<code>/auth</code>, <code>/boards</code>, <code>/workspaces</code>, billing).</li>
+        <li><code>realtime</code>: Socket.IO server + raw WebSocket upgrade path.</li>
+        <li><code>worker</code>: background jobs (board persistence, Redis cleanup, preview jobs).</li>
+      </ul>
+
+      <table>
+        <tr><th>Folder</th><th>What it owns</th><th>Why it matters to you</th></tr>
+        <tr><td><code>src/routes</code></td><td>HTTP API endpoints</td><td>Where you add new REST capabilities</td></tr>
+        <tr><td><code>src/services</code></td><td>Business logic + DB orchestration</td><td>Where domain behavior should live</td></tr>
+        <tr><td><code>src/socketio</code> + <code>src/ws</code></td><td>Realtime transports</td><td>Where sync/fanout/streaming is handled</td></tr>
+        <tr><td><code>src/db</code> + <code>drizzle/</code></td><td>Schema + migrations</td><td>Every new feature starts with data model</td></tr>
+        <tr><td><code>src/mutations</code></td><td>Canonical element mutation processing</td><td>AI node updates and board edits go through here</td></tr>
+      </table>
+
+      <div class="box">
+        <strong>Head First checkpoint:</strong> If a feature changes data shape, your default flow should be: <code>migration → schema.ts → service → route validation → tests → OpenAPI schema</code>.
+      </div>
+
+      <h3 id="c1-zod">Minimal Zod + Express pattern (this project style)</h3>
+      <p>Pattern used in routes like <code>src/routes/workspaces.ts</code> and <code>src/routes/boards/shared.ts</code>:</p>
+      <div class="cw">
+        <div class="ch"><span>Minimal validated endpoint</span><span>TypeScript</span></div>
+        <pre>const paramsSchema = z.object({ id: z.string().trim().min(1) })
+const bodySchema = z.object({ name: z.string().trim().min(1) })
+
+router.patch('/boards/:id', async (req, res) => {
+  const params = parseWithSchema(paramsSchema, req.params)
+  if (!params.success) return sendBadRequest(res, params.error.error)
+
+  const body = parseWithSchema(bodySchema, req.body)
+  if (!body.success) return sendBadRequest(res, body.error.error)
+
+  const updated = await boardService.renameBoard(params.data.id, body.data.name)
+  return res.json(updated)
+})</pre>
+      </div>
+
+      <p>Important for your AGENTS rule: validate <code>req.params</code>, <code>req.query</code>, and <code>req.body</code> before business logic.</p>
+
+      <hr />
+      <h2 id="c1-task-a">Task A Walkthrough: Add optional board <code>maxDimensions</code></h2>
+      <p>Goal: backend stores camera bounds so frontend can clamp camera to <code>[-width/2, width/2]</code> and <code>[-height/2, height/2]</code>.</p>
+      <div class="cw">
+        <div class="ch"><span>Task A first-pass pseudocode</span><span>pseudo</span></div>
+        <pre>when creating/updating board:
+  accept optional maxDimensions { width, height }
+  validate both positive ints
+  persist on boards table
+  return in all board read DTOs
+
+frontend camera:
+  if maxDimensions exists:
+    clamp center to +/- width/2 and +/- height/2
+  else:
+    keep current free camera</pre>
+      </div>
+
+      <h3>Step 1: Data model</h3>
+      <ul>
+        <li>Create a migration: add nullable columns on <code>boards</code>: <code>max_width</code>, <code>max_height</code> (integers) or one <code>jsonb</code>. Prefer two ints for easy filtering/indexing.</li>
+        <li>Update <code>src/db/schema.ts</code> <code>boards</code> table to include these columns.</li>
+      </ul>
+
+      <h3>Step 2: API schemas</h3>
+      <ul>
+        <li>In <code>src/openapi/schemas.ts</code>, extend <code>createBoardBodySchema</code> to include optional <code>maxDimensions</code> object.</li>
+        <li>Validate positive safe limits:</li>
+      </ul>
+      <div class="cw">
+        <div class="ch"><span>Recommended Zod shape</span><span>TypeScript</span></div>
+        <pre>const maxDimensionsSchema = z.object({
+  width: z.number().int().positive().max(100000),
+  height: z.number().int().positive().max(100000),
+})
+
+export const createBoardBodySchema = z.object({
+  name: z.string().trim().min(1),
+  maxDimensions: maxDimensionsSchema.optional(),
+})</pre>
+      </div>
+
+      <h3>Step 3: Route + service plumbing</h3>
+      <ul>
+        <li><code>src/routes/boards/management.routes.ts</code>: <code>POST /workspaces/:wid/boards</code> and <code>PATCH /boards/:id</code> should pass optional dimensions.</li>
+        <li><code>src/services/board.service.ts</code>: update create/rename/update methods and returned board DTO.</li>
+        <li><code>GET /boards</code> and <code>GET /boards/:id</code> should include this field so frontend can apply clamp logic immediately.</li>
+      </ul>
+
+      <h3>Step 4: Tests</h3>
+      <ul>
+        <li>Add route tests: accepts valid dimensions, rejects negative/zero with 400, accepts missing dimensions.</li>
+        <li>Run: <code>just build</code> then <code>just test</code>.</li>
+      </ul>
+
+      <h3>Frontend contract</h3>
+      <p>Frontend reads <code>board.maxDimensions</code>. If absent, camera remains unbounded. If present, clamp camera center to half-range.</p>
+
+      <hr />
+      <h2 id="c1-task-b">Task B Walkthrough: AI Nodes + Workspace Connectors + Streaming</h2>
+      <p>Current reality: there is no AI connector model yet. You’ll add it as a new vertical slice.</p>
+      <div class="cw">
+        <div class="ch"><span>Task B first-pass pseudocode</span><span>pseudo</span></div>
+        <pre>connector CRUD:
+  workspace admin stores provider credential reference
+
+AI node execution:
+  user triggers node run
+  worker resolves connector secret
+  call provider stream API
+  emit token chunks over socket.io
+  persist final output as element update via mutation processor</pre>
+      </div>
+
+      <h3>Step 1: Workspace connector tables</h3>
+      <ul>
+        <li>Add table <code>workspace_ai_connectors</code>: <code>id</code>, <code>workspace_id</code>, <code>provider</code> (<code>openai</code>/<code>anthropic</code>/etc), <code>label</code>, <code>secret_ref</code>, <code>created_by</code>.</li>
+        <li>Do not persist raw keys in plaintext. Store encrypted value or external reference (KMS/secret manager key id).</li>
+      </ul>
+
+      <h3>Step 2: Add new board element kind</h3>
+      <ul>
+        <li>Migration: update <code>elements.type</code> constraint to include <code>AI_NODE</code> (pattern already exists in <code>drizzle/0008_table_element_kind.sql</code>).</li>
+        <li>Node payload lives in element <code>data</code>, example fields:</li>
+      </ul>
+      <div class="cw">
+        <div class="ch"><span>AI node data shape</span><span>json</span></div>
+        <pre>{
+  "kind": "AI_NODE",
+  "connectorId": "conn_123",
+  "promptTemplate": "Summarize: {{input}}",
+  "inputBindings": [{"fromNodeId": "n1", "outputKey": "text"}],
+  "outputs": [{"key": "text", "type": "string"}],
+  "runtime": {"status": "idle", "lastRunId": null}
+}</pre>
+      </div>
+
+      <h3>Step 3: Connector API (Zod-first)</h3>
+      <ul>
+        <li>Add routes under <code>/workspaces/:wid/ai/connectors</code>: create/list/update/delete.</li>
+        <li>Validate params/query/body with Zod before service calls.</li>
+        <li>Reuse workspace role checks from existing workspace/board access model.</li>
+      </ul>
+
+      <h3>Step 4: Execution model for node runs</h3>
+      <ul>
+        <li>New service: <code>ai-node.service.ts</code> to execute graph steps using connector credentials.</li>
+        <li>Run async via jobs Redis (same pattern as preview jobs) for reliability/retries.</li>
+        <li>Persist run metadata in new table: <code>ai_node_runs</code>.</li>
+      </ul>
+
+      <h3>Step 5: Realtime streaming design</h3>
+      <p>Use Socket.IO events for token streaming to active board viewers:</p>
+      <ul>
+        <li><code>ai:run:start</code> (nodeId, runId)</li>
+        <li><code>ai:run:chunk</code> (token/text delta)</li>
+        <li><code>ai:run:done</code> (final output)</li>
+        <li><code>ai:run:error</code></li>
+      </ul>
+      <p>Then write final node output back as canonical board element update through mutation processor, so SQL/Redis stay source-of-truth aligned.</p>
+      <div class="diagram-wrap">
+        <div class="diagram-title">SVG · AI node streaming sequence</div>
+        <svg width="100%" viewBox="0 0 860 320" role="img" aria-label="AI node streaming architecture">
+          <defs>
+            <marker id="arr-ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" />
+            </marker>
+          </defs>
+          <rect x="20" y="26" width="130" height="50" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="85" y="47" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Frontend</text>
+          <text x="85" y="63" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">run AI node</text>
+
+          <rect x="190" y="26" width="150" height="50" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="265" y="47" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">API / Socket.IO</text>
+          <text x="265" y="63" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">enqueue run</text>
+
+          <rect x="380" y="26" width="140" height="50" rx="8" fill="#25204a" stroke="#a78bfa" />
+          <text x="450" y="47" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Jobs Redis</text>
+          <text x="450" y="63" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">queue</text>
+
+          <rect x="560" y="26" width="130" height="50" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="625" y="47" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Worker</text>
+          <text x="625" y="63" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">resolve connector</text>
+
+          <rect x="720" y="26" width="120" height="50" rx="8" fill="#193122" stroke="#2dd98f" />
+          <text x="780" y="47" text-anchor="middle" fill="#2dd98f" font-size="12" font-family="Inter, sans-serif" font-weight="600">LLM Provider</text>
+          <text x="780" y="63" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">stream tokens</text>
+
+          <line x1="150" y1="51" x2="190" y2="51" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="340" y1="51" x2="380" y2="51" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="520" y1="51" x2="560" y2="51" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="690" y1="51" x2="720" y2="51" stroke="#2dd98f" stroke-width="1.4" marker-end="url(#arr-ai)" />
+
+          <line x1="780" y1="76" x2="780" y2="140" stroke="#2dd98f" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="780" y1="140" x2="265" y2="140" stroke="#2dd98f" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <text x="526" y="132" text-anchor="middle" fill="#2dd98f" font-size="10" font-family="JetBrains Mono, monospace">ai:run:start + ai:run:chunk*</text>
+
+          <rect x="210" y="176" width="190" height="52" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="305" y="196" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Mutation Processor</text>
+          <text x="305" y="212" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">final AI output -> UPDATE_ELEMENT</text>
+
+          <rect x="450" y="176" width="160" height="52" rx="8" fill="#25204a" stroke="#a78bfa" />
+          <text x="530" y="196" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Redis Pub/Sub</text>
+          <text x="530" y="212" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">ELEMENTS_CHANGED</text>
+
+          <rect x="20" y="254" width="180" height="50" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="110" y="275" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">All board clients</text>
+          <text x="110" y="291" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">ai:run:done + updated node</text>
+
+          <line x1="265" y1="140" x2="265" y2="176" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="400" y1="202" x2="450" y2="202" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-ai)" />
+          <line x1="450" y1="228" x2="170" y2="254" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-ai)" />
+        </svg>
+      </div>
+
+      <div class="box">
+        <strong>Better Auth note:</strong> this backend currently uses custom JWT + refresh tokens + Google OAuth, not Better Auth runtime. Billing service already has metadata placeholders for a future Better Auth organization migration.
+      </div>
+
+      <hr />
+      <h2 id="c1-glossary">Architecture Glossary (Project-Specific)</h2>
+      <table>
+        <tr><th>Term</th><th>Meaning in this backend</th></tr>
+        <tr><td>Mutation Processor</td><td>Converts UI mutations into canonical upserts/deletes and applies them with per-board locking.</td></tr>
+        <tr><td>Board State Service</td><td>Redis-first live board state, sequence tracking, dedupe keys, presence, and flush support.</td></tr>
+        <tr><td>Change Log</td><td>Short-lived Redis list for reconnect catch-up (<code>CATCH_UP</code> vs full snapshot).</td></tr>
+        <tr><td>Fanout</td><td>Broadcasting a change to all clients on board, including across instances via Redis pub/sub.</td></tr>
+        <tr><td>Solo vs Collab mode</td><td>Controls whether to track short-lived change-log entries for catch-up efficiency.</td></tr>
+        <tr><td>APP_ROLE</td><td>Runtime split: API-only, realtime-only, worker-only, or monolith.</td></tr>
+        <tr><td>Share token</td><td>Board link-based access path used by optional-auth routes.</td></tr>
+      </table>
+
+      <h2 id="c1-interview">Chapter 1 Interview Questions</h2>
+      <div class="iq">
+        <div class="q">Why validate params/query/body separately with Zod?</div>
+        <p>Because each surface has different trust and error semantics. It keeps failures explicit and prevents hidden coercions reaching services.</p>
+      </div>
+      <div class="iq">
+        <div class="q">Where should board shape fields like <code>maxDimensions</code> live?</div>
+        <p>In board domain (schema + board service + board routes), not mutation payloads, because they are board-level metadata, not per-element collaborative state.</p>
+      </div>
+
+      <hr />
+      <h2 id="c2-transport">Chapter 2: WebSocket / Socket.IO / Redis / Fanout</h2>
+      <h3>High-level overview first (pseudocode)</h3>
+      <div class="cw">
+        <div class="ch"><span>Socket.IO + Redis flow</span><span>pseudo</span></div>
+        <pre>on socket connect:
+  wait for board:join
+  authorize board access
+  load board state from Redis/SQL
+  add participant to room
+  emit board snapshot
+
+on mutation:batch:
+  validate payload
+  process canonical changes via mutationProcessor
+  ack sender
+  broadcast mutation to local room
+  publish ELEMENTS_CHANGED to Redis channel
+
+on other realtime node receiving Redis message:
+  fanout to its local clients in same board room
+
+on reconnect:
+  if sequence is still in Redis change-log -> send CATCH_UP
+  else -> send full SNAPSHOT</pre>
+      </div>
+      <div class="diagram-wrap">
+        <div class="diagram-title">SVG · End-to-end realtime fanout</div>
+        <svg width="100%" viewBox="0 0 860 300" role="img" aria-label="Socket.IO and Redis fanout">
+          <defs>
+            <marker id="arr-fan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" />
+            </marker>
+          </defs>
+          <rect x="18" y="28" width="130" height="48" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="83" y="48" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Client A</text>
+          <text x="83" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">mutation:batch</text>
+
+          <rect x="210" y="28" width="170" height="52" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="295" y="48" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Realtime Pod #1</text>
+          <text x="295" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">socket.io handler</text>
+
+          <rect x="440" y="26" width="170" height="56" rx="8" fill="#193122" stroke="#2dd98f" />
+          <text x="525" y="46" text-anchor="middle" fill="#2dd98f" font-size="12" font-family="Inter, sans-serif" font-weight="600">Mutation Processor</text>
+          <text x="525" y="62" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">canonical apply</text>
+          <text x="525" y="74" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">boardStateService</text>
+
+          <rect x="668" y="28" width="170" height="52" rx="8" fill="#25204a" stroke="#a78bfa" />
+          <text x="753" y="48" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Redis Pub/Sub</text>
+          <text x="753" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">board:{id}:mutations</text>
+
+          <rect x="210" y="198" width="170" height="52" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="295" y="218" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Realtime Pod #2</text>
+          <text x="295" y="234" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">subRedis.on(message)</text>
+
+          <rect x="18" y="200" width="130" height="48" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="83" y="220" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Client B</text>
+          <text x="83" y="236" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">ELEMENTS_CHANGED</text>
+
+          <line x1="148" y1="52" x2="210" y2="52" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-fan)" />
+          <line x1="380" y1="52" x2="440" y2="52" stroke="#2dd98f" stroke-width="1.4" marker-end="url(#arr-fan)" />
+          <line x1="610" y1="52" x2="668" y2="52" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-fan)" />
+          <line x1="753" y1="80" x2="753" y2="154" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-fan)" />
+          <line x1="753" y1="154" x2="380" y2="224" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-fan)" />
+          <line x1="210" y1="224" x2="148" y2="224" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-fan)" />
+
+          <text x="182" y="42" fill="#647290" font-size="9" font-family="JetBrains Mono, monospace">1 publish event</text>
+          <text x="404" y="42" fill="#647290" font-size="9" font-family="JetBrains Mono, monospace">2 apply</text>
+          <text x="624" y="42" fill="#647290" font-size="9" font-family="JetBrains Mono, monospace">3 publish</text>
+          <text x="564" y="145" fill="#647290" font-size="9" font-family="JetBrains Mono, monospace">4 fanout to other pods</text>
+          <text x="152" y="214" fill="#647290" font-size="9" font-family="JetBrains Mono, monospace">5 emit to local room</text>
+        </svg>
+      </div>
+
+      <h3>Concrete pass (real files + call chain)</h3>
+      <p>This backend currently runs two realtime transports:</p>
+      <ul>
+        <li>Raw WS: <code>/boards/:boardId/ws</code> under <code>src/ws/*</code>.</li>
+        <li>Socket.IO: event-based transport under <code>src/socketio/*</code>.</li>
+      </ul>
+
+      <table>
+        <tr><th>Flow step</th><th>Concrete implementation</th></tr>
+        <tr><td>Socket.IO server boot</td><td><code>src/socketio/server.ts</code> <code>createSocketIoRealtimeServer()</code></td></tr>
+        <tr><td>Join validation + access</td><td><code>src/socketio/handlers/join.handler.ts</code> + <code>boardService.checkBoardAccess()</code></td></tr>
+        <tr><td>Mutation batch handling</td><td><code>src/socketio/handlers/mutation-batch.handler.ts</code></td></tr>
+        <tr><td>Canonical apply</td><td><code>src/mutations/processor.ts</code> → <code>boardStateService.applyChangeSet()</code></td></tr>
+        <tr><td>Redis fanout publish</td><td><code>pubRedis.publish(\"board:{id}:mutations\", ...)</code> in socket.io + ws handlers</td></tr>
+        <tr><td>Cross-node consume + rebroadcast</td><td><code>src/ws/pubsub.ts</code> <code>subRedis.on('message')</code> → room broadcast</td></tr>
+        <tr><td>Catch-up vs snapshot</td><td><code>src/ws/handler.utils.ts</code> <code>sendInitialState()</code></td></tr>
+      </table>
+
+      <h3 id="c2-redis">Redis responsibilities in realtime</h3>
+      <table>
+        <tr><th>Key / channel</th><th>Purpose</th></tr>
+        <tr><td><code>board:{id}:elements</code></td><td>Current canonical board element set in Redis</td></tr>
+        <tr><td><code>board:{id}:seq</code></td><td>Monotonic sequence for ordering/catch-up</td></tr>
+        <tr><td><code>board:{id}:changes</code></td><td>Short-lived catch-up log</td></tr>
+        <tr><td><code>board:{id}:clients</code></td><td>Active clients (cross-instance activity tracking)</td></tr>
+        <tr><td><code>board:{id}:mutations</code> channel</td><td>Pub/sub fanout channel for applied canonical changes</td></tr>
+      </table>
+
+      <h3>What “fanout” means here</h3>
+      <p>One client sends mutation. Server applies canonical change once. Then server publishes to Redis channel. All realtime instances subscribed to that board receive and rebroadcast to their local sockets in that board room.</p>
+      <div class="diagram-wrap">
+        <div class="diagram-title">SVG · Reconnect decision (CATCH_UP vs SNAPSHOT)</div>
+        <svg width="100%" viewBox="0 0 860 250" role="img" aria-label="Reconnect catch-up decision flow">
+          <defs>
+            <marker id="arr-rec" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" />
+            </marker>
+          </defs>
+          <rect x="24" y="28" width="160" height="52" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="104" y="48" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Client reconnects</text>
+          <text x="104" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">lastSequence = N</text>
+
+          <rect x="248" y="28" width="200" height="52" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="348" y="48" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">sendInitialState()</text>
+          <text x="348" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">src/ws/handler.utils.ts</text>
+
+          <polygon points="534,26 684,26 736,54 684,82 534,82 482,54" fill="#3a3214" stroke="#f7c84e" />
+          <text x="609" y="50" text-anchor="middle" fill="#f7c84e" font-size="12" font-family="Inter, sans-serif" font-weight="600">changes after N complete?</text>
+          <text x="609" y="66" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">board:{id}:changes</text>
+
+          <rect x="450" y="156" width="150" height="52" rx="8" fill="#193122" stroke="#2dd98f" />
+          <text x="525" y="176" text-anchor="middle" fill="#2dd98f" font-size="12" font-family="Inter, sans-serif" font-weight="600">Send CATCH_UP</text>
+          <text x="525" y="192" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">cheap delta sync</text>
+
+          <rect x="642" y="156" width="150" height="52" rx="8" fill="#2f1b1b" stroke="#f06e6e" />
+          <text x="717" y="176" text-anchor="middle" fill="#f06e6e" font-size="12" font-family="Inter, sans-serif" font-weight="600">Send SNAPSHOT</text>
+          <text x="717" y="192" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">full board payload</text>
+
+          <line x1="184" y1="54" x2="248" y2="54" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-rec)" />
+          <line x1="448" y1="54" x2="482" y2="54" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-rec)" />
+          <line x1="591" y1="82" x2="541" y2="156" stroke="#2dd98f" stroke-width="1.4" marker-end="url(#arr-rec)" />
+          <line x1="629" y1="82" x2="700" y2="156" stroke="#f06e6e" stroke-width="1.4" marker-end="url(#arr-rec)" />
+          <text x="552" y="120" fill="#2dd98f" font-size="10" font-family="JetBrains Mono, monospace">yes</text>
+          <text x="661" y="118" fill="#f06e6e" font-size="10" font-family="JetBrains Mono, monospace">no</text>
+        </svg>
+      </div>
+
+      <h3 id="c2-scale">Scaling plan (important)</h3>
+      <ul>
+        <li>Good now: canonical element changes are cross-instance via Redis pub/sub.</li>
+        <li>Gap now: Socket.IO room presence events are local emits; without sticky routing or Redis adapter, presence/user-join can fragment across nodes.</li>
+        <li>For scale: either enforce sticky sessions per board, or add <code>@socket.io/redis-adapter</code> and broadcast presence through adapter/pubsub path.</li>
+        <li>Keep realtime and API split by host as already documented in <code>docs/k8s-migration-baseline.md</code>.</li>
+      </ul>
+
+      <div class="cw">
+        <div class="ch"><span>Scale checklist</span><span>ops</span></div>
+        <pre>1) Keep APP_ROLE split in production (api/realtime/worker)
+2) Use Redis with persistence (AOF/RDB) and monitor memory/evictions
+3) Add socket.io redis adapter OR sticky board routing
+4) Monitor: reconnect rate, catch-up fallback-to-snapshot rate, flush latency
+5) Backpressure: cap mutation batch and message size (already partially done)</pre>
+      </div>
+
+      <h2 id="c2-interview">Chapter 2 Interview Questions</h2>
+      <div class="iq">
+        <div class="q">Why keep Redis change log short-lived instead of permanent?</div>
+        <p>Cheap reconnects for recent disconnects, without long-term write amplification. SQL remains compact canonical state; history is not source-of-truth.</p>
+      </div>
+      <div class="iq">
+        <div class="q">When should reconnect send <code>CATCH_UP</code> vs <code>SNAPSHOT</code>?</div>
+        <p><code>CATCH_UP</code> when requested sequence is still covered by Redis changes; otherwise snapshot for correctness.</p>
+      </div>
+
+      <hr />
+      <h2 id="c3-overview">Chapter 3: Stripe Integration (Current + Next)</h2>
+      <h3>High-level overview first (pseudocode)</h3>
+      <div class="cw">
+        <div class="ch"><span>Billing flow</span><span>pseudo</span></div>
+        <pre>request checkout(plan):
+  ensure stripe configured
+  resolve/create customer
+  create checkout session
+  return checkout URL
+
+receive webhook(event):
+  verify stripe signature
+  dedupe event id in DB
+  update customer/subscription records
+  recompute effective plan for profile endpoint</pre>
+      </div>
+
+      <h3>Concrete pass</h3>
+      <p>Billing is toggled by config flags. If Stripe keys are missing, non-prod falls back to <code>dev</code> plan behavior.</p>
+
+      <h3>Current data model</h3>
+      <ul>
+        <li><code>billing_customer_links</code></li>
+        <li><code>billing_subscriptions</code></li>
+        <li><code>billing_webhook_events</code> (idempotency by Stripe event id)</li>
+      </ul>
+
+      <h3 id="c3-flow">Checkout + webhook flow</h3>
+      <ol>
+        <li>Frontend calls <code>POST /billing/checkout</code> with plan.</li>
+        <li>Backend creates Stripe Checkout Session in <code>billing.service.ts</code>.</li>
+        <li>Stripe sends webhook to <code>POST /billing/webhook</code>.</li>
+        <li>Backend verifies signature and dedupes event before updating subscription records.</li>
+      </ol>
+
+      <h3 id="c3-hardening">Production hardening checklist</h3>
+      <ul>
+        <li>Enforce strict webhook secret and rotate regularly.</li>
+        <li>Keep webhook handler idempotent (already done using <code>onConflictDoNothing</code> by event id).</li>
+        <li>Track async webhook failures and retry alerting.</li>
+        <li>Store entitlement cache in DB (plan/limits) and avoid runtime calls to Stripe on hot paths.</li>
+        <li>If moving to Better Auth org billing, map org id in metadata consistently.</li>
+      </ul>
+
+      <h2 id="c3-interview">Chapter 3 Interview Questions</h2>
+      <div class="iq">
+        <div class="q">Why can’t checkout completion alone define entitlements?</div>
+        <p>Because subscription lifecycle changes later (trial end, pause, cancel, payment failure). Webhooks are the long-term truth stream.</p>
+      </div>
+      <div class="iq">
+        <div class="q">How do you make webhook processing safe on retries?</div>
+        <p>Deduplicate by Stripe event id in DB before processing side effects. If insert conflicts, treat as already-processed.</p>
+      </div>
+
+      <hr />
+      <h2 id="c4-read">Chapter 4: How To Read + Extend This Backend</h2>
+      <h3>High-level overview first (pseudocode)</h3>
+      <div class="cw">
+        <div class="ch"><span>Extension algorithm</span><span>pseudo</span></div>
+        <pre>new feature request:
+  identify domain owner (boards/workspaces/realtime/billing)
+  define data changes (migration + schema)
+  define input contracts (zod params/query/body)
+  implement service behavior
+  wire route/socket handler
+  add tests + openapi updates
+  verify build/tests + runtime smoke</pre>
+      </div>
+
+      <h3>Concrete pass: where to look first</h3>
+      <table>
+        <tr><th>Question</th><th>First files to open</th></tr>
+        <tr><td>How app boots</td><td><code>src/index.ts</code>, <code>src/app/runtime.ts</code>, <code>src/app/create-app.ts</code></td></tr>
+        <tr><td>How auth works</td><td><code>src/routes/auth.ts</code>, <code>src/middleware/auth.ts</code>, <code>src/services/auth.service.ts</code></td></tr>
+        <tr><td>How boards are edited</td><td><code>src/routes/boards/*</code>, <code>src/mutations/processor.ts</code>, <code>src/services/board-state.service.ts</code></td></tr>
+        <tr><td>How realtime sync works</td><td><code>src/socketio/*</code>, <code>src/ws/*</code>, <code>src/services/board-state/keys.ts</code></td></tr>
+        <tr><td>How billing works</td><td><code>src/routes/billing.ts</code>, <code>src/services/billing.service.ts</code>, <code>src/db/schema.ts</code></td></tr>
+      </table>
+
+      <h3 id="c4-trace">Trace any request (template)</h3>
+      <div class="cw">
+        <div class="ch"><span>Route tracing template</span><span>checklist</span></div>
+        <pre>1) Route entry:
+   src/routes/...  -> identify endpoint handler
+2) Validation:
+   parseWithSchema / parseOrSendBadRequest
+3) Access control:
+   auth middleware + service permission checks
+4) Business logic:
+   src/services/... calls
+5) Persistence:
+   Drizzle queries and/or boardStateService (Redis)
+6) Side effects:
+   preview jobs, pub/sub fanout, websocket emits
+7) Return contract:
+   JSON payload shape + OpenAPI schema</pre>
+      </div>
+
+      <h3 id="c4-frontend">Frontend mental mapping (quick translation)</h3>
+      <table>
+        <tr><th>If you know frontend...</th><th>Think backend as...</th></tr>
+        <tr><td>React state</td><td><code>board:{id}:elements</code> canonical state in Redis</td></tr>
+        <tr><td>Optimistic update queue</td><td>mutation batch + idempotency keys</td></tr>
+        <tr><td>Event bus</td><td>Redis pub/sub fanout channels</td></tr>
+        <tr><td>Reducer commit</td><td>mutation processor applying canonical change set</td></tr>
+        <tr><td>SSR snapshot hydration</td><td><code>SNAPSHOT</code> on join / reconnect fallback</td></tr>
+      </table>
+
+      <h3 id="c4-debug">Debug playbooks</h3>
+      <div class="cw">
+        <div class="ch"><span>Fast debug routine</span><span>bash</span></div>
+        <pre># 1) compile/types
+just build
+
+# 2) tests
+just test
+
+# 3) DB consistency for feature work
+just db-migrate && just db-seed
+
+# 4) if local env is flaky
+just build-docker
+just dev</pre>
+      </div>
+
+      <h2 id="c4-interview">Chapter 4 Interview Questions</h2>
+      <div class="iq">
+        <div class="q">What is your default sequence for adding a new backend feature safely?</div>
+        <p>Migration/schema first, strict Zod validation on all inputs, service-layer logic, tests, then realtime side-effects and OpenAPI updates.</p>
+      </div>
+      <div class="iq">
+        <div class="q">How do you debug a mismatch between REST data and realtime board state?</div>
+        <p>Trace mutation processor and boardStateService first, inspect Redis keys/sequence/change-log, then verify SQL flush timing and route payloads.</p>
+      </div>
+
+      <hr />
+      <h2>How To Use This Guide</h2>
+      <ul>
+        <li>Implement Chapter 1 Task A first. It is a contained full-stack metadata change.</li>
+        <li>Then design Task B with thin vertical slices: connector CRUD, AI_NODE type, single-node execution, then graph chaining.</li>
+        <li>After each slice: <code>just build</code> and <code>just test</code>.</li>
+      </ul>
+    </main>
+  </div>
+</body>
+</html>

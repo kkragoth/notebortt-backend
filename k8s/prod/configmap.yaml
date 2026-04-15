@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: prod
+data:
+  NODE_ENV: production
+  PORT: "3000"
+
+  # Set to your frontend origin(s). Comma-separated list.
+  CORS_ORIGIN: "https://note-canva.web.app,https://app.note-canva.com"
+
+  # Managed service connection strings.
+  DATABASE_URL: "postgres://api_user:REPLACE_DB_PASSWORD@10.0.0.10:5432/notecanva"
+  REDIS_REALTIME_URL: "redis://10.0.0.20:6379"
+  REDIS_JOBS_URL: "redis://10.0.0.21:6379"
+
+  ENABLE_INCREMENTAL_PERSISTENCE: "true"
+  ENABLE_TARGETED_MUTATION_READS: "true"
+  PRESENCE_WRITE_THROTTLE_MS: "3000"
+  PRESENCE_WRITE_JITTER_MS: "400"
+  ENABLE_CLEANUP_ACTIVE_INDEX: "true"
+  STRIPE_BILLING_ENABLED: "false"

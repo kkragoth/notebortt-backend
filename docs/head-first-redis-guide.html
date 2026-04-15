@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Note Canva Backend — Head First Redis + Socket.IO Guide</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+    :root {
+      --bg: #0b0d12;
+      --s1: #0f1218;
+      --s2: #151b26;
+      --s3: #1c2233;
+      --border: #232a3c;
+      --text: #dde4f0;
+      --text2: #9ba9c3;
+      --text3: #647290;
+      --blue: #4d9eff;
+      --green: #2dd98f;
+      --yellow: #f7c84e;
+      --red: #f06e6e;
+      --purple: #a78bfa;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Inter', sans-serif;
+      --nav-w: 320px;
+      --content-w: 980px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.72;
+      display: flex;
+      justify-content: center;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: calc(var(--nav-w) + var(--content-w) + 4rem);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav {
+      width: var(--nav-w);
+      min-width: var(--nav-w);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--border);
+      background: var(--s1);
+      padding-bottom: 2rem;
+    }
+
+    .nav-head { padding: 1.1rem 1.2rem; border-bottom: 1px solid var(--border); }
+    .nav-title { font-weight: 700; font-size: 0.9rem; }
+    .nav-sub { color: var(--text3); font-family: var(--mono); font-size: 0.65rem; margin-top: 0.15rem; }
+    .nav-group {
+      padding: 0.9rem 1.2rem 0.35rem;
+      color: var(--text3);
+      font-family: var(--mono);
+      font-size: 0.58rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    nav a {
+      color: var(--text2);
+      text-decoration: none;
+      display: block;
+      padding: 0.26rem 1.2rem;
+      border-left: 2px solid transparent;
+      font-size: 0.78rem;
+    }
+
+    nav a:hover {
+      color: var(--text);
+      border-left-color: var(--blue);
+      background: var(--s2);
+    }
+
+    main { flex: 1; max-width: var(--content-w); padding: 2.4rem 3rem 6rem; }
+
+    h1 { font-size: 2rem; line-height: 1.2; margin-bottom: 0.65rem; }
+    h2 { font-size: 1.26rem; margin: 2.2rem 0 0.8rem; }
+    h3 { font-size: 1rem; margin: 1.4rem 0 0.5rem; color: var(--text); }
+    p { color: var(--text2); margin-bottom: 0.72rem; }
+    li { color: var(--text2); margin-left: 1.25rem; margin-bottom: 0.3rem; }
+
+    .hero {
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, #101725, #121722 40%, #111920);
+      border-radius: 12px;
+      padding: 1.2rem 1.3rem;
+      margin-bottom: 1.4rem;
+    }
+
+    .pill {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      padding: 0.2rem 0.45rem;
+      border: 1px solid #2b4e84;
+      color: var(--blue);
+      background: #132642;
+      border-radius: 99px;
+      margin-bottom: 0.55rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .box {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--yellow);
+      background: var(--s1);
+      border-radius: 8px;
+      padding: 0.82rem 0.92rem;
+      margin: 0.9rem 0;
+    }
+
+    .box strong { color: var(--yellow); }
+
+    .ok {
+      border-left-color: var(--green);
+      background: #0f1a16;
+    }
+
+    .ok strong { color: var(--green); }
+
+    .warn {
+      border-left-color: var(--red);
+      background: #1a1212;
+    }
+
+    .warn strong { color: var(--red); }
+
+    .cw {
+      border: 1px solid var(--border);
+      background: #0e131d;
+      border-radius: 8px;
+      margin: 0.9rem 0;
+      overflow: hidden;
+    }
+
+    .ch {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.45rem 0.65rem;
+      background: #131a27;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 0.64rem;
+      color: var(--text3);
+    }
+
+    pre {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.55;
+      padding: 0.85rem 0.9rem;
+      overflow: auto;
+      color: #c5d5ee;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 0.9rem 0;
+      font-size: 0.82rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.52rem 0.6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: var(--s2); color: var(--text); font-weight: 600; }
+    tr:nth-child(even) td { background: #101622; }
+
+    .iq {
+      border: 1px solid #2d364f;
+      background: #101829;
+      border-radius: 10px;
+      padding: 0.8rem 0.9rem;
+      margin: 0.7rem 0;
+    }
+
+    .iq .q {
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 0.45rem;
+      font-size: 0.9rem;
+    }
+
+    .diagram-wrap {
+      border: 1px solid var(--border);
+      background: #0f1725;
+      border-radius: 10px;
+      padding: 0.7rem;
+      margin: 0.9rem 0 1rem;
+      overflow: auto;
+    }
+
+    .diagram-title {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      color: var(--text3);
+      margin-bottom: 0.5rem;
+    }
+
+    code { font-family: var(--mono); font-size: 0.85em; color: #d4e0f8; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+    @media (max-width: 980px) {
+      nav { display: none; }
+      .shell { max-width: 100%; }
+      main { padding: 1.2rem 1rem 4rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <div class="nav-head">
+        <div class="nav-title">Redis + Socket.IO Guide</div>
+        <div class="nav-sub">Head First · In-depth · Project-specific</div>
+      </div>
+
+      <div class="nav-group">Chapter 0 · Orientation</div>
+      <a href="#c0-map">Big picture first</a>
+      <a href="#c0-why">Why Redis in this app</a>
+
+      <div class="nav-group">Chapter 1 · Redis from Zero</div>
+      <a href="#c1-crash">Redis mental model</a>
+      <a href="#c1-types">Data types in this repo</a>
+      <a href="#c1-atomic">Atomicity and pipelines</a>
+      <a href="#c1-pubsub">Pub/Sub and fan-out</a>
+
+      <div class="nav-group">Chapter 2 · Your Keyspace</div>
+      <a href="#c2-keys">board:{id}:* map</a>
+      <a href="#c2-lifecycle">Board lifecycle</a>
+      <a href="#c2-workers">Persistence + cleanup workers</a>
+
+      <div class="nav-group">Chapter 3 · Socket.IO Internals</div>
+      <a href="#c3-boot">Server boot and runtime</a>
+      <a href="#c3-join">Join flow (board:join)</a>
+      <a href="#c3-mutation">Mutation flow (mutation:batch)</a>
+      <a href="#c3-presence">Presence / tick / CRDT</a>
+
+      <div class="nav-group">Chapter 4 · Fan-out Clarified</div>
+      <a href="#c4-what">What fan-out means</a>
+      <a href="#c4-paths">Local vs cross-node path</a>
+      <a href="#c4-presence-eli5">Presence across nodes (ELI5)</a>
+      <a href="#c4-redis-nodes">How multi-node Redis works</a>
+      <a href="#c4-redis-next">Multi-Redis next steps (ELI5)</a>
+      <a href="#c4-gap">Current architecture gap</a>
+      <a href="#c4-fix">Production fix options</a>
+
+      <div class="nav-group">Chapter 5 · Full Architecture</div>
+      <a href="#c5-overview">Runtime roles</a>
+      <a href="#c5-callchain">End-to-end call chain</a>
+      <a href="#c5-code">Code architecture examples</a>
+      <a href="#c5-mutation-deep">Mutation + SQL upsert deep dive</a>
+      <a href="#c5-batching">Mini batching + optimizations</a>
+
+      <div class="nav-group">Chapter 6 · Practical Lab</div>
+      <a href="#c6-debug">How to inspect Redis now</a>
+      <a href="#c6-commands">Useful redis-cli commands</a>
+      <a href="#c6-interview">Interview checks</a>
+
+      <div class="nav-group">Chapter 7 · Multi-node Failures</div>
+      <a href="#c7-failure">Failure scenarios</a>
+      <a href="#c7-drill">Verification drill</a>
+      <a href="#c7-hardening">Hardening checklist</a>
+    </nav>
+
+    <main>
+      <div class="hero">
+        <div class="pill">HEAD FIRST REDIS + SOCKET.IO</div>
+        <h1>Understand Realtime Here Like You Implemented It</h1>
+        <p>This is not a generic Redis or Socket.IO tutorial. It is a deep walkthrough of <code>note-canva-backend</code>: exact keys, exact handler flow, exact fan-out path, and current tradeoffs.</p>
+        <p>Goal: if someone asks "how does realtime sync work in your backend?" you can answer at key-level and function-level, not just concept-level.</p>
+      </div>
+
+      <h2 id="c0-map">Chapter 0: Big Picture First</h2>
+      <h3>One-line architecture summary</h3>
+      <p>Redis is the live board state + coordination memory, Socket.IO/WS are transport layers, SQL is durable store, and workers flush/cleanup Redis over time.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Realtime mental model</span><span>pseudo</span></div>
+        <pre>client sends mutation
+  -> transport handler validates payload + permission
+  -> mutation processor computes canonical change
+  -> boardStateService writes change to Redis (elements/seq/dirty/change-log)
+  -> publish ELEMENTS_CHANGED on board:{id}:mutations
+  -> each realtime instance sends change to its local clients
+
+later (worker):
+  -> persist dirty boards from Redis to SQL
+  -> cleanup stale Redis boards safely</pre>
+      </div>
+
+      <h3 id="c0-why">Why Redis exists in this app</h3>
+      <ul>
+        <li>Collaboration needs very fast reads/writes for board elements.</li>
+        <li>Reconnect needs short-term history (<code>board:{id}:changes</code>) for <code>CATCH_UP</code>.</li>
+        <li>Presence needs short-lived session/client tracking (<code>clients</code>, <code>viewer_sessions</code>).</li>
+        <li>Cross-instance fan-out needs pub/sub channels (<code>board:{id}:mutations</code>).</li>
+      </ul>
+
+      <div class="box">
+        <strong>Important:</strong> Redis is live canonical state between flushes, but SQL remains durability anchor. This is why persistence workers exist.
+      </div>
+
+      <hr />
+      <h2 id="c1-crash">Chapter 1: Redis Tutorial from Zero (Project-Driven)</h2>
+      <h3>Redis mental model (frontend analogy)</h3>
+      <table>
+        <tr><th>If you know frontend</th><th>Redis equivalent here</th><th>Concrete key</th></tr>
+        <tr><td>Current Redux/React state</td><td>Live board snapshot</td><td><code>board:{id}:elements</code> hash</td></tr>
+        <tr><td>Version counter</td><td>Monotonic sequence</td><td><code>board:{id}:seq</code> string/integer</td></tr>
+        <tr><td>Recent action queue</td><td>Short reconnect log</td><td><code>board:{id}:changes</code> list</td></tr>
+        <tr><td>Who is online</td><td>Presence sets/zsets</td><td><code>board:{id}:clients</code>, <code>viewer_sessions</code></td></tr>
+        <tr><td>Event bus</td><td>Cross-node messaging</td><td><code>board:{id}:mutations</code> pub/sub channel</td></tr>
+      </table>
+
+      <h3 id="c1-types">Data types used in this repo (with why)</h3>
+      <table>
+        <tr><th>Redis type</th><th>Used for</th><th>Why this type fits</th><th>Code</th></tr>
+        <tr><td>String</td><td>Sequence, timestamps, locks, mode flags</td><td>Simple atomic reads/writes and <code>INCR</code>/<code>SET NX</code></td><td><code>boardSeqKey</code>, lock keys in <code>load-domain.ts</code></td></tr>
+        <tr><td>Hash</td><td>Element map (<code>elementId -> JSON</code>)</td><td>Fast random access by element id</td><td><code>hset/hgetall/hmget</code> in <code>state-domain.ts</code></td></tr>
+        <tr><td>List</td><td>Change log for reconnect catch-up</td><td>Append order preserved, trim easily</td><td><code>rpush + ltrim</code> in <code>applyChangeSet</code></td></tr>
+        <tr><td>Set</td><td>Unique clients, dirty ids, active boards</td><td>Fast uniqueness and membership</td><td><code>sadd/srem/scard</code> in presence/persistence domains</td></tr>
+        <tr><td>Sorted Set</td><td>Viewer activity + dirty board age</td><td>Score-based expiry and scheduling</td><td><code>zadd/zremrangebyscore</code></td></tr>
+        <tr><td>Pub/Sub channel</td><td>Fan-out event stream</td><td>Low-latency broadcast, ephemeral delivery</td><td><code>pubRedis.publish</code> + <code>subRedis.on</code></td></tr>
+      </table>
+
+      <h3 id="c1-atomic">Atomicity and pipelines (why they matter)</h3>
+      <p>Collaboration state can break if related writes split across multiple round trips. This codebase uses <code>pipeline()</code> and Lua <code>eval</code> where consistency matters.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Atomic-ish grouped update in applyChangeSet()</span><span>TypeScript</span></div>
+        <pre>const pipeline = redis.pipeline()
+
+pipeline.hset(board:{id}:elements, ...)
+pipeline.rpush(board:{id}:changes, JSON.stringify(change))
+pipeline.ltrim(board:{id}:changes, -CHANGE_LOG_MAX_LENGTH, -1)
+pipeline.sadd(boards:dirty, boardId)
+pipeline.incr(board:{id}:dirty_epoch)
+...
+await pipeline.exec()</pre>
+      </div>
+
+      <p>Persistence clear step uses Lua to avoid race between "what was flushed" and "new writes happened while flushing" by checking <code>dirty_epoch</code> first.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Epoch guard idea</span><span>pseudo</span></div>
+        <pre>if current_dirty_epoch != snapshot_dirty_epoch:
+  do not clear dirty markers
+  // because new writes arrived during flush
+else:
+  clear dirty markers safely</pre>
+      </div>
+
+      <h3 id="c1-pubsub">Pub/Sub and fan-out basics (the missing explanation)</h3>
+      <p><strong>Fan-out</strong> means "one logical change is delivered to many clients". In distributed realtime, those clients may be connected to different server instances.</p>
+      <ul>
+        <li>Publisher: server that applied canonical change publishes to <code>board:{id}:mutations</code>.</li>
+        <li>Subscribers: all realtime instances that care about that board receive message.</li>
+        <li>Local rebroadcast: each subscriber sends message to its own local sockets in that board room.</li>
+      </ul>
+
+      <div class="box ok">
+        <strong>Key point:</strong> Pub/Sub itself does not store history. If a subscriber is offline, it misses messages. Reconnect correctness comes from snapshot/change-log, not pub/sub replay.
+      </div>
+
+      <hr />
+      <h2 id="c2-keys">Chapter 2: Your Redis Keyspace, Fully Explained</h2>
+      <p>Key builders are in <code>src/services/board-state/keys.ts</code>. This is your source of truth.</p>
+
+      <table>
+        <tr><th>Key</th><th>Writer(s)</th><th>Reader(s)</th><th>Purpose</th></tr>
+        <tr><td><code>board:{id}:elements</code></td><td><code>state-domain.applyChangeSet</code>, <code>load-domain.loadBoard</code></td><td>snapshot/getElement/persistence</td><td>Canonical live element map</td></tr>
+        <tr><td><code>board:{id}:seq</code></td><td><code>getSequence()</code>, load sets initial 0</td><td>getChangesAfter/snapshot</td><td>Mutation ordering and reconnect anchor</td></tr>
+        <tr><td><code>board:{id}:changes</code></td><td><code>applyChangeSet(trackChangeLog=true)</code></td><td><code>getChangesAfter()</code></td><td>Short-lived delta log for <code>CATCH_UP</code></td></tr>
+        <tr><td><code>board:{id}:seen:{mutationId}</code></td><td><code>tryMarkSeen()</code></td><td>mutation processor</td><td>Idempotency dedupe window (TTL)</td></tr>
+        <tr><td><code>board:{id}:clients</code></td><td><code>trackClient/removeClient</code></td><td>cleanup + write mode logic</td><td>Active transport connections</td></tr>
+        <tr><td><code>board:{id}:client_lease:{member}</code></td><td><code>trackClient</code></td><td>stale pruning</td><td>Auto-expiring lease for client set hygiene</td></tr>
+        <tr><td><code>board:{id}:viewer_sessions</code></td><td><code>touchViewerSession</code></td><td>viewer count and cleanup</td><td>ZSET of recent sessions by timestamp</td></tr>
+        <tr><td><code>board:{id}:last_active</code></td><td>state/presence updates</td><td>cleanup worker</td><td>Idle board detection</td></tr>
+        <tr><td><code>board:{id}:dirty_element_ids</code></td><td>applyChangeSet</td><td>incremental persistence</td><td>Rows to upsert on flush</td></tr>
+        <tr><td><code>board:{id}:deleted_element_ids</code></td><td>applyChangeSet</td><td>incremental persistence</td><td>Rows to delete on flush</td></tr>
+        <tr><td><code>boards:dirty</code></td><td>applyChangeSet</td><td>persistence worker</td><td>Dirty board membership</td></tr>
+        <tr><td><code>boards:dirty_by_age</code></td><td>applyChangeSet</td><td>persistence worker</td><td>Prioritized dirty board picking</td></tr>
+        <tr><td><code>boards:active</code></td><td>presence/state</td><td>cleanup worker</td><td>Candidate index for cleanup scans</td></tr>
+        <tr><td><code>board:{id}:mutations</code> channel</td><td>Socket.IO + WS publish paths</td><td>WS pubsub subscriber</td><td>Cross-instance fan-out bus</td></tr>
+      </table>
+
+      <h3 id="c2-lifecycle">Board lifecycle in Redis</h3>
+      <div class="cw">
+        <div class="ch"><span>Lifecycle</span><span>pseudo</span></div>
+        <pre>join board:
+  loadBoard(boardId) -> seed Redis from SQL if not loaded
+  track client + viewer session
+
+edit board:
+  applyChangeSet -> update elements/seq/change-log/dirty markers
+  publish board:{id}:mutations
+
+steady state:
+  clients reconnect via CATCH_UP if change-log has gap coverage
+  fallback SNAPSHOT otherwise
+
+idle board:
+  persistBoard(boardId)
+  flushBoard(boardId)
+  remove transient state eventually</pre>
+      </div>
+
+      <h3 id="c2-workers">Workers that keep Redis healthy</h3>
+      <ul>
+        <li><strong>Persistence worker</strong> (<code>boardPersistenceService</code>): flushes dirty boards to SQL continuously.</li>
+        <li><strong>Cleanup worker</strong> (<code>redisCleanupService</code>): finds inactive boards, persists then flushes, and deletes stale transient keys.</li>
+      </ul>
+
+      <div class="box">
+        <strong>Why cleanup is careful:</strong> it checks global client/viewer counts before flushing, to avoid dropping hot board state while users are connected.
+      </div>
+
+      <hr />
+      <h2 id="c3-boot">Chapter 3: How Socket.IO Works Here (Code Walkthrough)</h2>
+      <h3>Boot path</h3>
+      <p><code>src/index.ts</code> starts Socket.IO only for realtime roles and injects dependencies from <code>createAppRuntime()</code>.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Boot chain</span><span>pseudo</span></div>
+        <pre>index.ts
+  -> createAppRuntime(config)
+  -> if realtime role:
+       createSocketIoRealtimeServer(server, deps)
+       attach raw ws upgrade handler too</pre>
+      </div>
+
+      <h3>Dependency injection you should memorize</h3>
+      <table>
+        <tr><th>Dependency</th><th>Where used in Socket.IO</th><th>Why</th></tr>
+        <tr><td><code>boardService</code></td><td><code>join.handler.ts</code></td><td>Access check on join</td></tr>
+        <tr><td><code>boardStateService</code></td><td>join/activity/persist logic</td><td>Load/touch/presence/snapshot</td></tr>
+        <tr><td><code>mutationProcessor</code></td><td><code>mutation-batch.handler.ts</code></td><td>Canonical mutation apply</td></tr>
+        <tr><td><code>pubRedis</code></td><td><code>publishElementsChanged</code></td><td>Cross-node event publish</td></tr>
+      </table>
+
+      <h3 id="c3-join">Join flow: <code>board:join</code></h3>
+      <div class="cw">
+        <div class="ch"><span>What join.handler.ts does</span><span>step-by-step</span></div>
+        <pre>parseBoardJoinPayload(payload)
+resolve identity (auth user or guest)
+check board access via boardService.checkBoardAccess()
+if switching board/session -> detach previous context
+loadBoard(boardId)
+trackClient(boardId, userId, socket.id)
+touchViewerSession(boardId, sessionId)
+socket.join(boardId)
+emit USER_JOINED events
+emit board:snapshot with elements + sequence</pre>
+      </div>
+
+      <p>Notice the order: authorization and loading happen before room join/snapshot emit, which prevents unauthorized room visibility and avoids racing uninitialized board state.</p>
+
+      <h3 id="c3-mutation">Mutation flow: <code>mutation:batch</code></h3>
+      <div class="cw">
+        <div class="ch"><span>mutation-batch.handler.ts core logic</span><span>TypeScript</span></div>
+        <pre>const payload = parseMutationBatchPayload(raw)
+const snapshot = runtime.takeContextSnapshot(payload.boardId)
+if permission !== 'edit' -> sync:error
+
+const results = await mutationProcessor.processBatch(payload.mutations, userId)
+
+for each result:
+  if applied and has change:
+    await publishElementsChanged(boardId, userId, result.change, socket.id)
+
+emit mutation:ack to sender</pre>
+      </div>
+
+      <p>Inside <code>mutationProcessor.processBatch()</code>, work is serialized per board (lock map), deduped by <code>seen</code> keys, converted to canonical change sets, written to Redis, and sequence-numbered.</p>
+
+      <h3 id="c3-presence">Presence, tick, CRDT handlers</h3>
+      <table>
+        <tr><th>Event</th><th>Handler</th><th>What it does</th><th>Cross-node?</th></tr>
+        <tr><td><code>presence:update</code></td><td><code>presence-update.handler.ts</code></td><td>Validates payload, refreshes activity, emits <code>PRESENCE</code> to room</td><td>No (local room emit only)</td></tr>
+        <tr><td><code>realtime:tick</code></td><td><code>realtime-tick.handler.ts</code></td><td>Monotonic tick guard, local emit, optional move queue</td><td>Tick emit no; persisted move eventually yes (via publish on flush)</td></tr>
+        <tr><td><code>crdt:update</code></td><td><code>crdt-update.handler.ts</code></td><td>Apply CRDT update + local room emit</td><td>Direct emit no; persisted change publish yes</td></tr>
+        <tr><td><code>disconnect</code></td><td><code>disconnect.handler.ts</code></td><td>Remove client/session + cleanup + optional persist-on-drain</td><td>N/A</td></tr>
+      </table>
+
+      <div class="box warn">
+        <strong>Subtle but important:</strong> many Socket.IO events are local room broadcasts (<code>socket.to(boardId).emit</code>) and are not automatically cross-instance unless you add adapter/subscriber path.
+      </div>
+
+      <hr />
+      <h2 id="c4-what">Chapter 4: Fan-out Demystified (Your Exact Confusion)</h2>
+      <h3>What fan-out means in one sentence</h3>
+      <p>Fan-out is: one canonical change in one server instance becomes many outbound messages to clients across all instances that host that board.</p>
+
+      <h3 id="c4-paths">Two fan-out layers you must separate</h3>
+      <table>
+        <tr><th>Layer</th><th>Mechanism</th><th>Scope</th></tr>
+        <tr><td>Local fan-out</td><td><code>socket.to(boardId).emit(...)</code> or room manager broadcast</td><td>Only clients connected to same process</td></tr>
+        <tr><td>Cross-node fan-out</td><td><code>pubRedis.publish</code> + per-node subscriber + local rebroadcast</td><td>Clients across multiple processes/pods</td></tr>
+      </table>
+
+      <h3 id="c4-presence-eli5">Presence across multiple nodes (ELI5)</h3>
+      <p>Think of each realtime node as a classroom. Presence events are currently announced with a classroom speaker (<code>socket.to(boardId).emit</code>). Students in that classroom hear it, students in other classrooms do not.</p>
+      <table>
+        <tr><th>Action</th><th>Today</th><th>Why this can break</th></tr>
+        <tr><td>User moves cursor on Node A</td><td>Node A emits presence to its local room</td><td>Users on Node B may not receive cursor updates</td></tr>
+        <tr><td>User joins board on Node B</td><td>Node B emits join locally</td><td>Node A may show stale participant list</td></tr>
+        <tr><td>Global counts in Redis</td><td><code>clients/viewer_sessions</code> do update</td><td>Counts are global, but real-time UI events are still local-only unless bridged</td></tr>
+      </table>
+
+      <div class="cw">
+        <div class="ch"><span>ELI5 presence split-brain</span><span>pseudo</span></div>
+        <pre>Node A room has Alice
+Node B room has Bob
+
+Alice moves mouse:
+  Node A tells only Node A clients
+Bob may not see Alice cursor
+
+Bob types:
+  Node B tells only Node B clients
+Alice may not see Bob typing indicator</pre>
+      </div>
+
+      <div class="box warn">
+        <strong>Important distinction:</strong> Redis presence keys can say \"2 viewers active\", but UI can still show incomplete live cursors if event broadcast is not cross-node.
+      </div>
+
+      <h3 id="c4-redis-nodes">How multi-node Redis works for this architecture</h3>
+      <p>Today this backend creates separate Redis connections (<code>redis</code>, <code>pubRedis</code>, <code>jobsRedis</code>) but they can still point to one Redis server URL. \"Multiple Redis nodes\" usually means one of these topologies:</p>
+      <table>
+        <tr><th>Topology</th><th>How it behaves</th><th>Impact here</th></tr>
+        <tr><td>Single Redis</td><td>One primary handles all reads/writes/pubsub</td><td>Simplest; realtime + jobs share one failure domain</td></tr>
+        <tr><td>Primary + replica(s) + Sentinel</td><td>Automatic failover to new primary</td><td>Better HA; short failover window can drop pub/sub messages</td></tr>
+        <tr><td>Redis Cluster (sharded)</td><td>Keys distributed by hash slot</td><td>Great scale for keyspace; pub/sub semantics differ by mode and require cluster-aware client setup</td></tr>
+      </table>
+      <p>For collaborative fan-out, treat pub/sub as transient. If Redis node failover happens, missed pub/sub events must be recovered by reconnect <code>CATCH_UP/SNAPSHOT</code>, not by expecting pub/sub replay.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Multi-node Redis mental model</span><span>pseudo</span></div>
+        <pre>realtime server receives mutation
+  write canonical state keys (elements/seq/dirty)
+  publish to mutation channel
+
+if Redis failover during publish:
+  some subscribers may miss message
+  correctness still comes from:
+    sequence + changes log -> CATCH_UP
+    else full SNAPSHOT</pre>
+      </div>
+
+      <h3 id="c4-redis-next">Across multiple Redis instances: next steps (ELI5)</h3>
+      <p>Think in phases. Do not jump straight to \"many Redis nodes\" without guardrails.</p>
+      <table>
+        <tr><th>Phase</th><th>What to do</th><th>Why first</th></tr>
+        <tr><td>Phase 1</td><td>Separate realtime Redis and jobs Redis physically</td><td>Prevents preview/job load from hurting collaboration latency</td></tr>
+        <tr><td>Phase 2</td><td>Add HA (Sentinel or managed failover) to realtime Redis</td><td>Single-node Redis is a hard SPOF</td></tr>
+        <tr><td>Phase 3</td><td>Add Socket.IO cross-node strategy (Redis adapter or sticky routing)</td><td>Fixes presence and room event consistency across pods</td></tr>
+        <tr><td>Phase 4</td><td>Only then evaluate sharding/cluster</td><td>Operational complexity increases significantly</td></tr>
+      </table>
+
+      <div class="cw">
+        <div class="ch"><span>Practical rollout order</span><span>checklist</span></div>
+        <pre>1) Move jobs to dedicated Redis endpoint (already supported via REDIS_JOBS_URL)
+2) Keep realtime on REDIS_REALTIME_URL with persistence enabled
+3) Introduce failover-tested Redis deployment
+4) Add socket.io redis adapter OR sticky board routing
+5) Run multi-node failure drill before production sign-off</pre>
+      </div>
+
+      <div class="diagram-wrap">
+        <div class="diagram-title">SVG · Fan-out path (conceptual)</div>
+        <svg width="100%" viewBox="0 0 940 310" role="img" aria-label="Fanout local vs cross node">
+          <defs>
+            <marker id="arr-f1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" />
+            </marker>
+          </defs>
+
+          <rect x="18" y="26" width="150" height="52" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="93" y="47" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Client A</text>
+          <text x="93" y="64" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">mutation</text>
+
+          <rect x="220" y="24" width="180" height="56" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="310" y="45" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Realtime Node #1</text>
+          <text x="310" y="61" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">apply + local emit</text>
+
+          <rect x="450" y="24" width="170" height="56" rx="8" fill="#25204a" stroke="#a78bfa" />
+          <text x="535" y="45" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Redis Pub/Sub</text>
+          <text x="535" y="61" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">board:{id}:mutations</text>
+
+          <rect x="680" y="24" width="180" height="56" rx="8" fill="#1a2538" stroke="#4d9eff" />
+          <text x="770" y="45" text-anchor="middle" fill="#dde4f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Realtime Node #2</text>
+          <text x="770" y="61" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">subscriber + emit</text>
+
+          <rect x="680" y="210" width="170" height="52" rx="8" fill="#132642" stroke="#4d9eff" />
+          <text x="765" y="231" text-anchor="middle" fill="#4d9eff" font-size="12" font-family="Inter, sans-serif" font-weight="600">Client B / C</text>
+          <text x="765" y="247" text-anchor="middle" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">same board, other node</text>
+
+          <line x1="168" y1="52" x2="220" y2="52" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-f1)" />
+          <line x1="400" y1="52" x2="450" y2="52" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-f1)" />
+          <line x1="620" y1="52" x2="680" y2="52" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arr-f1)" />
+          <line x1="770" y1="80" x2="770" y2="210" stroke="#4d9eff" stroke-width="1.4" marker-end="url(#arr-f1)" />
+
+          <text x="256" y="95" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">local fan-out</text>
+          <text x="520" y="95" fill="#647290" font-size="10" font-family="JetBrains Mono, monospace">cross-node bridge</text>
+        </svg>
+      </div>
+
+      <h3 id="c4-gap">Current project truth (important)</h3>
+      <p>From current code:</p>
+      <ul>
+        <li>Socket.IO mutation handlers <strong>publish</strong> to Redis channel (<code>src/socketio/server.ts</code>).</li>
+        <li>Raw WS stack has explicit Redis subscriber/rebroadcast (<code>src/ws/pubsub.ts</code> + room manager).</li>
+        <li>Socket.IO stack currently has no equivalent Redis subscribe + rebroadcast path and no <code>@socket.io/redis-adapter</code>.</li>
+      </ul>
+
+      <table>
+        <tr><th>Scenario</th><th>Works now?</th><th>Reason</th></tr>
+        <tr><td>Single realtime instance</td><td>Yes</td><td>Local room emits are enough</td></tr>
+        <tr><td>Multi-instance raw WS clients</td><td>Yes (for channels subscribed by WS room manager)</td><td><code>subRedis.on('message')</code> rebroadcast exists</td></tr>
+        <tr><td>Multi-instance Socket.IO presence/tick room events</td><td>Not guaranteed</td><td>No Socket.IO adapter/subscriber bridge</td></tr>
+      </table>
+
+      <div class="box warn">
+        <strong>Interpretation:</strong> your previous fan-out confusion was valid. Current behavior is mixed by transport path, so docs must be explicit about what is local-only versus distributed.
+      </div>
+
+      <h3 id="c4-fix">Production-grade fix options</h3>
+      <ol>
+        <li>Add <code>@socket.io/redis-adapter</code> so Socket.IO rooms/events replicate across nodes.</li>
+        <li>Or enforce sticky routing per board/session (all board sockets stay on one node).</li>
+        <li>Keep pub/sub payload contract centralized so WS and Socket.IO emit compatible server events.</li>
+      </ol>
+
+      <h3>ELI5 decision: adapter vs sticky</h3>
+      <table>
+        <tr><th>Option</th><th>ELI5 meaning</th><th>Tradeoff</th></tr>
+        <tr><td>Redis adapter</td><td>All classrooms share announcements through intercom</td><td>More infra moving parts, but better consistency</td></tr>
+        <tr><td>Sticky routing</td><td>Keep same board users in one classroom</td><td>Simpler events, but balancing and failover routing become critical</td></tr>
+      </table>
+
+      <hr />
+      <h2 id="c5-overview">Chapter 5: Full Code Architecture Example</h2>
+      <h3>Runtime roles</h3>
+      <p><code>src/index.ts</code> supports role split with <code>APP_ROLE</code>: <code>api</code>, <code>realtime</code>, <code>worker</code>, or <code>all</code>.</p>
+
+      <table>
+        <tr><th>Role</th><th>What starts</th><th>Key files</th></tr>
+        <tr><td>api</td><td>Express routes + health + docs</td><td><code>src/app/create-app.ts</code></td></tr>
+        <tr><td>realtime</td><td>Socket.IO + raw WS + heartbeat</td><td><code>src/socketio/server.ts</code>, <code>src/ws/*</code></td></tr>
+        <tr><td>worker</td><td>persistence worker + cleanup worker + preview worker</td><td><code>src/services/*worker*</code></td></tr>
+      </table>
+
+      <h3 id="c5-callchain">End-to-end call chain (mutation path)</h3>
+      <div class="cw">
+        <div class="ch"><span>Call chain with real modules</span><span>pseudo</span></div>
+        <pre>socket.io mutation:batch
+  -> src/socketio/handlers/mutation-batch.handler.ts
+  -> mutationProcessor.processBatch(...)
+  -> src/mutations/processor.ts
+       - withBoardMutationLock(boardId)
+       - tryMarkSeen(board:{id}:seen:{mutationId})
+       - toChangeSet()
+       - boardStateService.applyChangeSet()
+  -> src/services/board-state/state-domain.ts
+       - hset/hdel board:{id}:elements
+       - incr board:{id}:seq
+       - rpush/ltrim board:{id}:changes (collab mode)
+       - mark dirty + active keys
+  -> publish board:{id}:mutations
+  -> rebroadcast on other nodes (where subscriber path exists)</pre>
+      </div>
+
+      <h3 id="c5-code">Project code examples explained</h3>
+      <h3>Example A: Why <code>withBoardMutationLock</code> exists</h3>
+      <p>Without per-board lock, two concurrent mutation batches could compute change sets from stale context and scramble sequence/order. The lock serializes mutation application per board.</p>
+
+      <h3>Example B: Why <code>getSyncWriteMode()</code> switches solo/collab</h3>
+      <p>In solo mode, code can persist aggressively and may skip some change-log retention pressure. In collab mode, change-log tracking is essential for reconnect deltas.</p>
+
+      <div class="cw">
+        <div class="ch"><span>Write mode decision</span><span>from presence-domain.ts</span></div>
+        <pre>if collab_mode_until is still future:
+  mode = collab
+else if active clients/viewers >= 2:
+  extend collab_mode_until
+  mode = collab
+else:
+  mode = solo</pre>
+      </div>
+
+      <h3>Example C: Why reconnect can fail over to snapshot</h3>
+      <p><code>sendInitialState()</code> asks for <code>getChangesAfter(lastSequence)</code>. If change-log no longer has a complete contiguous range, server sends full snapshot for correctness.</p>
+
+      <div class="box ok">
+        <strong>This is the intended safety rule:</strong> never send partial delta if there is a gap; snapshot is slower but correct.
+      </div>
+
+      <h3 id="c5-mutation-deep">Mutation combination and SQL upserts (full pipeline)</h3>
+      <p>Mutation combining happens in two places:</p>
+      <ol>
+        <li>Transport-side batch input (<code>mutation:batch</code>) groups many mutation operations per board into one processor call.</li>
+        <li>Persistence-side incremental flush groups many changed element IDs into one SQL transaction with delete + upsert.</li>
+      </ol>
+
+      <div class="cw">
+        <div class="ch"><span>Detailed data path</span><span>pseudo</span></div>
+        <pre>client sends [m1, m2, m3] for same board
+  -> processBatch() under one board lock
+  -> each mutation:
+       tryMarkSeen(mutationId) // dedupe
+       toChangeSet(operation)
+       applyChangeSet()
+         - increment sequence
+         - write element hash upserts/deletes
+         - append change-log (collab mode)
+         - add dirty markers
+
+later persistence worker:
+  read dirty_element_ids + deleted_element_ids
+  hmget current element JSON for dirty IDs
+  db transaction:
+    delete removed rows
+    insert ... onConflictDoUpdate for upserts
+    touch board updated_at
+  if dirty_epoch unchanged -> clear dirty markers</pre>
+      </div>
+
+      <table>
+        <tr><th>Step</th><th>Where in code</th><th>Why it is optimized</th></tr>
+        <tr><td>Batch by board</td><td><code>src/mutations/processor.ts</code> <code>byBoard</code> map</td><td>Reduces lock churn and repeated context reads</td></tr>
+        <tr><td>Targeted reads</td><td><code>getElementsByIds()</code> when enabled</td><td>Avoids full <code>hgetall</code> for large boards</td></tr>
+        <tr><td>Incremental persistence</td><td><code>persistBoardIncremental()</code></td><td>Flushes only changed/deleted IDs, not full snapshot</td></tr>
+        <tr><td>SQL upsert</td><td><code>onConflictDoUpdate</code> in persistence domain</td><td>One statement handles insert-or-update rows efficiently</td></tr>
+        <tr><td>Epoch guard</td><td>Lua <code>eval</code> clear step</td><td>Prevents lost updates during concurrent flush/write</td></tr>
+      </table>
+
+      <h3 id="c5-batching">Mini batching and other optimization ideas</h3>
+      <p>You already have mini-batching in raw WS handler (<code>MUTATION_BATCH_WINDOW_MS=12</code>, max size 25) and targeted reads in processor. For higher load, add these safely:</p>
+      <ol>
+        <li><strong>Socket.IO mini-batch window:</strong> queue per-socket mutation events for 5-15ms before <code>processBatch</code> (same pattern as WS).</li>
+        <li><strong>Cross-socket board coalescing:</strong> short board-level queue to merge bursts from many clients into one board lock acquisition.</li>
+        <li><strong>Flush chunking:</strong> for very large dirty sets, split <code>hmget</code>/<code>insert values</code> into bounded chunks (e.g., 500-2000 IDs) to avoid oversized SQL packets.</li>
+        <li><strong>Adaptive batch windows:</strong> widen window when queue depth is high, shrink when latency SLA is threatened.</li>
+        <li><strong>Hot-key protection:</strong> cap board-level mutation rate and surface backpressure metrics before Redis CPU saturates.</li>
+      </ol>
+
+      <div class="box">
+        <strong>Rule of thumb:</strong> batch for throughput, but keep end-to-end user-perceived mutation latency low (usually under 50-100ms for collaborative editing actions).
+      </div>
+
+      <hr />
+      <h2 id="c6-debug">Chapter 6: Practical Lab (Use This Today)</h2>
+      <h3>Fast local workflow for backend changes</h3>
+      <div class="cw">
+        <div class="ch"><span>Project test routine</span><span>bash</span></div>
+        <pre>just build
+just test
+just db-migrate && just db-seed
+
+# if local toolchain is flaky
+just build-docker
+just dev</pre>
+      </div>
+
+      <h3>Inspect board state via existing debug route</h3>
+      <p>Use <code>GET /debug/state?boardId=&lt;id&gt;</code> (non-production only). It returns sampled Redis keys, memory summary, board sequence/client/element counts, and board metrics.</p>
+
+      <h3 id="c6-commands">Useful redis-cli commands for this repo</h3>
+      <div class="cw">
+        <div class="ch"><span>Redis inspection cheatsheet</span><span>redis-cli</span></div>
+        <pre># list key families for one board
+SCAN 0 MATCH board:{BOARD_ID}:* COUNT 200
+
+# inspect sequence and counts
+GET board:{BOARD_ID}:seq
+HLEN board:{BOARD_ID}:elements
+SCARD board:{BOARD_ID}:clients
+ZRANGE board:{BOARD_ID}:viewer_sessions 0 -1 WITHSCORES
+
+# inspect change log tail
+LRANGE board:{BOARD_ID}:changes -5 -1
+
+# watch pub/sub channel in another terminal
+SUBSCRIBE board:{BOARD_ID}:mutations</pre>
+      </div>
+
+      <h3 id="c6-interview">Interview-grade self-checks</h3>
+      <div class="iq">
+        <div class="q">Why can reconnect choose snapshot even if client has lastSequence?</div>
+        <p>Because Redis change-log is capped and short-lived; if contiguous delta range is missing, only snapshot preserves correctness.</p>
+      </div>
+      <div class="iq">
+        <div class="q">What exactly prevents duplicate mutation apply?</div>
+        <p><code>tryMarkSeen(board:{id}:seen:{mutationId})</code> with TTL and NX semantics in mutation processor path.</p>
+      </div>
+      <div class="iq">
+        <div class="q">What makes fan-out cross-node, not just local?</div>
+        <p>Publisher + Redis channel + subscriber on each node + local rebroadcast. Missing any one part means partial fan-out.</p>
+      </div>
+
+      <hr />
+      <h2 id="c7-failure">Chapter 7: Multi-node Failure Scenarios</h2>
+      <h3>What can fail in distributed realtime</h3>
+      <table>
+        <tr><th>Failure</th><th>Symptom</th><th>Recovery path</th></tr>
+        <tr><td>Realtime pod crash</td><td>Some clients disconnect; others stay connected on other pods</td><td>Reconnect to healthy pod, then <code>CATCH_UP</code>/<code>SNAPSHOT</code></td></tr>
+        <tr><td>Redis primary failover</td><td>Short publish/write errors, possible missed pub/sub emissions</td><td>Retry writes, reconnect clients, recover via sequence/change-log/snapshot</td></tr>
+        <tr><td>Network partition between pods and Redis</td><td>Divergent local state events until reconnect</td><td>Resubscribe, rehydrate board state, rely on canonical Redis/SQL after healing</td></tr>
+        <tr><td>Worker outage</td><td>Redis memory grows, SQL lag increases</td><td>Restart workers; persist dirty boards backlog</td></tr>
+      </table>
+
+      <h3 id="c7-drill">Multi-node verification drill (practical)</h3>
+      <div class="cw">
+        <div class="ch"><span>Failure drill checklist</span><span>ops</span></div>
+        <pre>1) Run >=2 realtime instances and shared Redis
+2) Open same board from clients pinned to different instances
+3) Generate steady mutation traffic
+4) Kill one realtime instance
+5) Confirm reconnect behavior:
+   - recent disconnect -> CATCH_UP
+   - long gap -> SNAPSHOT
+6) Trigger Redis restart/failover
+7) Confirm:
+   - app recovers without manual cache clear
+   - sequence monotonicity preserved
+   - no permanent board divergence</pre>
+      </div>
+
+      <h3 id="c7-hardening">Hardening checklist for multi-node prod</h3>
+      <ol>
+        <li>Add explicit Socket.IO cross-node strategy: Redis adapter or strict sticky routing.</li>
+        <li>Use Redis HA (Sentinel/managed failover) and test failover quarterly.</li>
+        <li>Track metrics: reconnect rate, snapshot fallback rate, Redis publish failures, flush lag, dirty set size.</li>
+        <li>Set alerting on sustained growth of <code>boards:dirty</code> and persistence backlog age.</li>
+        <li>Document runbook for Redis failover and realtime pod rollouts.</li>
+      </ol>
+
+      <hr />
+      <h2>How To Use This Guide</h2>
+      <ol>
+        <li>Read Chapter 1 and Chapter 2 once with Redis CLI open.</li>
+        <li>Trace one board mutation from handler to Redis keys to SQL flush.</li>
+        <li>Validate fan-out path in your running env (single-node vs multi-node behavior differs).</li>
+        <li>Run Chapter 7 failure drill before calling realtime architecture production-ready.</li>
+      </ol>
+    </main>
+  </div>
+</body>
+</html>
