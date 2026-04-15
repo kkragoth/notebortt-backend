@@ -10,6 +10,8 @@ export const BOARD_LOAD_LOCK_TTL_MS = 30_000
 export const BOARD_LOAD_LOCK_POLL_MS = 25
 export const BOARD_EVICTION_LOCK_TTL_MS = 30_000
 export const BOARD_EVICTION_LOCK_POLL_MS = 25
+export const BOARD_MUTATION_LOCK_TTL_MS = 30_000
+export const BOARD_MUTATION_LOCK_POLL_MS = 25
 
 export function boardSeqKey(boardId: string): string {
   return `board:${boardId}:seq`
@@ -81,6 +83,10 @@ export function boardLoadLockKey(boardId: string): string {
 
 export function boardEvictionLockKey(boardId: string): string {
   return `board:${boardId}:eviction_lock`
+}
+
+export function boardMutationLockKey(boardId: string): string {
+  return `board:${boardId}:mutation_lock`
 }
 
 export function clientMember(userId: string, connectionId: string): string {

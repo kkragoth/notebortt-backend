@@ -13,9 +13,12 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
 
 const db = createDb(DATABASE_URL)
 const redis = createRedisClient(REDIS_URL)
+const secondRedis = createRedisClient(REDIS_URL)
 const boardStateService = createBoardStateService(redis, db)
+const secondBoardStateService = createBoardStateService(secondRedis, db)
 const mutationProcessor = createMutationProcessor(boardStateService)
 const competingMutationProcessor = createMutationProcessor(boardStateService)
+const distributedMutationProcessor = createMutationProcessor(secondBoardStateService)
 
 let TEST_BOARD_ID: string
 let TEST_USER_ID: string
@@ -83,6 +86,7 @@ afterAll(async () => {
   await db.delete(users).where(eq(users.id, TEST_USER_ID))
 
   await redis.quit()
+  await secondRedis.quit()
 })
 
 describe('CREATE_ELEMENT', () => {
@@ -253,6 +257,59 @@ describe('processBatch', () => {
     expect(persistSpy).toHaveBeenCalledTimes(1)
     expect(persistSpy).toHaveBeenCalledWith(TEST_BOARD_ID)
     persistSpy.mockRestore()
+  })
+})
+
+describe('distributed board locking', () => {
+  it('serializes same-board mutations across service instances', async () => {
+    const firstElementId = makeElementId()
+    const secondElementId = makeElementId()
+    let releaseFirstMutation!: () => void
+    let firstMutationEntered = false
+
+    const firstMutationGate = new Promise<void>((resolve) => {
+      releaseFirstMutation = resolve
+    })
+
+    const originalApplyChangeSet = boardStateService.applyChangeSet
+    const applySpy = vi
+      .spyOn(boardStateService, 'applyChangeSet')
+      .mockImplementation(async (...args) => {
+        firstMutationEntered = true
+        await firstMutationGate
+        return originalApplyChangeSet(...args)
+      })
+
+    const firstMutation = makeCreateMutation(firstElementId)
+    const secondMutation = makeCreateMutation(secondElementId)
+
+    const firstPromise = mutationProcessor.processMutation(firstMutation, TEST_USER_ID)
+
+    while (!firstMutationEntered) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    const secondPromise = distributedMutationProcessor.processMutation(secondMutation, TEST_USER_ID)
+    const secondStateBeforeRelease = await Promise.race([
+      secondPromise.then(() => 'completed'),
+      new Promise<'pending'>((resolve) => {
+        setTimeout(() => resolve('pending'), 75)
+      }),
+    ])
+
+    expect(secondStateBeforeRelease).toBe('pending')
+
+    releaseFirstMutation()
+
+    const [firstResult, secondResult] = await Promise.all([firstPromise, secondPromise])
+
+    expect(firstResult.status).toBe('applied')
+    expect(secondResult.status).toBe('applied')
+    expect(secondResult.sequence).toBe((firstResult.sequence ?? 0) + 1)
+    expect(await secondBoardStateService.getElement(TEST_BOARD_ID, firstElementId)).not.toBeNull()
+    expect(await secondBoardStateService.getElement(TEST_BOARD_ID, secondElementId)).not.toBeNull()
+
+    applySpy.mockRestore()
   })
 })
 
