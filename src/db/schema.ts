@@ -1,4 +1,5 @@
 export * from './schema/users.js'
+export * from './schema/auth.js'
 export * from './schema/workspaces.js'
 export * from './schema/boards.js'
 export * from './schema/billing.js'

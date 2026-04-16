@@ -14,6 +14,8 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   GOOGLE_REDIRECT_URI: z.string(),
+  BETTER_AUTH_SECRET: z.string().min(16).optional(),
+  BETTER_AUTH_URL: z.string().url().optional(),
   JWT_SECRET: z.string().min(16),
   JWT_EXPIRES_IN: z.string().default('15m'),
   REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().default(7),
@@ -42,6 +44,8 @@ export interface AppConfig {
   googleClientId: string
   googleClientSecret: string
   googleRedirectUri: string
+  betterAuthSecret: string | null
+  betterAuthUrl: string | null
   jwtSecret: string
   jwtExpiresIn: string
   refreshTokenExpiresDays: number
@@ -76,6 +80,8 @@ export function loadConfig(): AppConfig {
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
+    betterAuthSecret: parsed.BETTER_AUTH_SECRET ?? null,
+    betterAuthUrl: parsed.BETTER_AUTH_URL ?? null,
     jwtSecret: parsed.JWT_SECRET,
     jwtExpiresIn: parsed.JWT_EXPIRES_IN,
     refreshTokenExpiresDays: parsed.REFRESH_TOKEN_EXPIRES_DAYS,

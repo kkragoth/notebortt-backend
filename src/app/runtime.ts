@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws'
 import type { AppConfig } from '../config.js'
+import { createBetterAuthBridge } from '../auth/better-auth.js'
 import { createDb } from '../db/client.js'
 import { createAuthMiddleware } from '../middleware/auth.js'
 import { createRedisClient } from '../redis/client.js'
@@ -28,7 +29,8 @@ export function createAppRuntime(config: AppConfig) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
 
   const authService = createAuthService(config)
-  const authMiddleware = createAuthMiddleware(authService)
+  const betterAuth = createBetterAuthBridge(config, db)
+  const authMiddleware = createAuthMiddleware(authService, betterAuth?.resolveSession ?? null)
   const userService = createUserService(db)
   const workspaceService = createWorkspaceService(db)
   const boardService = createBoardService(db)
@@ -63,6 +65,7 @@ export function createAppRuntime(config: AppConfig) {
     jobsRedis,
     wss,
     authService,
+    betterAuthHandler: betterAuth?.handler ?? null,
     authMiddleware,
     userService,
     workspaceService,

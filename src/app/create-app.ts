@@ -18,6 +18,17 @@ export function createApp(runtime: AppRuntime) {
   app.use(createCorsMiddleware(runtime.config.corsOrigin))
   app.use(cookieParser())
   app.use('/', createBillingWebhookRouter(runtime.billingService))
+  if (runtime.betterAuthHandler) {
+    const betterAuthHandler = runtime.betterAuthHandler
+    app.use((req, res, next) => {
+      if (!req.path.startsWith('/api/auth')) {
+        next()
+        return
+      }
+
+      void betterAuthHandler(req, res)
+    })
+  }
   app.use(express.json())
 
   app.get('/health', healthRoute(runtime.db, runtime.redis))

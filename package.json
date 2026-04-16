@@ -22,8 +22,11 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.6.4",
+    "@better-auth/stripe": "^1.6.4",
     "@types/swagger-ui-express": "^4.1.8",
     "bcryptjs": "^3.0.3",
+    "better-auth": "^1.6.4",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",

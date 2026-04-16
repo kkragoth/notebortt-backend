@@ -1,7 +1,9 @@
 import type { Request, Response, NextFunction } from 'express'
+import { fromNodeHeaders } from 'better-auth/node'
 import type { AuthService } from '../services/auth.service.js'
 
 const ACCESS_TOKEN_COOKIE_NAME = 'accessToken'
+type BetterAuthSessionResolver = (headers: Headers) => Promise<{ userId: string } | null>
 
 function readAccessTokenFromCookieHeader(rawCookieHeader: string | undefined): string | null {
   if (!rawCookieHeader) {
@@ -38,20 +40,41 @@ function readAccessToken(req: Request): string | null {
   return readAccessTokenFromCookieHeader(rawCookieHeader)
 }
 
-export function createAuthMiddleware(authService: AuthService) {
-  return (req: Request, res: Response, next: NextFunction) => {
+export function createAuthMiddleware(
+  authService: AuthService,
+  resolveBetterAuthSession: BetterAuthSessionResolver | null = null,
+) {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const token = readAccessToken(req)
-    if (!token) {
-      res.status(401).json({ error: 'Missing authentication token' })
+    if (token) {
+      try {
+        const payload = authService.verifyAccessToken(token)
+        req.userId = payload.sub
+        next()
+        return
+      } catch {
+        // Fall through to Better Auth session resolution.
+      }
+    }
+
+    if (resolveBetterAuthSession) {
+      try {
+        const session = await resolveBetterAuthSession(fromNodeHeaders(req.headers))
+        if (session?.userId) {
+          req.userId = session.userId
+          next()
+          return
+        }
+      } catch {
+        // Ignore Better Auth resolution errors and return standard 401 below.
+      }
+    }
+
+    if (token) {
+      res.status(401).json({ error: 'Invalid or expired token' })
       return
     }
 
-    try {
-      const payload = authService.verifyAccessToken(token)
-      req.userId = payload.sub
-      next()
-    } catch {
-      res.status(401).json({ error: 'Invalid or expired token' })
-    }
+    res.status(401).json({ error: 'Missing authentication token' })
   }
 }
