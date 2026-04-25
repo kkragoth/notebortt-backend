@@ -6,7 +6,56 @@ export const createWorkspaceBodySchema = z.object({
     description: 'Workspace name',
     example: 'Product Design',
   }),
+  avatarShortcut: z.string().trim().max(4).optional().meta({
+    description: 'Workspace avatar shortcut',
+    example: 'PD',
+  }),
+  gradientFrom: z.string().trim().min(1).optional().meta({
+    description: 'Gradient start color',
+    example: '#34d399',
+  }),
+  gradientTo: z.string().trim().min(1).optional().meta({
+    description: 'Gradient end color',
+    example: '#3b82f6',
+  }),
+  gradientPresetId: z.string().trim().optional().nullable().meta({
+    description: 'Optional gradient preset identifier',
+    example: 'emerald-ocean',
+  }),
+  itemTypeOrder: z.array(z.enum(['canvas', 'journal', 'graph'])).min(1).optional().meta({
+    description: 'Workspace sidebar type order',
+    example: ['canvas', 'journal', 'graph'],
+  }),
 }).meta({ id: 'CreateWorkspaceBody' })
+
+export const patchWorkspaceBodySchema = z.object({
+  name: z.string().trim().min(1).optional().meta({
+    description: 'Workspace name',
+    example: 'Product Design',
+  }),
+  avatarShortcut: z.string().trim().max(4).optional().nullable().meta({
+    description: 'Workspace avatar shortcut',
+    example: 'PD',
+  }),
+  gradientFrom: z.string().trim().min(1).optional().nullable().meta({
+    description: 'Gradient start color',
+    example: '#34d399',
+  }),
+  gradientTo: z.string().trim().min(1).optional().nullable().meta({
+    description: 'Gradient end color',
+    example: '#3b82f6',
+  }),
+  gradientPresetId: z.string().trim().optional().nullable().meta({
+    description: 'Optional gradient preset identifier',
+    example: 'emerald-ocean',
+  }),
+  itemTypeOrder: z.array(z.enum(['canvas', 'journal', 'graph'])).min(1).optional().meta({
+    description: 'Workspace sidebar type order',
+    example: ['canvas', 'journal', 'graph'],
+  }),
+}).refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one field must be provided',
+}).meta({ id: 'PatchWorkspaceBody' })
 
 export const createWorkspaceInvitationBodySchema = z.object({
   email: z.email().meta({
@@ -25,6 +74,72 @@ export const createBoardBodySchema = z.object({
     example: 'Sprint Planning',
   }),
 }).meta({ id: 'CreateBoardBody' })
+
+export const createWorkspaceItemBodySchema = z.object({
+  type: z.enum(['canvas', 'journal', 'graph']).meta({
+    description: 'Workspace item type',
+    example: 'journal',
+  }),
+  name: z.string().trim().min(1).meta({
+    description: 'Workspace item name',
+    example: 'Workout Log',
+  }),
+  avatarShortcut: z.string().trim().max(4).optional().meta({
+    description: 'Item avatar shortcut',
+    example: 'WL',
+  }),
+  avatarColor: z.string().trim().min(1).optional().meta({
+    description: 'Item avatar color token',
+    example: 'green',
+  }),
+}).meta({ id: 'CreateWorkspaceItemBody' })
+
+export const patchWorkspaceItemBodySchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  status: z.enum(['active', 'archived']).optional(),
+  avatarShortcut: z.string().trim().max(4).optional().nullable(),
+  avatarColor: z.string().trim().min(1).optional().nullable(),
+  sidebarOrder: z.number().int().min(0).optional(),
+}).refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one field must be provided',
+}).meta({ id: 'PatchWorkspaceItemBody' })
+
+export const reorderWorkspaceItemsBodySchema = z.object({
+  orderedItemIds: z.array(z.string().uuid()).min(1),
+  typeOrder: z.array(z.enum(['canvas', 'journal', 'graph'])).optional(),
+}).meta({ id: 'ReorderWorkspaceItemsBody' })
+
+export const createJournalNoteBodySchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  bodyJson: z.unknown().optional(),
+  bodyText: z.string().optional(),
+  excerpt: z.string().optional(),
+  tags: z.array(z.string().trim().min(1)).optional(),
+  color: z.string().trim().min(1).optional().nullable(),
+  colorTitle: z.boolean().optional(),
+}).meta({ id: 'CreateJournalNoteBody' })
+
+export const patchJournalNoteBodySchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  bodyJson: z.unknown().optional(),
+  bodyText: z.string().optional(),
+  excerpt: z.string().optional(),
+  tags: z.array(z.string().trim().min(1)).optional(),
+  color: z.string().trim().min(1).optional().nullable(),
+  colorTitle: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+  status: z.enum(['active', 'archived']).optional(),
+  updatedAt: z.string().datetime().optional(),
+}).refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one field must be provided',
+}).meta({ id: 'PatchJournalNoteBody' })
+
+export const sendJournalNoteToCanvasBodySchema = z.object({
+  canvasBoardId: z.string().uuid(),
+  targetContainerId: z.string().trim().min(1).optional(),
+  targetElementId: z.string().trim().min(1).optional(),
+  mode: z.enum(['synced', 'snapshot', 'plain_text']).default('synced'),
+}).meta({ id: 'SendJournalNoteToCanvasBody' })
 
 export const createBoardInviteBodySchema = z.object({
   email: z.email().meta({

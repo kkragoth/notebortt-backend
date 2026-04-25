@@ -7,9 +7,11 @@ import { createBoardRouter } from '../routes/boards.js'
 import { createBillingRouter, createBillingWebhookRouter } from '../routes/billing.js'
 import { createDebugRouter } from '../routes/debug.js'
 import { healthRoute } from '../routes/health.js'
+import { createJournalsRouter } from '../routes/journals.js'
 import { createOpenApiRouter } from '../routes/openapi.js'
 import { createSwaggerRouter } from '../routes/swagger.js'
 import { createUserRouter } from '../routes/users.js'
+import { createWorkspaceItemsRouter } from '../routes/workspace-items.js'
 import { createWorkspaceRouter } from '../routes/workspaces.js'
 
 export function createApp(runtime: AppRuntime) {
@@ -28,6 +30,17 @@ export function createApp(runtime: AppRuntime) {
   app.use('/users', createUserRouter(runtime.userService, runtime.authMiddleware))
   app.use('/', createBillingRouter(runtime.billingService, runtime.authMiddleware))
   app.use('/', createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware))
+  app.use('/', createWorkspaceItemsRouter(
+    runtime.workspaceService,
+    runtime.workspaceItemService,
+    runtime.authMiddleware,
+  ))
+  app.use('/', createJournalsRouter(
+    runtime.workspaceService,
+    runtime.workspaceItemService,
+    runtime.journalService,
+    runtime.authMiddleware,
+  ))
   app.use('/', createBoardRouter(
     runtime.boardService,
     runtime.workspaceService,

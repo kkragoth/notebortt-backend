@@ -1,14 +1,23 @@
 import { sql } from 'drizzle-orm'
-import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { users } from './users.js'
 
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   ownerId: uuid('owner_id').notNull().references(() => users.id),
+  avatarShortcut: text('avatar_shortcut'),
+  gradientFrom: text('gradient_from'),
+  gradientTo: text('gradient_to'),
+  gradientPresetId: text('gradient_preset_id'),
+  itemTypeOrder: jsonb('item_type_order').notNull().default(['canvas', 'journal', 'graph']),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-})
+}, (table) => [
+  check('valid_workspace_avatar_shortcut_length', sql`${table.avatarShortcut} IS NULL OR length(${table.avatarShortcut}) <= 4`),
+  check('workspace_gradient_from_non_empty', sql`${table.gradientFrom} IS NULL OR length(trim(${table.gradientFrom})) > 0`),
+  check('workspace_gradient_to_non_empty', sql`${table.gradientTo} IS NULL OR length(trim(${table.gradientTo})) > 0`),
+])
 
 export const workspaceMembers = pgTable('workspace_members', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -9,7 +9,20 @@ import {
 import { workspaceRoleToBoardPermission } from '../board.service.utils.js'
 import { isMissingRelationError } from './helpers.js'
 
-export type AccessibleBoard = typeof boards.$inferSelect & {
+export type AccessibleBoard = {
+  id: string
+  workspaceId: string
+  name: string
+  currentCommitId: string | null
+  currentBranch: string | null
+  previewSvg: string | null
+  previewVersion: string | null
+  previewUpdatedAt: Date | null
+  linkShareEnabled: boolean
+  linkShareToken: string | null
+  linkSharePermission: string
+  createdAt: Date | null
+  updatedAt: Date | null
   permission: BoardPermission
   accessSource: 'workspace' | 'board_member'
   isFavorite: boolean

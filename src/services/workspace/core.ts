@@ -2,10 +2,26 @@ import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client.js'
 import { users, workspaceMembers, workspaces } from '../../db/schema.js'
 
+export interface WorkspaceVisualInput {
+  avatarShortcut?: string | null
+  gradientFrom?: string | null
+  gradientTo?: string | null
+  gradientPresetId?: string | null
+  itemTypeOrder?: string[] | null
+}
+
 export function createWorkspaceCore(db: Database) {
-  async function createWorkspace(name: string, ownerId: string) {
+  async function createWorkspace(name: string, ownerId: string, visuals: WorkspaceVisualInput = {}) {
     return db.transaction(async (tx) => {
-      const [workspace] = await tx.insert(workspaces).values({ name, ownerId }).returning()
+      const [workspace] = await tx.insert(workspaces).values({
+        name,
+        ownerId,
+        avatarShortcut: visuals.avatarShortcut ?? null,
+        gradientFrom: visuals.gradientFrom ?? null,
+        gradientTo: visuals.gradientTo ?? null,
+        gradientPresetId: visuals.gradientPresetId ?? null,
+        itemTypeOrder: visuals.itemTypeOrder ?? ['canvas', 'journal', 'graph'],
+      }).returning()
 
       await tx.insert(workspaceMembers).values({
         workspaceId: workspace.id,
@@ -28,6 +44,31 @@ export function createWorkspaceCore(db: Database) {
     return workspace ?? null
   }
 
+  async function updateWorkspace(workspaceId: string, updates: {
+    name?: string
+    avatarShortcut?: string | null
+    gradientFrom?: string | null
+    gradientTo?: string | null
+    gradientPresetId?: string | null
+    itemTypeOrder?: string[]
+  }) {
+    const [workspace] = await db
+      .update(workspaces)
+      .set({
+        ...(updates.name !== undefined ? { name: updates.name } : {}),
+        ...(updates.avatarShortcut !== undefined ? { avatarShortcut: updates.avatarShortcut } : {}),
+        ...(updates.gradientFrom !== undefined ? { gradientFrom: updates.gradientFrom } : {}),
+        ...(updates.gradientTo !== undefined ? { gradientTo: updates.gradientTo } : {}),
+        ...(updates.gradientPresetId !== undefined ? { gradientPresetId: updates.gradientPresetId } : {}),
+        ...(updates.itemTypeOrder !== undefined ? { itemTypeOrder: updates.itemTypeOrder } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(workspaces.id, workspaceId))
+      .returning()
+
+    return workspace ?? null
+  }
+
   async function getWorkspacesForUser(userId: string) {
     const rows = await db
       .select({
@@ -35,6 +76,11 @@ export function createWorkspaceCore(db: Database) {
         name: workspaces.name,
         ownerId: workspaces.ownerId,
         role: workspaceMembers.role,
+        avatarShortcut: workspaces.avatarShortcut,
+        gradientFrom: workspaces.gradientFrom,
+        gradientTo: workspaces.gradientTo,
+        gradientPresetId: workspaces.gradientPresetId,
+        itemTypeOrder: workspaces.itemTypeOrder,
       })
       .from(workspaceMembers)
       .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
@@ -116,6 +162,7 @@ export function createWorkspaceCore(db: Database) {
   return {
     createWorkspace,
     renameWorkspace,
+    updateWorkspace,
     getWorkspacesForUser,
     getWorkspaceMembers,
     deleteWorkspaceMember,

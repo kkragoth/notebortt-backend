@@ -11,9 +11,11 @@ import { createBoardPreviewRenderer } from '../services/board-preview.service.js
 import { createBoardStateService } from '../services/board-state.service.js'
 import { createRedisCleanupService } from '../services/redis-cleanup.service.js'
 import { createBoardService } from '../services/board.service.js'
+import { createJournalService } from '../services/journal.service.js'
 import { createPreviewJobService } from '../services/preview-job.service.js'
 import { createBillingService } from '../services/billing.service.js'
 import { createUserService } from '../services/user.service.js'
+import { createWorkspaceItemService } from '../services/workspace-item.service.js'
 import { createWorkspaceService } from '../services/workspace.service.js'
 import { createHeartbeatService } from '../ws/heartbeat.js'
 import { createBoardRoomManager } from '../ws/room.js'
@@ -32,6 +34,8 @@ export function createAppRuntime(config: AppConfig) {
   const userService = createUserService(db)
   const workspaceService = createWorkspaceService(db)
   const boardService = createBoardService(db)
+  const workspaceItemService = createWorkspaceItemService(db)
+  const journalService = createJournalService(db)
   const billingService = createBillingService(config, db, userService, workspaceService, boardService)
   const metrics = createRuntimeMetrics()
   const boardStateService = createBoardStateService(redis, db, {
@@ -67,6 +71,8 @@ export function createAppRuntime(config: AppConfig) {
     userService,
     workspaceService,
     boardService,
+    workspaceItemService,
+    journalService,
     billingService,
     boardStateService,
     boardPersistenceService,

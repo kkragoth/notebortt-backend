@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express'
 import { z } from 'zod'
 import { sendBadRequest, sendForbidden, sendNotFound, toRecord } from '../lib/http.js'
 import { parseWithSchema } from '../lib/validation.js'
-import { createWorkspaceBodySchema, createWorkspaceInvitationBodySchema } from '../openapi/schemas.js'
+import { createWorkspaceBodySchema, createWorkspaceInvitationBodySchema, patchWorkspaceBodySchema } from '../openapi/schemas.js'
 import { WorkspaceInvitationError, type WorkspaceService } from '../services/workspace.service.js'
 
 const workspaceIdParamsSchema = z.object({
@@ -37,7 +37,13 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
       return
     }
 
-    const workspace = await workspaceService.createWorkspace(parsed.data.name, userId)
+    const workspace = await workspaceService.createWorkspace(parsed.data.name, userId, {
+      avatarShortcut: parsed.data.avatarShortcut,
+      gradientFrom: parsed.data.gradientFrom,
+      gradientTo: parsed.data.gradientTo,
+      gradientPresetId: parsed.data.gradientPresetId,
+      itemTypeOrder: parsed.data.itemTypeOrder,
+    })
     res.status(201).json(workspace)
   })
 
@@ -49,7 +55,7 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
       return
     }
     const wid = params.data.wid
-    const parsed = parseWithSchema(createWorkspaceBodySchema, req.body)
+    const parsed = parseWithSchema(patchWorkspaceBodySchema, req.body)
 
     if (!parsed.success) {
       sendBadRequest(res, parsed.error.error)
@@ -63,7 +69,14 @@ export function createWorkspaceRouter(workspaceService: WorkspaceService, authMi
       return
     }
 
-    const workspace = await workspaceService.renameWorkspace(wid, parsed.data.name)
+    const workspace = await workspaceService.updateWorkspace(wid, {
+      ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+      ...(parsed.data.avatarShortcut !== undefined ? { avatarShortcut: parsed.data.avatarShortcut } : {}),
+      ...(parsed.data.gradientFrom !== undefined ? { gradientFrom: parsed.data.gradientFrom } : {}),
+      ...(parsed.data.gradientTo !== undefined ? { gradientTo: parsed.data.gradientTo } : {}),
+      ...(parsed.data.gradientPresetId !== undefined ? { gradientPresetId: parsed.data.gradientPresetId } : {}),
+      ...(parsed.data.itemTypeOrder !== undefined ? { itemTypeOrder: parsed.data.itemTypeOrder } : {}),
+    })
     if (!workspace) {
       sendNotFound(res, 'Workspace not found')
       return

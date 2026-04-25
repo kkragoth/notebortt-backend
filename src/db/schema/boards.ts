@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { users } from './users.js'
 import { workspaces } from './workspaces.js'
 
@@ -7,6 +7,12 @@ export const boards = pgTable('boards', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
+  itemType: text('item_type').notNull().default('canvas'),
+  status: text('status').notNull().default('active'),
+  avatarShortcut: text('avatar_shortcut'),
+  avatarColor: text('avatar_color'),
+  sidebarOrder: integer('sidebar_order').notNull().default(0),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
   currentCommitId: uuid('current_commit_id').references((): any => commits.id, { onDelete: 'set null' }),
   currentBranch: text('current_branch').default('main'),
   previewSvg: text('preview_svg'),
@@ -19,7 +25,12 @@ export const boards = pgTable('boards', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   index('idx_boards_workspace').on(table.workspaceId),
+  index('idx_boards_workspace_status_sidebar_order').on(table.workspaceId, table.status, table.sidebarOrder),
+  index('idx_boards_workspace_item_type_sidebar_order').on(table.workspaceId, table.itemType, table.sidebarOrder),
   index('idx_boards_link_token').on(table.linkShareToken),
+  check('valid_item_type', sql`${table.itemType} IN ('canvas', 'journal', 'graph')`),
+  check('valid_item_status', sql`${table.status} IN ('active', 'archived')`),
+  check('valid_avatar_shortcut_length', sql`${table.avatarShortcut} IS NULL OR length(${table.avatarShortcut}) <= 4`),
   check('valid_link_share_permission', sql`${table.linkSharePermission} IN ('view', 'edit')`),
   check('link_share_token_required_when_enabled', sql`NOT ${table.linkShareEnabled} OR ${table.linkShareToken} IS NOT NULL`),
 ])
