@@ -71,6 +71,13 @@
       "when": 1777123200000,
       "tag": "0009_workspace_items_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777132800000,
+      "tag": "0010_journal_note_color_title",
+      "breakpoints": true
     }
   ]
 }

@@ -156,6 +156,15 @@ export function createJournalService(db: Database) {
     return { kind: 'ok' as const, note }
   }
 
+  async function deleteJournalNote(journalId: string, noteId: string) {
+    const rows = await db
+      .delete(journalNotes)
+      .where(and(eq(journalNotes.journalId, journalId), eq(journalNotes.id, noteId)))
+      .returning({ id: journalNotes.id })
+
+    return rows.length > 0
+  }
+
   async function createJournalCanvasLink(input: {
     noteId: string
     canvasBoardId: string
@@ -225,6 +234,7 @@ export function createJournalService(db: Database) {
   return {
     createJournalCanvasLink,
     createJournalNote,
+    deleteJournalNote,
     ensureJournalAndCanvasTypes,
     getJournalNote,
     listJournalNotes,

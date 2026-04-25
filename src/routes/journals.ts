@@ -171,6 +171,35 @@ export function createJournalsRouter(
     res.json(result.note)
   })
 
+  router.delete('/journals/:journalId/notes/:noteId', authMiddleware, async (req, res) => {
+    const userId = req.userId!
+    const params = parseWithSchema(noteParamsSchema, req.params)
+    if (!params.success) {
+      sendBadRequest(res, params.error.error)
+      return
+    }
+
+    const journalItem = await workspaceItemService.getWorkspaceItem(params.data.journalId)
+    if (!journalItem || journalItem.itemType !== 'journal') {
+      sendNotFound(res, 'Journal not found')
+      return
+    }
+
+    const role = await workspaceService.getWorkspaceMemberRole(journalItem.workspaceId, userId)
+    if (!canEditWorkspace(role)) {
+      sendForbidden(res)
+      return
+    }
+
+    const deleted = await journalService.deleteJournalNote(params.data.journalId, params.data.noteId)
+    if (!deleted) {
+      sendNotFound(res, 'Note not found')
+      return
+    }
+
+    res.status(204).send()
+  })
+
   router.post('/journals/:journalId/notes/:noteId/send-to-canvas', authMiddleware, async (req, res) => {
     const userId = req.userId!
     const params = parseWithSchema(noteParamsSchema, req.params)
