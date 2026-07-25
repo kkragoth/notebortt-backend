@@ -117,6 +117,7 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
       res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' })
 
       const redirectUrl = new URL('/callback', resolveFrontendOrigin(config.corsOrigin))
+      redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`
       res.redirect(redirectUrl.toString())
     } catch (err) {
       console.error('[Auth] OAuth callback error:', err)

@@ -39,11 +39,16 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
       return
     }
 
-    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
+    let refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
     if (!refreshToken) {
-      res.status(401).json({ error: 'Missing refresh token' })
-      return
+      refreshToken = req.body.refreshToken as string | undefined
+      if (!refreshToken) {
+        res.status(401).json({ error: 'Missing refresh token' })
+        return
+      }
     }
+
+    const isBodyBased = !req.cookies[REFRESH_TOKEN_COOKIE_NAME]
 
     const tokenHash = authService.hashRefreshToken(refreshToken)
     const now = new Date()
@@ -75,7 +80,10 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     const refreshCookieOptions = buildRefreshTokenCookieOptions(config)
     res.cookie(ACCESS_TOKEN_COOKIE_NAME, newAccessToken, accessCookieOptions)
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, refreshCookieOptions)
-    res.json({ ok: true })
+    res.json({
+      ok: true,
+      ...(isBodyBased ? { accessToken: newAccessToken, refreshToken: newRefreshToken } : {}),
+    })
   })
 
   router.post('/dev-login', async (req, res) => {
@@ -126,7 +134,10 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
       return
     }
 
-    const refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
+    let refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined
+    if (!refreshToken) {
+      refreshToken = req.body.refreshToken as string | undefined
+    }
     if (refreshToken) {
       const tokenHash = authService.hashRefreshToken(refreshToken)
       await db.delete(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash))
