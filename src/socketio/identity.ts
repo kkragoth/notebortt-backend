@@ -23,7 +23,8 @@ export async function resolveSocketIdentity(socket: any, deps: SocketIoRealtimeD
   const cookieToken = cookies[ACCESS_TOKEN_COOKIE_NAME]
   const authHeader = typeof headers.authorization === 'string' ? headers.authorization : ''
   const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
-  const rawToken = cookieToken ?? bearerToken
+  const authToken = (socket.handshake?.auth as { token?: string } | undefined)?.token
+  const rawToken = cookieToken ?? bearerToken ?? authToken
 
   if (!rawToken) {
     return {
