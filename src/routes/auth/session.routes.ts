@@ -48,8 +48,6 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
       }
     }
 
-    const isBodyBased = !req.cookies[REFRESH_TOKEN_COOKIE_NAME]
-
     const tokenHash = authService.hashRefreshToken(refreshToken)
     const now = new Date()
 
@@ -82,7 +80,8 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, refreshCookieOptions)
     res.json({
       ok: true,
-      ...(isBodyBased ? { accessToken: newAccessToken, refreshToken: newRefreshToken } : {}),
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
     })
   })
 
