@@ -78,6 +78,7 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     const refreshCookieOptions = buildRefreshTokenCookieOptions(config)
     res.cookie(ACCESS_TOKEN_COOKIE_NAME, newAccessToken, accessCookieOptions)
     res.cookie(REFRESH_TOKEN_COOKIE_NAME, newRefreshToken, refreshCookieOptions)
+    res.set('Connection', 'close')
     res.json({
       ok: true,
       accessToken: newAccessToken,
