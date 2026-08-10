@@ -1,6 +1,7 @@
 import type { BoardStateService } from '../services/board-state.service.js'
 import { MutationType } from './types.js'
 import type { BoardElement, Mutation, MutationResult, Operation } from './types.js'
+import { isMutationBlockedByLock } from './lock-enforcement.js'
 
 interface MutationProcessorOptions {
   enableTargetedReads?: boolean
@@ -153,23 +154,43 @@ export function createMutationProcessor(
       return { elementsById: new Map<string, BoardElement>() }
     }
 
-    if (enableTargetedReads && typeof boardStateService.getElementsByIds === 'function') {
-      const existingElements = await boardStateService.getElementsByIds(boardId, touchedElementIds)
-      return { elementsById: new Map(existingElements) }
-    }
+    const fetchByIds = async (ids: string[]): Promise<Map<string, BoardElement>> => {
+      if (enableTargetedReads && typeof boardStateService.getElementsByIds === 'function') {
+        const existingElements = await boardStateService.getElementsByIds(boardId, ids)
+        return new Map(existingElements)
+      }
 
-    const pairs = await Promise.all(
-      touchedElementIds.map(async (elementId): Promise<[string, BoardElement] | null> => {
-        const existing = await boardStateService.getElement(boardId, elementId)
-        return existing ? [elementId, existing] : null
-      }),
-    )
+      const pairs = await Promise.all(
+        ids.map(async (elementId): Promise<[string, BoardElement] | null> => {
+          const existing = await boardStateService.getElement(boardId, elementId)
+          return existing ? [elementId, existing] : null
+        }),
+      )
 
-    return {
-      elementsById: new Map(
+      return new Map(
         pairs.filter((entry): entry is [string, BoardElement] => entry !== null),
-      ),
+      )
     }
+
+    const elementsById = await fetchByIds(touchedElementIds)
+
+    // Load parent containers (grids / meta layouts) so lock containment can be
+    // evaluated when a touched element sits inside a locked container.
+    const parentIds = new Set<string>()
+    for (const element of elementsById.values()) {
+      const record = element as Record<string, unknown>
+      if (typeof record.containerId === 'string') parentIds.add(record.containerId)
+      if (typeof record.metaContainerId === 'string') parentIds.add(record.metaContainerId)
+    }
+    const missingParents = [...parentIds].filter((id) => !elementsById.has(id))
+    if (missingParents.length > 0) {
+      const parents = await fetchByIds(missingParents)
+      for (const [id, element] of parents) {
+        elementsById.set(id, element)
+      }
+    }
+
+    return { elementsById }
   }
 
   function applyPersistedChangeToContext(context: CachedBoardContext, result: MutationResult): void {
@@ -203,6 +224,23 @@ export function createMutationProcessor(
     if (!claimed) {
       return {
         result: { mutationId, status: 'already_applied' },
+        appliedCanonicalChange: false,
+      }
+    }
+
+    if (isMutationBlockedByLock(operation, context)) {
+      metrics.logStructured('mutation.lock_blocked', {
+        mutationId,
+        boardId,
+        operationType: operation.type,
+      })
+      return {
+        result: {
+          mutationId,
+          status: 'applied',
+          serverTimestamp: Date.now(),
+          sequence: await boardStateService.peekSequence(boardId),
+        },
         appliedCanonicalChange: false,
       }
     }
