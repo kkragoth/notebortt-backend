@@ -55,6 +55,48 @@ function makeCreateMutation(elementId: string, overrides: Partial<Mutation> = {}
   }
 }
 
+function makeCreateElementMutation(elementId: string, kind: string): Mutation {
+  return makeCreateMutation(elementId, {
+    operation: {
+      type: MutationType.CREATE_ELEMENT,
+      elementId,
+      data: {
+        id: elementId,
+        kind,
+        x: 100,
+        y: 200,
+        zIndex: 1,
+        updatedAt: Date.now(),
+      },
+    },
+  })
+}
+
+function makeUpdateMutation(elementId: string, fields: Record<string, unknown>): Mutation {
+  return {
+    mutationId: makeMutationId(),
+    boardId: TEST_BOARD_ID,
+    clientTimestamp: Date.now(),
+    operation: {
+      type: MutationType.UPDATE_ELEMENT,
+      elementId,
+      fields,
+    },
+  }
+}
+
+function makeMoveMutation(elementId: string, x: number, y: number): Mutation {
+  return {
+    mutationId: makeMutationId(),
+    boardId: TEST_BOARD_ID,
+    clientTimestamp: Date.now(),
+    operation: {
+      type: MutationType.MOVE_ELEMENTS,
+      moves: [{ elementId, x, y }],
+    },
+  }
+}
+
 beforeAll(async () => {
   const [user] = await db
     .insert(users)
@@ -310,6 +352,110 @@ describe('distributed board locking', () => {
     expect(await secondBoardStateService.getElement(TEST_BOARD_ID, secondElementId)).not.toBeNull()
 
     applySpy.mockRestore()
+  })
+})
+
+describe('lock persistence', () => {
+  it('persists locked:true via UPDATE_ELEMENT', async () => {
+    const elementId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateMutation(elementId), TEST_USER_ID)
+
+    const result = await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: true }), TEST_USER_ID)
+    expect(result.status).toBe('applied')
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect(inRedis?.locked).toBe(true)
+  })
+
+  it('persists unlocking (locked:false) via UPDATE_ELEMENT', async () => {
+    const elementId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateMutation(elementId), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: true }), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: false }), TEST_USER_ID)
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect(inRedis?.locked).toBe(false)
+  })
+})
+
+describe('lock enforcement', () => {
+  it('rejects MOVE_ELEMENTS on a locked element', async () => {
+    const elementId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateMutation(elementId), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: true }), TEST_USER_ID)
+
+    await mutationProcessor.processMutation(makeMoveMutation(elementId, 999, 888), TEST_USER_ID)
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect(inRedis?.x).toBe(100)
+    expect(inRedis?.y).toBe(200)
+    expect(inRedis?.locked).toBe(true)
+  })
+
+  it('rejects position-field UPDATE_ELEMENT on a locked element', async () => {
+    const elementId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateMutation(elementId), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: true }), TEST_USER_ID)
+
+    await mutationProcessor.processMutation(
+      makeUpdateMutation(elementId, { containerId: 'some-grid', containerColumnId: 'sec', containerOrder: 0 }),
+      TEST_USER_ID,
+    )
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect(inRedis?.containerId).toBeUndefined()
+  })
+
+  it('allows non-position UPDATE_ELEMENT on a locked element', async () => {
+    const elementId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateMutation(elementId), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { locked: true }), TEST_USER_ID)
+
+    await mutationProcessor.processMutation(makeUpdateMutation(elementId, { title: 'Edited' }), TEST_USER_ID)
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect((inRedis as Record<string, unknown>)?.title).toBe('Edited')
+    expect(inRedis?.locked).toBe(true)
+  })
+
+  it('rejects MOVE of an element contained in a locked grid', async () => {
+    const gridId = makeElementId()
+    const noteId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateElementMutation(gridId, 'COLUMN'), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeCreateElementMutation(noteId, 'NOTE'), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(noteId, { containerId: gridId, containerColumnId: 'sec', containerOrder: 0 }), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(gridId, { locked: true }), TEST_USER_ID)
+
+    await mutationProcessor.processMutation(makeMoveMutation(noteId, 500, 600), TEST_USER_ID)
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, noteId)
+    expect(inRedis?.containerId).toBe(gridId)
+  })
+
+  it('allows adding a new element into a locked meta layout, but rejects dragging it back out', async () => {
+    const metaId = makeElementId()
+    const gridId = makeElementId()
+    await mutationProcessor.processMutation(makeCreateElementMutation(metaId, 'META_COLUMN'), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeUpdateMutation(metaId, { locked: true }), TEST_USER_ID)
+    await mutationProcessor.processMutation(makeCreateElementMutation(gridId, 'COLUMN'), TEST_USER_ID)
+
+    // Explicit addition into the locked layout is allowed (lock only blocks dragging).
+    await mutationProcessor.processMutation(
+      makeUpdateMutation(gridId, { metaContainerId: metaId, metaContainerOrder: 0, x: 0, y: 0 }),
+      TEST_USER_ID,
+    )
+    const afterAdd = await boardStateService.getElement(TEST_BOARD_ID, gridId)
+    expect(afterAdd?.metaContainerId).toBe(metaId)
+
+    // Dragging it out of the locked layout is rejected.
+    await mutationProcessor.processMutation(
+      makeUpdateMutation(gridId, { metaContainerId: undefined, metaContainerOrder: undefined, x: 999, y: 999 }),
+      TEST_USER_ID,
+    )
+    const afterRelease = await boardStateService.getElement(TEST_BOARD_ID, gridId)
+    expect(afterRelease?.metaContainerId).toBe(metaId)
+    expect(afterRelease?.x).toBe(0)
+    expect(afterRelease?.y).toBe(0)
   })
 })
 
