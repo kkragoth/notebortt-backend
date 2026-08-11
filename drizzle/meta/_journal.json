@@ -64,6 +64,13 @@
       "when": 1776076800000,
       "tag": "0008_table_element_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776180000000,
+      "tag": "0009_range_element_kind",
+      "breakpoints": true
     }
   ]
 }
