@@ -75,17 +75,18 @@ function isManagedMetaRecord(value: unknown): boolean {
   return typeof value === 'object' && value !== null
 }
 
-/** Integrity validation for RECONCILE_MONTH_RANGE. The meta must exist and be a
- *  managed month-range; upserts must include exactly that meta (carrying its
- *  monthRange) plus elements contained in it; deletes must be contained months —
- *  never the meta itself. Returns an error message, or null when the operation
- *  is self-consistent. */
+/** Integrity validation for RECONCILE_MONTH_RANGE. If the meta already exists
+ *  it must be a managed month-range (a plain meta can never be hijacked into a
+ *  managed range); when it does not exist yet the reconcile is treated as the
+ *  first-creation of the managed meta. Upserts must include exactly that meta
+ *  (carrying its monthRange) plus elements contained in it; deletes must be
+ *  contained months — never the meta itself. Returns an error message, or null
+ *  when the operation is self-consistent. */
 export function validateReconcileMonthRange(operation: Operation, context: LockContext): string | null {
   if (operation.type !== MutationType.RECONCILE_MONTH_RANGE) return null
 
   const meta = context.elementsById.get(operation.metaId)
-  if (!meta) return 'reconcile meta not found'
-  if (!isManagedMetaRecord(asRecord(meta).monthRange)) {
+  if (meta && !isManagedMetaRecord(asRecord(meta).monthRange)) {
     return 'reconcile meta is not a managed month-range'
   }
 

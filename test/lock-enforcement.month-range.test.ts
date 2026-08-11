@@ -121,9 +121,9 @@ describe('RECONCILE_MONTH_RANGE integrity validation', () => {
     expect(validateReconcileMonthRange(op, ctx)).toBeNull()
   })
 
-  it('rejects when the meta does not exist', () => {
-    const op = reconcile('meta', [metaColumn('meta')])
-    expect(validateReconcileMonthRange(op, context([]))).toBe('reconcile meta not found')
+  it('accepts a first-creation reconcile when the meta does not exist yet', () => {
+    const op = reconcile('meta', [metaColumn('meta'), calendarColumn('jan', 'meta')])
+    expect(validateReconcileMonthRange(op, context([]))).toBeNull()
   })
 
   it('rejects when the meta is not a managed month-range', () => {
