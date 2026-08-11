@@ -151,6 +151,59 @@ describe('CREATE_ELEMENT', () => {
   })
 })
 
+describe('RANGE elements', () => {
+  it('creates a RANGE element and persists it to Postgres', async () => {
+    const elementId = makeElementId()
+    const mutation: Mutation = {
+      mutationId: makeMutationId(),
+      boardId: TEST_BOARD_ID,
+      clientTimestamp: Date.now(),
+      operation: {
+        type: MutationType.CREATE_ELEMENT,
+        elementId,
+        data: {
+          id: elementId,
+          kind: 'RANGE',
+          x: 0,
+          y: 0,
+          zIndex: 1,
+          updatedAt: Date.now(),
+          start: '2026-08-10',
+          end: '2026-08-24',
+          color: 'blue',
+          title: 'Sprint planning',
+          calendarId: 'cal-1',
+        },
+      },
+    }
+
+    const result = await mutationProcessor.processMutation(mutation, TEST_USER_ID)
+    expect(result.status).toBe('applied')
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect(inRedis?.kind).toBe('RANGE')
+    expect((inRedis as Record<string, unknown>)?.start).toBe('2026-08-10')
+
+    const rows = await db.select().from(elements).where(eq(elements.id, elementId))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.type).toBe('RANGE')
+    expect((rows[0]?.data as Record<string, unknown>)?.end).toBe('2026-08-24')
+  })
+
+  it('updates range dates via UPDATE_ELEMENT', async () => {
+    const elementId = makeElementId()
+    const mutation = makeCreateElementMutation(elementId, 'RANGE')
+    await mutationProcessor.processMutation(mutation, TEST_USER_ID)
+    await mutationProcessor.processMutation(
+      makeUpdateMutation(elementId, { start: '2026-09-01', end: '2026-09-05' }),
+      TEST_USER_ID,
+    )
+
+    const inRedis = await boardStateService.getElement(TEST_BOARD_ID, elementId)
+    expect((inRedis as Record<string, unknown>)?.start).toBe('2026-09-01')
+  })
+})
+
 describe('Idempotency', () => {
   it('returns already_applied when same mutationId is processed twice', async () => {
     const elementId = makeElementId()

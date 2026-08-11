@@ -1,7 +1,7 @@
 import type { BoardStateService } from '../services/board-state.service.js'
 import { MutationType } from './types.js'
 import type { BoardElement, Mutation, MutationResult, Operation } from './types.js'
-import { isMutationBlockedByLock } from './lock-enforcement.js'
+import { isMutationBlockedByLock, validateReconcileMonthRange } from './lock-enforcement.js'
 
 interface MutationProcessorOptions {
   enableTargetedReads?: boolean
@@ -126,6 +126,10 @@ export function createMutationProcessor(
       }
     }
 
+    if (operation.type === MutationType.RECONCILE_MONTH_RANGE) {
+      return { upserts: operation.upserts, deletes: operation.deletes }
+    }
+
     return operation satisfies never
   }
 
@@ -142,6 +146,36 @@ export function createMutationProcessor(
       } else if (operation.type === MutationType.UPDATE_ELEMENTS) {
         for (const update of operation.updates) {
           ids.add(update.elementId)
+        }
+      } else if (operation.type === MutationType.RECONCILE_MONTH_RANGE) {
+        // The managed meta and the months it plans to delete must be loaded so
+        // integrity validation can check containment.
+        ids.add(operation.metaId)
+        for (const elementId of operation.deletes) {
+          ids.add(elementId)
+        }
+      }
+    }
+    return [...ids]
+  }
+
+  /** Meta layouts referenced by containment fields in CREATE/UPDATE payloads,
+   *  so managed-month-range metas can be evaluated by lock enforcement. */
+  function collectReferencedMetaIds(mutations: Mutation[]): string[] {
+    const ids = new Set<string>()
+    const consider = (fields: Partial<BoardElement> | undefined): void => {
+      const metaId = fields?.metaContainerId
+      if (typeof metaId === 'string') ids.add(metaId)
+    }
+    for (const mutation of mutations) {
+      const operation = mutation.operation
+      if (operation.type === MutationType.CREATE_ELEMENT) {
+        consider(operation.data)
+      } else if (operation.type === MutationType.UPDATE_ELEMENT) {
+        consider(operation.fields)
+      } else if (operation.type === MutationType.UPDATE_ELEMENTS) {
+        for (const update of operation.updates) {
+          consider(update.fields)
         }
       }
     }
@@ -181,6 +215,9 @@ export function createMutationProcessor(
       const record = element as Record<string, unknown>
       if (typeof record.containerId === 'string') parentIds.add(record.containerId)
       if (typeof record.metaContainerId === 'string') parentIds.add(record.metaContainerId)
+    }
+    for (const metaId of collectReferencedMetaIds(mutations)) {
+      parentIds.add(metaId)
     }
     const missingParents = [...parentIds].filter((id) => !elementsById.has(id))
     if (missingParents.length > 0) {
@@ -242,6 +279,26 @@ export function createMutationProcessor(
           sequence: await boardStateService.peekSequence(boardId),
         },
         appliedCanonicalChange: false,
+      }
+    }
+
+    if (operation.type === MutationType.RECONCILE_MONTH_RANGE) {
+      const error = validateReconcileMonthRange(operation, context)
+      if (error) {
+        metrics.logStructured('mutation.reconcile_rejected', {
+          mutationId,
+          boardId,
+          reason: error,
+        })
+        return {
+          result: {
+            mutationId,
+            status: 'applied',
+            serverTimestamp: Date.now(),
+            sequence: await boardStateService.peekSequence(boardId),
+          },
+          appliedCanonicalChange: false,
+        }
       }
     }
 
