@@ -5,6 +5,7 @@ export enum MutationType {
   MOVE_ELEMENTS = 'MOVE_ELEMENTS',
   UPDATE_ELEMENTS = 'UPDATE_ELEMENTS',
   REORDER_ELEMENT = 'REORDER_ELEMENT',
+  RECONCILE_MONTH_RANGE = 'RECONCILE_MONTH_RANGE',
 }
 
 export interface BoardElement {
@@ -24,6 +25,7 @@ export type Operation =
   | { type: MutationType.MOVE_ELEMENTS; moves: Array<{ elementId: string; x: number; y: number }>; transient?: boolean }
   | { type: MutationType.UPDATE_ELEMENTS; updates: Array<{ elementId: string; fields: Partial<BoardElement> }> }
   | { type: MutationType.REORDER_ELEMENT; elementId: string; zIndex: number }
+  | { type: MutationType.RECONCILE_MONTH_RANGE; metaId: string; upserts: BoardElement[]; deletes: string[] }
 
 export interface Mutation {
   mutationId: string
