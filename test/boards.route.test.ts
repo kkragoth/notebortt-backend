@@ -153,6 +153,69 @@ function createHarness(
   return { app, state, batches }
 }
 
+function createAuthScopingHarness() {
+  const app = express()
+  app.use(express.json())
+  app.use('/', createBoardRouter(
+    {
+      getShareByToken: async () => ({ boardId: BOARD_ID, permission: 'view' }),
+    } as any,
+    {} as any,
+    (req, res, next) => {
+      const header = req.headers.authorization
+      if (!header?.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'Missing authentication token' })
+        return
+      }
+      req.userId = USER_ID
+      next()
+    },
+    {} as any,
+    {} as any,
+    {
+      verifyAccessToken: (token: string) => {
+        if (token !== TOKEN) {
+          throw new Error('invalid token')
+        }
+        return { sub: USER_ID }
+      },
+    } as any,
+    {} as any,
+  ))
+
+  return { app }
+}
+
+describe('board router auth scoping', () => {
+  it('allows anonymous access to /shared/:token', async () => {
+    const { app } = createAuthScopingHarness()
+
+    const response = await request(app).get('/shared/some-share-token')
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ boardId: BOARD_ID, permission: 'view' })
+  })
+
+  it('allows authenticated access to /shared/:token', async () => {
+    const { app } = createAuthScopingHarness()
+
+    const response = await request(app)
+      .get('/shared/some-share-token')
+      .set('Authorization', `Bearer ${TOKEN}`)
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ boardId: BOARD_ID, permission: 'view' })
+  })
+
+  it('still requires auth for management routes', async () => {
+    const { app } = createAuthScopingHarness()
+
+    const response = await request(app).get(`/workspaces/${BOARD_ID}/boards`)
+
+    expect(response.status).toBe(401)
+  })
+})
+
 describe('boards route mutation translation', () => {
   it('PATCH /boards/:id/elements and POST /boards/:id/mutations produce equivalent state transitions', async () => {
     const container = makeElement('container-1', { kind: 'COLUMN' })

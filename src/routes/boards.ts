@@ -34,9 +34,9 @@ export function createBoardRouter(
     previewJobService,
   }
 
-  router.use(authMiddleware, createBoardManagementRoutes(deps))
   router.use(optionalAuth, createBoardAccessRoutes(deps))
   router.use(optionalAuth, createBoardMutationRoutes(deps))
+  router.use(authMiddleware, createBoardManagementRoutes(deps))
   router.use(authMiddleware, createBoardMemberRoutes(deps))
   router.use(authMiddleware, createBoardInvitationRoutes(deps))
   router.use(authMiddleware, createBoardLinkSharingRoutes(deps))
