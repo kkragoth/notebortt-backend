@@ -1,7 +1,7 @@
 import type { BoardStateService } from '../services/board-state.service.js'
 import { MutationType } from './types.js'
 import type { BoardElement, Mutation, MutationResult, Operation } from './types.js'
-import { isMutationBlockedByLock } from './lock-enforcement.js'
+import { isMutationBlockedByLock, validateReconcileMonthRange } from './lock-enforcement.js'
 
 interface MutationProcessorOptions {
   enableTargetedReads?: boolean
@@ -147,6 +147,13 @@ export function createMutationProcessor(
         for (const update of operation.updates) {
           ids.add(update.elementId)
         }
+      } else if (operation.type === MutationType.RECONCILE_MONTH_RANGE) {
+        // The managed meta and the months it plans to delete must be loaded so
+        // integrity validation can check containment.
+        ids.add(operation.metaId)
+        for (const elementId of operation.deletes) {
+          ids.add(elementId)
+        }
       }
     }
     return [...ids]
@@ -272,6 +279,26 @@ export function createMutationProcessor(
           sequence: await boardStateService.peekSequence(boardId),
         },
         appliedCanonicalChange: false,
+      }
+    }
+
+    if (operation.type === MutationType.RECONCILE_MONTH_RANGE) {
+      const error = validateReconcileMonthRange(operation, context)
+      if (error) {
+        metrics.logStructured('mutation.reconcile_rejected', {
+          mutationId,
+          boardId,
+          reason: error,
+        })
+        return {
+          result: {
+            mutationId,
+            status: 'applied',
+            serverTimestamp: Date.now(),
+            sequence: await boardStateService.peekSequence(boardId),
+          },
+          appliedCanonicalChange: false,
+        }
       }
     }
 

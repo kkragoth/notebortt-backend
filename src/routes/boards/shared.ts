@@ -104,7 +104,9 @@ function isMutation(value: unknown): value is Mutation {
     case MutationType.RECONCILE_MONTH_RANGE:
       return typeof value.operation.metaId === 'string'
         && Array.isArray(value.operation.upserts)
-        && Array.isArray(value.operation.deletes)
+        && value.operation.upserts.length > 0
+        && value.operation.upserts.every((item) => isRecord(item))
+        && isStringArray(value.operation.deletes)
     default:
       return false
   }

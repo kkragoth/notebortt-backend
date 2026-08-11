@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isMutationBlockedByLock } from '../src/mutations/lock-enforcement.js'
+import { isMutationBlockedByLock, validateReconcileMonthRange } from '../src/mutations/lock-enforcement.js'
 import type { LockContext } from '../src/mutations/lock-enforcement.js'
 import { MutationType } from '../src/mutations/types.js'
 import type { BoardElement, Operation } from '../src/mutations/types.js'
@@ -55,6 +55,10 @@ function deleteElements(elementIds: string[]): Operation {
   return { type: MutationType.DELETE_ELEMENTS, elementIds }
 }
 
+function reconcile(metaId: string, upserts: BoardElement[], deletes: string[] = []): Operation {
+  return { type: MutationType.RECONCILE_MONTH_RANGE, metaId, upserts, deletes }
+}
+
 describe('managed month-range lock enforcement', () => {
   it('blocks moving a month out of a managed meta', () => {
     const ctx = context([
@@ -103,5 +107,84 @@ describe('managed month-range lock enforcement', () => {
       ['grid', calendarColumn('grid', 'meta')],
     ])
     expect(isMutationBlockedByLock(updateElement('grid', { metaContainerOrder: 3 }), ctx)).toBe(false)
+  })
+})
+
+describe('RECONCILE_MONTH_RANGE integrity validation', () => {
+  it('accepts a self-consistent reconcile', () => {
+    const ctx = context([
+      ['meta', metaColumn('meta')],
+      ['jan', calendarColumn('jan', 'meta')],
+      ['feb', calendarColumn('feb', 'meta')],
+    ])
+    const op = reconcile('meta', [metaColumn('meta'), calendarColumn('jan', 'meta')], ['feb'])
+    expect(validateReconcileMonthRange(op, ctx)).toBeNull()
+  })
+
+  it('rejects when the meta does not exist', () => {
+    const op = reconcile('meta', [metaColumn('meta')])
+    expect(validateReconcileMonthRange(op, context([]))).toBe('reconcile meta not found')
+  })
+
+  it('rejects when the meta is not a managed month-range', () => {
+    const ctx = context([['meta', plainMeta('meta')]])
+    expect(validateReconcileMonthRange(reconcile('meta', [metaColumn('meta')]), ctx)).toBe(
+      'reconcile meta is not a managed month-range',
+    )
+  })
+
+  it('rejects empty upserts', () => {
+    const ctx = context([['meta', metaColumn('meta')]])
+    expect(validateReconcileMonthRange(reconcile('meta', []), ctx)).toBe(
+      'reconcile upserts must not be empty',
+    )
+  })
+
+  it('rejects upserts that omit the managed meta', () => {
+    const ctx = context([['meta', metaColumn('meta')]])
+    const op = reconcile('meta', [calendarColumn('month', 'meta')])
+    expect(validateReconcileMonthRange(op, ctx)).toBe(
+      'reconcile upserts must include exactly one managed meta',
+    )
+  })
+
+  it('rejects an upsert that is not contained in the meta', () => {
+    const ctx = context([['meta', metaColumn('meta')]])
+    const op = reconcile('meta', [metaColumn('meta'), calendarColumn('foreign', 'other')])
+    expect(validateReconcileMonthRange(op, ctx)).toBe('reconcile upsert not contained in meta')
+  })
+
+  it('rejects deleting the meta itself', () => {
+    const ctx = context([['meta', metaColumn('meta')]])
+    expect(validateReconcileMonthRange(reconcile('meta', [metaColumn('meta')], ['meta']), ctx)).toBe(
+      'reconcile may not delete its meta',
+    )
+  })
+
+  it('rejects deleting an element that is not contained in the meta', () => {
+    const ctx = context([
+      ['meta', metaColumn('meta')],
+      ['foreign', calendarColumn('foreign', 'other')],
+    ])
+    const op = reconcile('meta', [metaColumn('meta')], ['foreign'])
+    expect(validateReconcileMonthRange(op, ctx)).toBe('reconcile delete not contained in meta')
+  })
+
+  it('rejects overlapping upserts and deletes', () => {
+    const ctx = context([
+      ['meta', metaColumn('meta')],
+      ['jan', calendarColumn('jan', 'meta')],
+    ])
+    const op = reconcile('meta', [metaColumn('meta'), calendarColumn('jan', 'meta')], ['jan'])
+    expect(validateReconcileMonthRange(op, ctx)).toBe('reconcile upserts and deletes overlap')
+  })
+
+  it('rejects duplicate ids in deletes', () => {
+    const ctx = context([
+      ['meta', metaColumn('meta')],
+      ['jan', calendarColumn('jan', 'meta')],
+    ])
+    const op = reconcile('meta', [metaColumn('meta')], ['jan', 'jan'])
+    expect(validateReconcileMonthRange(op, ctx)).toBe('reconcile deletes contain duplicate ids')
   })
 })

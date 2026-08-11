@@ -71,6 +71,62 @@ function createsIntoManagedMeta(context: LockContext, data: BoardElement): boole
   return meta !== undefined && asRecord(meta).monthRange !== undefined
 }
 
+function isManagedMetaRecord(value: unknown): boolean {
+  return typeof value === 'object' && value !== null
+}
+
+/** Integrity validation for RECONCILE_MONTH_RANGE. The meta must exist and be a
+ *  managed month-range; upserts must include exactly that meta (carrying its
+ *  monthRange) plus elements contained in it; deletes must be contained months —
+ *  never the meta itself. Returns an error message, or null when the operation
+ *  is self-consistent. */
+export function validateReconcileMonthRange(operation: Operation, context: LockContext): string | null {
+  if (operation.type !== MutationType.RECONCILE_MONTH_RANGE) return null
+
+  const meta = context.elementsById.get(operation.metaId)
+  if (!meta) return 'reconcile meta not found'
+  if (!isManagedMetaRecord(asRecord(meta).monthRange)) {
+    return 'reconcile meta is not a managed month-range'
+  }
+
+  const { upserts, deletes } = operation
+  if (upserts.length === 0) return 'reconcile upserts must not be empty'
+
+  const upsertIds = new Set<string>()
+  let metaUpsertCount = 0
+  for (const element of upserts) {
+    const id = asRecord(element).id
+    if (typeof id !== 'string') return 'reconcile upsert missing id'
+    if (upsertIds.has(id)) return 'reconcile upserts contain duplicate ids'
+    upsertIds.add(id)
+
+    if (id === operation.metaId) {
+      metaUpsertCount += 1
+      if (!isManagedMetaRecord(asRecord(element).monthRange)) {
+        return 'reconcile meta upsert is not a managed month-range'
+      }
+    } else if (asRecord(element).metaContainerId !== operation.metaId) {
+      return 'reconcile upsert not contained in meta'
+    }
+  }
+  if (metaUpsertCount !== 1) return 'reconcile upserts must include exactly one managed meta'
+
+  const deleteIds = new Set<string>()
+  for (const elementId of deletes) {
+    if (elementId === operation.metaId) return 'reconcile may not delete its meta'
+    if (deleteIds.has(elementId)) return 'reconcile deletes contain duplicate ids'
+    deleteIds.add(elementId)
+    if (upsertIds.has(elementId)) return 'reconcile upserts and deletes overlap'
+
+    const element = context.elementsById.get(elementId)
+    if (element && asRecord(element).metaContainerId !== operation.metaId) {
+      return 'reconcile delete not contained in meta'
+    }
+  }
+
+  return null
+}
+
 /** Position/containment mutations on a locked element — or on an element
  *  contained inside a locked grid/meta layout — are rejected so locks stay
  *  authoritative in collaborative sessions, not just a frontend affordance.
