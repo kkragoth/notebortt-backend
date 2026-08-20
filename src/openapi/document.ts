@@ -2,6 +2,8 @@ import { createDocument, type oas31 } from 'zod-openapi'
 import { z } from 'zod'
 import {
   authCallbackQuerySchema,
+  boardAccessQuerySchema,
+  boardResponseSchema,
   createBoardBodySchema,
   createBoardInviteBodySchema,
   createWorkspaceBodySchema,
@@ -9,6 +11,7 @@ import {
   devLoginBodySchema,
   debugStateQuerySchema,
   refreshTokenCookieSchema,
+  rotateBoardLinkSharingBodySchema,
   setBoardLinkSharingBodySchema,
   updateBoardMemberPermissionBodySchema,
 } from './schemas.js'
@@ -219,6 +222,27 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
           },
         },
       },
+      '/boards/{id}': {
+        get: {
+          summary: 'Get a board with resolved access permission',
+          requestParams: {
+            path: z.object({
+              id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+            }),
+            query: boardAccessQuerySchema,
+          },
+          responses: {
+            '200': {
+              description: 'Board with resolved permission for the requester or share token',
+              content: {
+                'application/json': { schema: boardResponseSchema },
+              },
+            },
+            '403': { description: 'No access to the board' },
+            '404': { description: 'Board not found' },
+          },
+        },
+      },
       '/boards/{id}/invites': {
         post: {
           summary: 'Invite a board collaborator',
@@ -261,7 +285,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
       },
       '/boards/{id}/link-sharing': {
         patch: {
-          summary: 'Set board link-sharing policy',
+          summary: 'Set board link-sharing policy for a permission (view or edit)',
           requestParams: {
             path: z.object({
               id: z.string().meta({ description: 'Board id', example: 'board-123' }),
@@ -274,6 +298,24 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
           },
           responses: {
             '200': { description: 'Link sharing updated' },
+          },
+        },
+      },
+      '/boards/{id}/link-sharing/rotate': {
+        post: {
+          summary: 'Rotate the link token for a permission (view or edit)',
+          requestParams: {
+            path: z.object({
+              id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+            }),
+          },
+          requestBody: {
+            content: {
+              'application/json': { schema: rotateBoardLinkSharingBodySchema },
+            },
+          },
+          responses: {
+            '200': { description: 'Link token rotated' },
           },
         },
       },

@@ -12,16 +12,18 @@ export const boards = pgTable('boards', {
   previewSvg: text('preview_svg'),
   previewVersion: text('preview_version'),
   previewUpdatedAt: timestamp('preview_updated_at', { withTimezone: true }),
-  linkShareEnabled: boolean('link_share_enabled').notNull().default(false),
-  linkShareToken: text('link_share_token').unique(),
-  linkSharePermission: text('link_share_permission').notNull().default('view'),
+  linkShareViewEnabled: boolean('link_share_view_enabled').notNull().default(false),
+  linkShareViewToken: text('link_share_view_token').unique(),
+  linkShareEditEnabled: boolean('link_share_edit_enabled').notNull().default(false),
+  linkShareEditToken: text('link_share_edit_token').unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
   index('idx_boards_workspace').on(table.workspaceId),
-  index('idx_boards_link_token').on(table.linkShareToken),
-  check('valid_link_share_permission', sql`${table.linkSharePermission} IN ('view', 'edit')`),
-  check('link_share_token_required_when_enabled', sql`NOT ${table.linkShareEnabled} OR ${table.linkShareToken} IS NOT NULL`),
+  index('idx_boards_link_view_token').on(table.linkShareViewToken),
+  index('idx_boards_link_edit_token').on(table.linkShareEditToken),
+  check('link_share_view_token_required_when_enabled', sql`NOT ${table.linkShareViewEnabled} OR ${table.linkShareViewToken} IS NOT NULL`),
+  check('link_share_edit_token_required_when_enabled', sql`NOT ${table.linkShareEditEnabled} OR ${table.linkShareEditToken} IS NOT NULL`),
 ])
 
 export const boardMembers = pgTable('board_members', {

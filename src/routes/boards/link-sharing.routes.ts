@@ -1,7 +1,10 @@
 import { Router } from 'express'
 import { sendForbidden, sendNotFound } from '../../lib/http.js'
 import { parseWithSchema } from '../../lib/validation.js'
-import { setBoardLinkSharingBodySchema } from '../../openapi/schemas.js'
+import {
+  rotateBoardLinkSharingBodySchema,
+  setBoardLinkSharingBodySchema,
+} from '../../openapi/schemas.js'
 import {
   boardIdParamsSchema,
   canManageBoardAccess,
@@ -30,7 +33,7 @@ export function createBoardLinkSharingRoutes(deps: BoardRouteDeps) {
     }
 
     const permission = parsed.data.permission === 'edit' ? 'edit' : 'view'
-    const linkShare = await deps.boardService.setBoardLinkShare(params.id, parsed.data.enabled, permission)
+    const linkShare = await deps.boardService.setBoardLinkShare(params.id, permission, parsed.data.enabled)
     if (!linkShare) {
       sendNotFound(res, 'Board not found')
       return
@@ -42,13 +45,19 @@ export function createBoardLinkSharingRoutes(deps: BoardRouteDeps) {
     const userId = req.userId!
     const params = parseOrSendBadRequest(boardIdParamsSchema, req.params, res)
     if (!params) return
+    const parsed = parseWithSchema(rotateBoardLinkSharingBodySchema, req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.error })
+      return
+    }
+
     const role = await getWorkspaceRoleForBoard(deps, params.id, userId)
     if (!canManageBoardAccess(role)) {
       sendForbidden(res)
       return
     }
 
-    const linkShare = await deps.boardService.rotateBoardLinkShareToken(params.id)
+    const linkShare = await deps.boardService.rotateBoardLinkShareToken(params.id, parsed.data.permission)
     if (!linkShare) {
       sendNotFound(res, 'Board not found')
       return

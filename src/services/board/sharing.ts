@@ -8,39 +8,66 @@ import { generateLinkShareToken, isMissingRelationError } from './helpers.js'
 type BoardQueries = ReturnType<typeof createBoardQueries>
 
 export function createBoardSharing(db: Database, queries: BoardQueries) {
-  async function setBoardLinkShare(boardId: string, enabled: boolean, permission: BoardPermission) {
+  async function setBoardLinkShare(boardId: string, permission: BoardPermission, enabled: boolean) {
+    const patch = permission === 'view'
+      ? {
+          linkShareViewEnabled: enabled,
+          linkShareViewToken: enabled ? generateLinkShareToken() : null,
+        }
+      : {
+          linkShareEditEnabled: enabled,
+          linkShareEditToken: enabled ? generateLinkShareToken() : null,
+        }
+
     const [board] = await db
       .update(boards)
-      .set({
-        linkShareEnabled: enabled,
-        linkSharePermission: permission,
-        linkShareToken: enabled ? generateLinkShareToken() : null,
-        updatedAt: new Date(),
-      })
+      .set({ ...patch, updatedAt: new Date() })
       .where(eq(boards.id, boardId))
       .returning({
         id: boards.id,
-        linkShareEnabled: boards.linkShareEnabled,
-        linkSharePermission: boards.linkSharePermission,
-        linkShareToken: boards.linkShareToken,
+        linkShareViewEnabled: boards.linkShareViewEnabled,
+        linkShareViewToken: boards.linkShareViewToken,
+        linkShareEditEnabled: boards.linkShareEditEnabled,
+        linkShareEditToken: boards.linkShareEditToken,
       })
 
-    return board ?? null
+    if (!board) {
+      return null
+    }
+
+    return {
+      enabled: permission === 'view' ? board.linkShareViewEnabled : board.linkShareEditEnabled,
+      permission,
+      token: permission === 'view' ? board.linkShareViewToken : board.linkShareEditToken,
+    }
   }
 
-  async function rotateBoardLinkShareToken(boardId: string) {
+  async function rotateBoardLinkShareToken(boardId: string, permission: BoardPermission) {
+    const patch = permission === 'view'
+      ? { linkShareViewToken: generateLinkShareToken() }
+      : { linkShareEditToken: generateLinkShareToken() }
+
     const [board] = await db
       .update(boards)
-      .set({ linkShareToken: generateLinkShareToken(), updatedAt: new Date() })
+      .set({ ...patch, updatedAt: new Date() })
       .where(eq(boards.id, boardId))
       .returning({
         id: boards.id,
-        linkShareEnabled: boards.linkShareEnabled,
-        linkSharePermission: boards.linkSharePermission,
-        linkShareToken: boards.linkShareToken,
+        linkShareViewEnabled: boards.linkShareViewEnabled,
+        linkShareViewToken: boards.linkShareViewToken,
+        linkShareEditEnabled: boards.linkShareEditEnabled,
+        linkShareEditToken: boards.linkShareEditToken,
       })
 
-    return board ?? null
+    if (!board) {
+      return null
+    }
+
+    return {
+      enabled: permission === 'view' ? board.linkShareViewEnabled : board.linkShareEditEnabled,
+      permission,
+      token: permission === 'view' ? board.linkShareViewToken : board.linkShareEditToken,
+    }
   }
 
   async function setBoardFavorite(boardId: string, userId: string, isFavorite: boolean) {

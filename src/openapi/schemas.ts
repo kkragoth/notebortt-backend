@@ -46,7 +46,7 @@ export const updateBoardMemberPermissionBodySchema = z.object({
 
 export const setBoardLinkSharingBodySchema = z.object({
   enabled: z.boolean().meta({
-    description: 'Whether link sharing is enabled',
+    description: 'Whether link sharing is enabled for the given permission',
     example: true,
   }),
   permission: z.enum(['view', 'edit']).optional().meta({
@@ -54,6 +54,45 @@ export const setBoardLinkSharingBodySchema = z.object({
     example: 'edit',
   }),
 }).meta({ id: 'SetBoardLinkSharingBody' })
+
+export const rotateBoardLinkSharingBodySchema = z.object({
+  permission: z.enum(['view', 'edit']).meta({
+    description: 'Which link to rotate (view or edit)',
+    example: 'edit',
+  }),
+}).meta({ id: 'RotateBoardLinkSharingBody' })
+
+export const boardAccessQuerySchema = z.object({
+  shareToken: z.string().trim().min(1).optional().meta({
+    description: 'Share token granting access to the board',
+    example: 'abc123',
+  }),
+}).meta({ id: 'BoardAccessQuery' })
+
+export const boardResponseSchema = z.object({
+  id: z.string().uuid().meta({
+    description: 'Board id',
+    example: 'f4b29acb-8c50-4a9b-a4e8-a9fd3811c3f1',
+  }),
+  workspaceId: z.string().uuid().meta({
+    description: 'Owning workspace id',
+    example: 'd1e18e9a-9a2c-4f5b-8d7a-6b4f3a2c1d0e',
+  }),
+  name: z.string().meta({
+    description: 'Board name',
+    example: 'Sprint Planning',
+  }),
+  permission: z.enum(['view', 'edit']).meta({
+    description: 'Resolved access level for the requesting user or share token',
+    example: 'edit',
+  }),
+  linkShareViewEnabled: z.boolean().meta({ description: 'Whether the read-only link is enabled', example: true }),
+  linkShareViewToken: z.string().nullable().meta({ description: 'Read-only link token', example: 'abc123' }),
+  linkShareEditEnabled: z.boolean().meta({ description: 'Whether the edit link is enabled', example: false }),
+  linkShareEditToken: z.string().nullable().meta({ description: 'Edit link token', example: null }),
+  createdAt: z.string().datetime().meta({ description: 'Board creation time', example: '2026-01-01T00:00:00.000Z' }),
+  updatedAt: z.string().datetime().meta({ description: 'Last update time', example: '2026-01-01T00:00:00.000Z' }),
+}).meta({ id: 'BoardResponse' })
 
 export const debugStateQuerySchema = z.object({
   boardId: z.string().optional().meta({

@@ -17,6 +17,12 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
       return
     }
 
+    // Anonymous visitors can self-identify with a display name (e.g. "Anonymous
+    // Fox") that other participants see in presence. Authenticated users always
+    // use their profile name.
+    const isAnonymous = identity.authUserId === undefined
+    const userName = isAnonymous && payload.userName ? payload.userName : identity.userName
+
     const shareToken = payload.shareToken ?? (typeof runtime.socket.handshake.query.shareToken === 'string'
       ? runtime.socket.handshake.query.shareToken
       : undefined)
@@ -56,7 +62,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
       permission: access.permission === 'edit' ? 'edit' : 'view',
       sessionId: payload.sessionId,
       userId: identity.runtimeUserId,
-      userName: identity.userName,
+      userName,
       avatarUrl: identity.avatarUrl,
       color,
     })
@@ -72,7 +78,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
     runtime.participantsStore.setParticipant(payload.boardId, runtime.socket.id, {
       sessionId: payload.sessionId,
       userId: identity.runtimeUserId,
-      userName: identity.userName,
+      userName,
       avatarUrl: identity.avatarUrl,
       color,
     })
@@ -80,7 +86,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
     runtime.socket.to(payload.boardId).emit('USER_JOINED', {
       sessionId: payload.sessionId,
       userId: identity.runtimeUserId,
-      userName: identity.userName,
+      userName,
       avatarUrl: identity.avatarUrl,
       color,
     })

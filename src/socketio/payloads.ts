@@ -8,6 +8,7 @@ export interface BoardJoinPayload {
   lastSequence: number
   sessionId: string
   shareToken?: string
+  userName?: string
 }
 
 export interface MutationBatchPayload {
@@ -123,10 +124,14 @@ export function parseBoardJoinPayload(payload: unknown): BoardJoinPayload | null
   }
 
   const shareToken = typeof payload.shareToken === 'string' ? payload.shareToken : undefined
+  const userName = typeof payload.userName === 'string' && payload.userName.trim().length > 0
+    ? payload.userName.trim().slice(0, 64)
+    : undefined
   return {
     boardId,
     sessionId,
     shareToken,
+    userName,
     lastSequence: normalizeSequence(payload.lastSequence),
   }
 }

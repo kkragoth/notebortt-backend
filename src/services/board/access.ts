@@ -2,6 +2,10 @@ import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client.js'
 import { boardMembers, boards, workspaceMembers } from '../../db/schema.js'
 import type { BoardPermission } from '../board.service.constants.js'
+import {
+  BOARD_PERMISSION_EDIT,
+  BOARD_PERMISSION_VIEW,
+} from '../board.service.constants.js'
 import { workspaceRoleToBoardPermission } from '../board.service.utils.js'
 import type { createBoardCatalog } from './catalog.js'
 
@@ -34,8 +38,12 @@ export function createBoardAccess(db: Database, catalog: BoardCatalog) {
       return { hasAccess: false, permission: null }
     }
 
-    if (shareToken && board.linkShareEnabled && board.linkShareToken === shareToken) {
-      return { hasAccess: true, permission: board.linkSharePermission as BoardPermission }
+    if (shareToken && board.linkShareViewEnabled && board.linkShareViewToken === shareToken) {
+      return { hasAccess: true, permission: BOARD_PERMISSION_VIEW }
+    }
+
+    if (shareToken && board.linkShareEditEnabled && board.linkShareEditToken === shareToken) {
+      return { hasAccess: true, permission: BOARD_PERMISSION_EDIT }
     }
 
     if (!userId) {
@@ -54,13 +62,28 @@ export function createBoardAccess(db: Database, catalog: BoardCatalog) {
   }
 
   async function getShareByToken(token: string) {
-    const rows = await db
-      .select({ boardId: boards.id, permission: boards.linkSharePermission })
-      .from(boards)
-      .where(and(eq(boards.linkShareToken, token), eq(boards.linkShareEnabled, true)))
-      .limit(1)
+    const [viewMatch, editMatch] = await Promise.all([
+      db
+        .select({ boardId: boards.id })
+        .from(boards)
+        .where(and(eq(boards.linkShareViewToken, token), eq(boards.linkShareViewEnabled, true)))
+        .limit(1),
+      db
+        .select({ boardId: boards.id })
+        .from(boards)
+        .where(and(eq(boards.linkShareEditToken, token), eq(boards.linkShareEditEnabled, true)))
+        .limit(1),
+    ])
 
-    return rows[0] ?? null
+    if (viewMatch[0]) {
+      return { boardId: viewMatch[0].boardId, permission: BOARD_PERMISSION_VIEW }
+    }
+
+    if (editMatch[0]) {
+      return { boardId: editMatch[0].boardId, permission: BOARD_PERMISSION_EDIT }
+    }
+
+    return null
   }
 
   return {

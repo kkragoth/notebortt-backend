@@ -19,8 +19,8 @@ export function createBoardAccessRoutes(deps: BoardRouteDeps) {
     const query = parseOrSendBadRequest(boardAccessQuerySchema, req.query, res)
     if (!params || !query) return
 
-    const { hasAccess } = await requireBoardAccess(deps, params.id, req.userId, query.shareToken)
-    if (!hasAccess) {
+    const access = await requireBoardAccess(deps, params.id, req.userId, query.shareToken)
+    if (!access.hasAccess) {
       sendForbidden(res)
       return
     }
@@ -30,7 +30,7 @@ export function createBoardAccessRoutes(deps: BoardRouteDeps) {
       sendNotFound(res, 'Board not found')
       return
     }
-    res.json(board)
+    res.json({ ...board, permission: access.permission })
   })
 
   router.get('/boards/:id/elements', async (req, res) => {
