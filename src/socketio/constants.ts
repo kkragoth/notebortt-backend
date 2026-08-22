@@ -1,4 +1,4 @@
-export const ACCESS_TOKEN_COOKIE_NAME = 'accessToken'
-export const WS_ELEMENTS_CHANGED_TYPE = 'ELEMENTS_CHANGED'
-export const TICK_PERSIST_DEBOUNCE_MS = 400
-export const TICK_PERSIST_MAX_WAIT_MS = 1500
+export const ACCESS_TOKEN_COOKIE_NAME = 'accessToken';
+export const WS_ELEMENTS_CHANGED_TYPE = 'ELEMENTS_CHANGED';
+export const TICK_PERSIST_DEBOUNCE_MS = 400;
+export const TICK_PERSIST_MAX_WAIT_MS = 1500;

@@ -1,25 +1,26 @@
-import { randomUUID } from 'crypto'
-import type { IncomingMessage } from 'http'
-import type WebSocket from 'ws'
-import type Redis from 'ioredis'
-import type { BoardStateService } from '../services/board-state.service.js'
-import type { MutationProcessor } from '../mutations/processor.js'
-import type { Mutation } from '../mutations/types.js'
-import { parseClientMessage, serialize } from './messages.js'
-import type { BoardRoomManager } from './room.js'
-import { getUserColor } from './room.js'
-import type { HeartbeatService } from './heartbeat.js'
-import { createBoardMutationPubSub } from './pubsub.js'
-import { extractWsContext, isBoardGloballyIdle, isRateLimited, sendInitialState, type RateLimitState } from './handler.utils.js'
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
+import type WebSocket from 'ws';
+import type Redis from 'ioredis';
+import type { BoardStateService } from '@/services/board-state.service.js';
+import type { MutationProcessor } from '@/mutations/processor.js';
+import type { Mutation } from '@/mutations/types.js';
+import type { BoardRoomManager } from '@/ws/room.js';
+import type { HeartbeatService } from '@/ws/heartbeat.js';
+import type {RateLimitState} from '@/ws/handler.utils.js';
+import { parseClientMessage, serialize } from '@/ws/messages.js';
+import { getUserColor } from '@/ws/room.js';
+import { createBoardMutationPubSub } from '@/ws/pubsub.js';
+import {  extractWsContext, isBoardGloballyIdle, isRateLimited, sendInitialState } from '@/ws/handler.utils.js';
 
-const RATE_LIMIT_MAX_PER_SECOND = 30
-const PRESENCE_RATE_LIMIT_MAX_PER_SECOND = 20
-const ROOM_FLUSH_GRACE_PERIOD_MS = 30_000
-const MUTATION_BATCH_WINDOW_MS = 12
-const MUTATION_BATCH_MAX_SIZE = 25
-const MAX_INBOUND_MESSAGE_BYTES = 128 * 1024
-const DEFAULT_PRESENCE_WRITE_THROTTLE_MS = 3_000
-const DEFAULT_PRESENCE_WRITE_JITTER_MS = 400
+const RATE_LIMIT_MAX_PER_SECOND = 30;
+const PRESENCE_RATE_LIMIT_MAX_PER_SECOND = 20;
+const ROOM_FLUSH_GRACE_PERIOD_MS = 30_000;
+const MUTATION_BATCH_WINDOW_MS = 12;
+const MUTATION_BATCH_MAX_SIZE = 25;
+const MAX_INBOUND_MESSAGE_BYTES = 128 * 1024;
+const DEFAULT_PRESENCE_WRITE_THROTTLE_MS = 3_000;
+const DEFAULT_PRESENCE_WRITE_JITTER_MS = 400;
 
 interface PendingMutationBatch {
   mutations: Mutation[]
@@ -37,335 +38,335 @@ interface WebSocketHandlerOptions {
 }
 
 export function createWebSocketHandler(
-  roomManager: BoardRoomManager,
-  boardStateService: BoardStateService,
-  mutationProcessor: MutationProcessor,
-  heartbeat: HeartbeatService,
-  pubRedis: Redis,
-  options: WebSocketHandlerOptions = {},
+    roomManager: BoardRoomManager,
+    boardStateService: BoardStateService,
+    mutationProcessor: MutationProcessor,
+    heartbeat: HeartbeatService,
+    pubRedis: Redis,
+    options: WebSocketHandlerOptions = {},
 ) {
-  const presenceWriteThrottleMs = options.presenceWriteThrottleMs ?? DEFAULT_PRESENCE_WRITE_THROTTLE_MS
-  const presenceWriteJitterMs = options.presenceWriteJitterMs ?? DEFAULT_PRESENCE_WRITE_JITTER_MS
-  const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager)
-  const gracePeriodTimers = new Map<string, NodeJS.Timeout>()
-  const pendingMutationBatches = new Map<string, PendingMutationBatch>()
-  const lastPresenceWriteAtByConnection = new Map<string, number>()
-  const presenceJitterByConnection = new Map<string, number>()
+    const presenceWriteThrottleMs = options.presenceWriteThrottleMs ?? DEFAULT_PRESENCE_WRITE_THROTTLE_MS;
+    const presenceWriteJitterMs = options.presenceWriteJitterMs ?? DEFAULT_PRESENCE_WRITE_JITTER_MS;
+    const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager);
+    const gracePeriodTimers = new Map<string, NodeJS.Timeout>();
+    const pendingMutationBatches = new Map<string, PendingMutationBatch>();
+    const lastPresenceWriteAtByConnection = new Map<string, number>();
+    const presenceJitterByConnection = new Map<string, number>();
 
-  function cancelGracePeriod(boardId: string): void {
-    const timer = gracePeriodTimers.get(boardId)
-    if (timer) {
-      clearTimeout(timer)
-      gracePeriodTimers.delete(boardId)
-    }
-  }
-
-  function scheduleRoomFlush(boardId: string): void {
-    cancelGracePeriod(boardId)
-    const timer = setTimeout(async () => {
-      gracePeriodTimers.delete(boardId)
-      const roomSize = roomManager.getRoomSize(boardId)
-      if (roomSize > 0) return
-      if (!(await isBoardGloballyIdle(boardId, boardStateService))) return
-      await boardStateService.persistBoard(boardId)
-      await boardStateService.flushBoard(boardId)
-      mutationPubSub.unsubscribeFromBoard(boardId)
-      console.log(`[WS] Flushed board ${boardId} from Redis after grace period`)
-    }, ROOM_FLUSH_GRACE_PERIOD_MS)
-    gracePeriodTimers.set(boardId, timer)
-  }
-
-  function sendExistingRoomMembers(ws: WebSocket, boardId: string, excludeConnectionId: string): void {
-    const members = roomManager.getRoom(boardId)
-    for (const member of members) {
-      if (member.connectionId === excludeConnectionId) continue
-      ws.send(serialize({
-        type: 'USER_JOINED',
-        sessionId: member.sessionId,
-        userId: member.userId,
-        userName: member.userName,
-        avatarUrl: member.avatarUrl ?? null,
-        color: member.color,
-      }))
-    }
-  }
-
-  function getOrCreateBatch(connectionId: string): PendingMutationBatch {
-    const existing = pendingMutationBatches.get(connectionId)
-    if (existing) {
-      return existing
-    }
-
-    const created: PendingMutationBatch = {
-      mutations: [],
-      flushTimer: null,
-      flushing: false,
-    }
-    pendingMutationBatches.set(connectionId, created)
-    return created
-  }
-
-  async function publishAppliedChanges(
-    boardId: string,
-    userId: string,
-    connectionId: string,
-    results: Awaited<ReturnType<MutationProcessor['processBatch']>>,
-  ): Promise<void> {
-    for (const result of results) {
-      if (result.status !== 'applied' || !result.change) {
-        continue
-      }
-
-      await mutationPubSub.publishMessage(boardId, {
-        type: 'ELEMENTS_CHANGED',
-        fromUserId: userId,
-        change: result.change,
-      }, connectionId)
-    }
-  }
-
-  async function flushMutationBatch(
-    boardId: string,
-    userId: string,
-    connectionId: string,
-    ws: WebSocket,
-    options: FlushBatchOptions = { sendAcks: true },
-  ): Promise<void> {
-    const batchState = pendingMutationBatches.get(connectionId)
-    if (!batchState || batchState.flushing || batchState.mutations.length === 0) {
-      return
-    }
-
-    if (batchState.flushTimer) {
-      clearTimeout(batchState.flushTimer)
-      batchState.flushTimer = null
-    }
-
-    batchState.flushing = true
-    const batch = batchState.mutations.splice(0, batchState.mutations.length)
-
-    try {
-      const results = await mutationProcessor.processBatch(batch, userId)
-      if (options.sendAcks && ws.readyState === 1) {
-        for (const result of results) {
-          ws.send(serialize({ type: 'MUTATION_RESULT', result }))
+    function cancelGracePeriod(boardId: string): void {
+        const timer = gracePeriodTimers.get(boardId);
+        if (timer) {
+            clearTimeout(timer);
+            gracePeriodTimers.delete(boardId);
         }
-      }
-
-      await publishAppliedChanges(boardId, userId, connectionId, results)
-    } finally {
-      batchState.flushing = false
-      if (batchState.mutations.length > 0) {
-        batchState.flushTimer = setTimeout(() => {
-          void flushMutationBatch(boardId, userId, connectionId, ws, options)
-        }, MUTATION_BATCH_WINDOW_MS)
-      }
-    }
-  }
-
-  function enqueueMutation(
-    boardId: string,
-    userId: string,
-    connectionId: string,
-    ws: WebSocket,
-    mutation: Mutation,
-  ): void {
-    const batchState = getOrCreateBatch(connectionId)
-    batchState.mutations.push(mutation)
-
-    if (batchState.mutations.length >= MUTATION_BATCH_MAX_SIZE) {
-      void flushMutationBatch(boardId, userId, connectionId, ws)
-      return
     }
 
-    if (batchState.flushTimer) {
-      return
+    function scheduleRoomFlush(boardId: string): void {
+        cancelGracePeriod(boardId);
+        const timer = setTimeout(async () => {
+            gracePeriodTimers.delete(boardId);
+            const roomSize = roomManager.getRoomSize(boardId);
+            if (roomSize > 0) return;
+            if (!(await isBoardGloballyIdle(boardId, boardStateService))) return;
+            await boardStateService.persistBoard(boardId);
+            await boardStateService.flushBoard(boardId);
+            mutationPubSub.unsubscribeFromBoard(boardId);
+            console.log(`[WS] Flushed board ${boardId} from Redis after grace period`);
+        }, ROOM_FLUSH_GRACE_PERIOD_MS);
+        gracePeriodTimers.set(boardId, timer);
     }
 
-    batchState.flushTimer = setTimeout(() => {
-      batchState.flushTimer = null
-      void flushMutationBatch(boardId, userId, connectionId, ws)
-    }, MUTATION_BATCH_WINDOW_MS)
-  }
-
-  function shouldWritePresence(connectionId: string): boolean {
-    const now = Date.now()
-    const lastWriteAt = lastPresenceWriteAtByConnection.get(connectionId) ?? 0
-    const jitter = presenceJitterByConnection.get(connectionId)
-      ?? Math.floor(Math.random() * (presenceWriteJitterMs + 1))
-    presenceJitterByConnection.set(connectionId, jitter)
-    const effectiveWindow = Math.max(0, presenceWriteThrottleMs + jitter)
-
-    if ((now - lastWriteAt) >= effectiveWindow) {
-      lastPresenceWriteAtByConnection.set(connectionId, now)
-      return true
-    }
-
-    return false
-  }
-
-  async function refreshConnectionActivity(
-    boardId: string,
-    userId: string,
-    sessionId: string,
-    connectionId: string,
-    forceWrite = false,
-  ): Promise<void> {
-    if (forceWrite || shouldWritePresence(connectionId)) {
-      await boardStateService.touchViewerSession(boardId, sessionId)
-      await boardStateService.trackClient(boardId, userId, connectionId)
-    }
-    heartbeat.handleActivity(boardId, connectionId)
-  }
-
-  async function onConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
-    const context = extractWsContext(request)
-    if (!context) {
-      ws.close(4401, 'Missing upgrade context')
-      return
-    }
-
-    const { boardId, userId, userName, avatarUrl, permission, lastSequence, sessionId } = context
-    const connectionId = randomUUID()
-    const color = getUserColor(userId)
-
-    cancelGracePeriod(boardId)
-    mutationPubSub.ensureSubscribedToBoard(boardId)
-
-    await boardStateService.loadBoard(boardId)
-    await boardStateService.trackClient(boardId, userId, connectionId)
-    await boardStateService.touchViewerSession(boardId, sessionId)
-
-    const client = { ws, sessionId, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() }
-    const replacedClient = roomManager.joinRoom(boardId, client)
-    if (replacedClient) {
-      await boardStateService.removeClient(boardId, replacedClient.userId, replacedClient.connectionId)
-      replacedClient.ws.close(4001, 'Session replaced')
-    }
-    sendExistingRoomMembers(ws, boardId, connectionId)
-
-    await sendInitialState(ws, boardId, lastSequence, boardStateService, pubRedis)
-
-    const mutationRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
-    const presenceRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() }
-
-    ws.on('message', async (raw: Buffer) => {
-      try {
-        if (raw.length > MAX_INBOUND_MESSAGE_BYTES) {
-          ws.close(1009, 'Message too large')
-          return
-        }
-
-        const message = parseClientMessage(raw.toString())
-        if (!message) {
-          if (ws.readyState === 1) {
-            ws.send(serialize({ type: 'ERROR', message: 'Invalid WebSocket message' }))
-          }
-          return
-        }
-
-        if (message.type === 'MUTATION') {
-          if (permission !== 'edit') {
-            ws.send(serialize({ type: 'ERROR', message: 'No edit access to this board' }))
-            return
-          }
-
-          await refreshConnectionActivity(boardId, userId, sessionId, connectionId)
-
-          if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
-            ws.send(serialize({ type: 'RATE_LIMITED' }))
-            return
-          }
-
-          if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
-            await mutationPubSub.publishMessage(boardId, {
-              type: 'MUTATION',
-              mutation: message.mutation,
-              fromUserId: userId,
-            }, connectionId)
+    function sendExistingRoomMembers(ws: WebSocket, boardId: string, excludeConnectionId: string): void {
+        const members = roomManager.getRoom(boardId);
+        for (const member of members) {
+            if (member.connectionId === excludeConnectionId) continue;
             ws.send(serialize({
-              type: 'MUTATION_RESULT',
-              result: {
-                mutationId: message.mutation.mutationId,
-                status: 'broadcast_only',
-                serverTimestamp: Date.now(),
-              },
-            }))
-            return
-          }
+                type: 'USER_JOINED',
+                sessionId: member.sessionId,
+                userId: member.userId,
+                userName: member.userName,
+                avatarUrl: member.avatarUrl ?? null,
+                color: member.color,
+            }));
+        }
+    }
 
-          enqueueMutation(boardId, userId, connectionId, ws, message.mutation)
-          return
+    function getOrCreateBatch(connectionId: string): PendingMutationBatch {
+        const existing = pendingMutationBatches.get(connectionId);
+        if (existing) {
+            return existing;
         }
 
-        if (message.type === 'PRESENCE') {
-          await refreshConnectionActivity(boardId, userId, sessionId, connectionId)
+        const created: PendingMutationBatch = {
+            mutations: [],
+            flushTimer: null,
+            flushing: false,
+        };
+        pendingMutationBatches.set(connectionId, created);
+        return created;
+    }
 
-          if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
-            return
-          }
+    async function publishAppliedChanges(
+        boardId: string,
+        userId: string,
+        connectionId: string,
+        results: Awaited<ReturnType<MutationProcessor['processBatch']>>,
+    ): Promise<void> {
+        for (const result of results) {
+            if (result.status !== 'applied' || !result.change) {
+                continue;
+            }
 
-          roomManager.broadcastToRoom(boardId, {
-            type: 'PRESENCE',
-            sessionId,
-            userId,
-            cursor: message.cursor,
-            selectedIds: message.selectedIds ?? [],
-            draggedIds: message.draggedIds ?? [],
-            focusedElementId: message.focusedElementId ?? null,
-            typingField: message.typingField ?? null,
-            userName,
-            avatarUrl,
-            color,
-          }, connectionId)
-          return
+            await mutationPubSub.publishMessage(boardId, {
+                type: 'ELEMENTS_CHANGED',
+                fromUserId: userId,
+                change: result.change,
+            }, connectionId);
+        }
+    }
+
+    async function flushMutationBatch(
+        boardId: string,
+        userId: string,
+        connectionId: string,
+        ws: WebSocket,
+        options: FlushBatchOptions = { sendAcks: true },
+    ): Promise<void> {
+        const batchState = pendingMutationBatches.get(connectionId);
+        if (!batchState || batchState.flushing || batchState.mutations.length === 0) {
+            return;
         }
 
-        if (message.type === 'PONG') {
-          await refreshConnectionActivity(boardId, userId, sessionId, connectionId, true)
-          heartbeat.handlePong(boardId, connectionId)
-          return
-        }
-      } catch (error) {
-        console.error(`[WS] message handling failed for board=${boardId} conn=${connectionId}`, error)
-      }
-    })
-
-    ws.on('close', async () => {
-      try {
-        const batchState = pendingMutationBatches.get(connectionId)
-        if (batchState?.flushTimer) {
-          clearTimeout(batchState.flushTimer)
-        }
-        await flushMutationBatch(boardId, userId, connectionId, ws, { sendAcks: false })
-        pendingMutationBatches.delete(connectionId)
-        lastPresenceWriteAtByConnection.delete(connectionId)
-        presenceJitterByConnection.delete(connectionId)
-
-        const leaveResult = roomManager.leaveRoom(boardId, connectionId)
-        if (!leaveResult.client) {
-          return
+        if (batchState.flushTimer) {
+            clearTimeout(batchState.flushTimer);
+            batchState.flushTimer = null;
         }
 
-        await boardStateService.removeClient(boardId, userId, connectionId)
-        if (!leaveResult.sessionStillActive) {
-          await boardStateService.removeViewerSession(boardId, sessionId)
+        batchState.flushing = true;
+        const batch = batchState.mutations.splice(0, batchState.mutations.length);
+
+        try {
+            const results = await mutationProcessor.processBatch(batch, userId);
+            if (options.sendAcks && ws.readyState === 1) {
+                for (const result of results) {
+                    ws.send(serialize({ type: 'MUTATION_RESULT', result }));
+                }
+            }
+
+            await publishAppliedChanges(boardId, userId, connectionId, results);
+        } finally {
+            batchState.flushing = false;
+            if (batchState.mutations.length > 0) {
+                batchState.flushTimer = setTimeout(() => {
+                    void flushMutationBatch(boardId, userId, connectionId, ws, options);
+                }, MUTATION_BATCH_WINDOW_MS);
+            }
+        }
+    }
+
+    function enqueueMutation(
+        boardId: string,
+        userId: string,
+        connectionId: string,
+        ws: WebSocket,
+        mutation: Mutation,
+    ): void {
+        const batchState = getOrCreateBatch(connectionId);
+        batchState.mutations.push(mutation);
+
+        if (batchState.mutations.length >= MUTATION_BATCH_MAX_SIZE) {
+            void flushMutationBatch(boardId, userId, connectionId, ws);
+            return;
         }
 
-        const globalClientCount = await boardStateService.getClientCount(boardId)
-        if (globalClientCount <= 1) {
-          await boardStateService.persistBoard(boardId)
+        if (batchState.flushTimer) {
+            return;
         }
-        if (globalClientCount === 0) {
-          scheduleRoomFlush(boardId)
-        }
-      } catch (error) {
-        console.error(`[WS] close handling failed for board=${boardId} conn=${connectionId}`, error)
-      }
-    })
-  }
 
-  return { onConnection }
+        batchState.flushTimer = setTimeout(() => {
+            batchState.flushTimer = null;
+            void flushMutationBatch(boardId, userId, connectionId, ws);
+        }, MUTATION_BATCH_WINDOW_MS);
+    }
+
+    function shouldWritePresence(connectionId: string): boolean {
+        const now = Date.now();
+        const lastWriteAt = lastPresenceWriteAtByConnection.get(connectionId) ?? 0;
+        const jitter = presenceJitterByConnection.get(connectionId)
+      ?? Math.floor(Math.random() * (presenceWriteJitterMs + 1));
+        presenceJitterByConnection.set(connectionId, jitter);
+        const effectiveWindow = Math.max(0, presenceWriteThrottleMs + jitter);
+
+        if ((now - lastWriteAt) >= effectiveWindow) {
+            lastPresenceWriteAtByConnection.set(connectionId, now);
+            return true;
+        }
+
+        return false;
+    }
+
+    async function refreshConnectionActivity(
+        boardId: string,
+        userId: string,
+        sessionId: string,
+        connectionId: string,
+        forceWrite = false,
+    ): Promise<void> {
+        if (forceWrite || shouldWritePresence(connectionId)) {
+            await boardStateService.touchViewerSession(boardId, sessionId);
+            await boardStateService.trackClient(boardId, userId, connectionId);
+        }
+        heartbeat.handleActivity(boardId, connectionId);
+    }
+
+    async function onConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
+        const context = extractWsContext(request);
+        if (!context) {
+            ws.close(4401, 'Missing upgrade context');
+            return;
+        }
+
+        const { boardId, userId, userName, avatarUrl, permission, lastSequence, sessionId } = context;
+        const connectionId = randomUUID();
+        const color = getUserColor(userId);
+
+        cancelGracePeriod(boardId);
+        mutationPubSub.ensureSubscribedToBoard(boardId);
+
+        await boardStateService.loadBoard(boardId);
+        await boardStateService.trackClient(boardId, userId, connectionId);
+        await boardStateService.touchViewerSession(boardId, sessionId);
+
+        const client = { ws, sessionId, userId, userName, avatarUrl, connectionId, color, lastPong: Date.now() };
+        const replacedClient = roomManager.joinRoom(boardId, client);
+        if (replacedClient) {
+            await boardStateService.removeClient(boardId, replacedClient.userId, replacedClient.connectionId);
+            replacedClient.ws.close(4001, 'Session replaced');
+        }
+        sendExistingRoomMembers(ws, boardId, connectionId);
+
+        await sendInitialState(ws, boardId, lastSequence, boardStateService, pubRedis);
+
+        const mutationRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() };
+        const presenceRateLimitState: RateLimitState = { count: 0, windowStart: Date.now() };
+
+        ws.on('message', async (raw: Buffer) => {
+            try {
+                if (raw.length > MAX_INBOUND_MESSAGE_BYTES) {
+                    ws.close(1009, 'Message too large');
+                    return;
+                }
+
+                const message = parseClientMessage(raw.toString());
+                if (!message) {
+                    if (ws.readyState === 1) {
+                        ws.send(serialize({ type: 'ERROR', message: 'Invalid WebSocket message' }));
+                    }
+                    return;
+                }
+
+                if (message.type === 'MUTATION') {
+                    if (permission !== 'edit') {
+                        ws.send(serialize({ type: 'ERROR', message: 'No edit access to this board' }));
+                        return;
+                    }
+
+                    await refreshConnectionActivity(boardId, userId, sessionId, connectionId);
+
+                    if (isRateLimited(mutationRateLimitState, RATE_LIMIT_MAX_PER_SECOND)) {
+                        ws.send(serialize({ type: 'RATE_LIMITED' }));
+                        return;
+                    }
+
+                    if (message.mutation.operation.type === 'MOVE_ELEMENTS' && message.mutation.operation.transient) {
+                        await mutationPubSub.publishMessage(boardId, {
+                            type: 'MUTATION',
+                            mutation: message.mutation,
+                            fromUserId: userId,
+                        }, connectionId);
+                        ws.send(serialize({
+                            type: 'MUTATION_RESULT',
+                            result: {
+                                mutationId: message.mutation.mutationId,
+                                status: 'broadcast_only',
+                                serverTimestamp: Date.now(),
+                            },
+                        }));
+                        return;
+                    }
+
+                    enqueueMutation(boardId, userId, connectionId, ws, message.mutation);
+                    return;
+                }
+
+                if (message.type === 'PRESENCE') {
+                    await refreshConnectionActivity(boardId, userId, sessionId, connectionId);
+
+                    if (isRateLimited(presenceRateLimitState, PRESENCE_RATE_LIMIT_MAX_PER_SECOND)) {
+                        return;
+                    }
+
+                    roomManager.broadcastToRoom(boardId, {
+                        type: 'PRESENCE',
+                        sessionId,
+                        userId,
+                        cursor: message.cursor,
+                        selectedIds: message.selectedIds ?? [],
+                        draggedIds: message.draggedIds ?? [],
+                        focusedElementId: message.focusedElementId ?? null,
+                        typingField: message.typingField ?? null,
+                        userName,
+                        avatarUrl,
+                        color,
+                    }, connectionId);
+                    return;
+                }
+
+                if (message.type === 'PONG') {
+                    await refreshConnectionActivity(boardId, userId, sessionId, connectionId, true);
+                    heartbeat.handlePong(boardId, connectionId);
+                    return;
+                }
+            } catch (error) {
+                console.error(`[WS] message handling failed for board=${boardId} conn=${connectionId}`, error);
+            }
+        });
+
+        ws.on('close', async () => {
+            try {
+                const batchState = pendingMutationBatches.get(connectionId);
+                if (batchState?.flushTimer) {
+                    clearTimeout(batchState.flushTimer);
+                }
+                await flushMutationBatch(boardId, userId, connectionId, ws, { sendAcks: false });
+                pendingMutationBatches.delete(connectionId);
+                lastPresenceWriteAtByConnection.delete(connectionId);
+                presenceJitterByConnection.delete(connectionId);
+
+                const leaveResult = roomManager.leaveRoom(boardId, connectionId);
+                if (!leaveResult.client) {
+                    return;
+                }
+
+                await boardStateService.removeClient(boardId, userId, connectionId);
+                if (!leaveResult.sessionStillActive) {
+                    await boardStateService.removeViewerSession(boardId, sessionId);
+                }
+
+                const globalClientCount = await boardStateService.getClientCount(boardId);
+                if (globalClientCount <= 1) {
+                    await boardStateService.persistBoard(boardId);
+                }
+                if (globalClientCount === 0) {
+                    scheduleRoomFlush(boardId);
+                }
+            } catch (error) {
+                console.error(`[WS] close handling failed for board=${boardId} conn=${connectionId}`, error);
+            }
+        });
+    }
+
+    return { onConnection };
 }
 
 export type WebSocketHandler = ReturnType<typeof createWebSocketHandler>

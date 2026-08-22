@@ -1,5 +1,5 @@
 export {
-  createWorkspaceService,
-  type WorkspaceService,
-  WorkspaceInvitationError,
-} from './workspace/index.js'
+    createWorkspaceService,
+    type WorkspaceService,
+    WorkspaceInvitationError,
+} from '@/services/workspace/index.js';

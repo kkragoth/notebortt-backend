@@ -1,14 +1,15 @@
-import { z } from 'zod'
-import type { Request, Response } from 'express'
-import { parseWithSchema } from '../../lib/validation.js'
-import { sendBadRequest } from '../../lib/http.js'
-import type { BoardService } from '../../services/board.service.js'
-import type { WorkspaceService } from '../../services/workspace.service.js'
-import type { BoardStateService } from '../../services/board-state.service.js'
-import type { MutationProcessor } from '../../mutations/processor.js'
-import { MutationType, type Mutation } from '../../mutations/types.js'
-import type { AuthService } from '../../services/auth.service.js'
-import type { PreviewJobService } from '../../services/preview-job.service.js'
+import { z } from 'zod';
+import type { Request, Response } from 'express';
+import type { BoardService } from '@/services/board.service.js';
+import type { WorkspaceService } from '@/services/workspace.service.js';
+import type { BoardStateService } from '@/services/board-state.service.js';
+import type { MutationProcessor } from '@/mutations/processor.js';
+import type { AuthService } from '@/services/auth.service.js';
+import type { PreviewJobService } from '@/services/preview-job.service.js';
+import type {Mutation} from '@/mutations/types.js';
+import {  MutationType } from '@/mutations/types.js';
+import { sendBadRequest } from '@/lib/http.js';
+import { parseWithSchema } from '@/lib/validation.js';
 
 export interface BoardRouteDeps {
   boardService: BoardService
@@ -19,161 +20,161 @@ export interface BoardRouteDeps {
   previewJobService: PreviewJobService
 }
 
-const uuidParamSchema = z.string().trim().uuid()
+const uuidParamSchema = z.string().trim().uuid();
 
 export const boardIdParamsSchema = z.object({
-  id: uuidParamSchema,
-})
+    id: uuidParamSchema,
+});
 
 export const workspaceIdParamsSchema = z.object({
-  wid: uuidParamSchema,
-})
+    wid: uuidParamSchema,
+});
 
 export const boardMemberParamsSchema = z.object({
-  id: uuidParamSchema,
-  memberId: uuidParamSchema,
-})
+    id: uuidParamSchema,
+    memberId: uuidParamSchema,
+});
 
 export const boardInviteParamsSchema = z.object({
-  id: uuidParamSchema,
-  inviteId: uuidParamSchema,
-})
+    id: uuidParamSchema,
+    inviteId: uuidParamSchema,
+});
 
 export const inviteTokenParamsSchema = z.object({
-  token: z.string().trim().min(1),
-})
+    token: z.string().trim().min(1),
+});
 
 export const presenceParamsSchema = z.object({
-  id: uuidParamSchema,
-  sessionId: z.string().trim().min(1),
-})
+    id: uuidParamSchema,
+    sessionId: z.string().trim().min(1),
+});
 
 export const boardAccessQuerySchema = z.object({
-  shareToken: z.string().trim().min(1).optional(),
-})
+    shareToken: z.string().trim().min(1).optional(),
+});
 
 export const patchElementsBodySchema = z.object({
-  upserts: z.array(z.unknown()),
-  deletes: z.array(z.unknown()),
-  sessionId: z.string().trim().min(1).optional(),
+    upserts: z.array(z.unknown()),
+    deletes: z.array(z.unknown()),
+    sessionId: z.string().trim().min(1).optional(),
 }).refine((value) => value.upserts.length > 0 || value.deletes.length > 0, {
-  message: 'upserts and deletes must be arrays and at least one change is required',
-})
+    message: 'upserts and deletes must be arrays and at least one change is required',
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+    return typeof value === 'object' && value !== null;
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 function isMutation(value: unknown): value is Mutation {
-  if (!isRecord(value)) {
-    return false
-  }
+    if (!isRecord(value)) {
+        return false;
+    }
 
-  if (
-    typeof value.mutationId !== 'string'
+    if (
+        typeof value.mutationId !== 'string'
     || typeof value.boardId !== 'string'
     || typeof value.clientTimestamp !== 'number'
     || !Number.isFinite(value.clientTimestamp)
-  ) {
-    return false
-  }
+    ) {
+        return false;
+    }
 
-  if (!isRecord(value.operation) || typeof value.operation.type !== 'string') {
-    return false
-  }
+    if (!isRecord(value.operation) || typeof value.operation.type !== 'string') {
+        return false;
+    }
 
-  switch (value.operation.type) {
-    case MutationType.CREATE_ELEMENT:
-      return typeof value.operation.elementId === 'string' && isRecord(value.operation.data)
-    case MutationType.UPDATE_ELEMENT:
-      return typeof value.operation.elementId === 'string' && isRecord(value.operation.fields)
-    case MutationType.DELETE_ELEMENTS:
-      return isStringArray(value.operation.elementIds)
-    case MutationType.MOVE_ELEMENTS:
-      return Array.isArray(value.operation.moves)
-    case MutationType.UPDATE_ELEMENTS:
-      return Array.isArray(value.operation.updates)
-    case MutationType.REORDER_ELEMENT:
-      return typeof value.operation.elementId === 'string'
+    switch (value.operation.type) {
+        case MutationType.CREATE_ELEMENT:
+            return typeof value.operation.elementId === 'string' && isRecord(value.operation.data);
+        case MutationType.UPDATE_ELEMENT:
+            return typeof value.operation.elementId === 'string' && isRecord(value.operation.fields);
+        case MutationType.DELETE_ELEMENTS:
+            return isStringArray(value.operation.elementIds);
+        case MutationType.MOVE_ELEMENTS:
+            return Array.isArray(value.operation.moves);
+        case MutationType.UPDATE_ELEMENTS:
+            return Array.isArray(value.operation.updates);
+        case MutationType.REORDER_ELEMENT:
+            return typeof value.operation.elementId === 'string'
         && typeof value.operation.zIndex === 'number'
-        && Number.isFinite(value.operation.zIndex)
-    case MutationType.RECONCILE_MONTH_RANGE:
-      return typeof value.operation.metaId === 'string'
+        && Number.isFinite(value.operation.zIndex);
+        case MutationType.RECONCILE_MONTH_RANGE:
+            return typeof value.operation.metaId === 'string'
         && Array.isArray(value.operation.upserts)
         && value.operation.upserts.length > 0
         && value.operation.upserts.every((item) => isRecord(item))
-        && isStringArray(value.operation.deletes)
-    default:
-      return false
-  }
+        && isStringArray(value.operation.deletes);
+        default:
+            return false;
+    }
 }
 
 const mutationSchema = z.custom<Mutation>((value) => isMutation(value), {
-  message: 'Invalid mutation payload',
-})
+    message: 'Invalid mutation payload',
+});
 
 export const mutationsBodySchema = z.object({
-  mutations: z.array(mutationSchema).min(1).max(100),
-  sessionId: z.string().trim().min(1).optional(),
-})
+    mutations: z.array(mutationSchema).min(1).max(100),
+    sessionId: z.string().trim().min(1).optional(),
+});
 
 export const presenceBodySchema = z.object({
-  sessionId: z.string().trim().min(1),
-})
+    sessionId: z.string().trim().min(1),
+});
 
 export const upsertBoardMemberBodySchema = z.object({
-  userId: uuidParamSchema,
-  permission: z.enum(['view', 'edit']).optional(),
-})
+    userId: uuidParamSchema,
+    permission: z.enum(['view', 'edit']).optional(),
+});
 
 export function parseOrSendBadRequest<TSchema extends z.ZodTypeAny>(
-  schema: TSchema,
-  input: unknown,
-  res: Response,
+    schema: TSchema,
+    input: unknown,
+    res: Response,
 ): z.infer<TSchema> | null {
-  const parsed = parseWithSchema(schema, input)
-  if (!parsed.success) {
-    sendBadRequest(res, parsed.error.error)
-    return null
-  }
+    const parsed = parseWithSchema(schema, input);
+    if (!parsed.success) {
+        sendBadRequest(res, parsed.error.error);
+        return null;
+    }
 
-  return parsed.data
+    return parsed.data;
 }
 
 export async function getWorkspaceRoleForBoard(deps: BoardRouteDeps, boardId: string, userId: string): Promise<string | null> {
-  const board = await deps.boardService.getBoard(boardId)
-  if (!board) {
-    return null
-  }
+    const board = await deps.boardService.getBoard(boardId);
+    if (!board) {
+        return null;
+    }
 
-  return deps.workspaceService.getWorkspaceMemberRole(board.workspaceId, userId)
+    return deps.workspaceService.getWorkspaceMemberRole(board.workspaceId, userId);
 }
 
 export async function requireBoardAccess(
-  deps: BoardRouteDeps,
-  boardId: string,
-  userId: string | undefined,
-  shareToken?: string,
+    deps: BoardRouteDeps,
+    boardId: string,
+    userId: string | undefined,
+    shareToken?: string,
 ) {
-  return deps.boardService.checkBoardAccess(boardId, userId, shareToken)
+    return deps.boardService.checkBoardAccess(boardId, userId, shareToken);
 }
 
 export function canCreateBoards(role: string | null): boolean {
-  return role === 'owner' || role === 'admin' || role === 'editor'
+    return role === 'owner' || role === 'admin' || role === 'editor';
 }
 
 export function canManageBoardAccess(role: string | null): boolean {
-  return role === 'owner' || role === 'admin'
+    return role === 'owner' || role === 'admin';
 }
 
 export function canDeleteBoards(role: string | null): boolean {
-  return role === 'owner' || role === 'admin'
+    return role === 'owner' || role === 'admin';
 }
 
 export function anonymousActorId(req: Request, sessionId?: string): string {
-  return req.userId ?? `anonymous:${sessionId ?? 'unknown'}`
+    return req.userId ?? `anonymous:${sessionId ?? 'unknown'}`;
 }

@@ -1,7 +1,7 @@
 export {
-  createBillingService,
-  type BillingCheckoutRequest,
-  type BillingPlan,
-  type BillingProfile,
-  type BillingService,
-} from './billing/index.js'
+    createBillingService,
+    type BillingCheckoutRequest,
+    type BillingPlan,
+    type BillingProfile,
+    type BillingService,
+} from '@/services/billing/index.js';
