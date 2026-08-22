@@ -8,6 +8,7 @@ import type { Mutation } from '@/mutations/types.js';
 import type { BoardRoomManager } from '@/ws/room.js';
 import type { HeartbeatService } from '@/ws/heartbeat.js';
 import type {RateLimitState} from '@/ws/handler.utils.js';
+import { logger } from '@/lib/logger.js';
 import { parseClientMessage, serialize } from '@/ws/messages.js';
 import { getUserColor } from '@/ws/room.js';
 import { createBoardMutationPubSub } from '@/ws/pubsub.js';
@@ -71,7 +72,7 @@ export function createWebSocketHandler(
             await boardStateService.persistBoard(boardId);
             await boardStateService.flushBoard(boardId);
             mutationPubSub.unsubscribeFromBoard(boardId);
-            console.log(`[WS] Flushed board ${boardId} from Redis after grace period`);
+            logger.info({ boardId }, '[WS] Flushed board from Redis after grace period');
         }, ROOM_FLUSH_GRACE_PERIOD_MS);
         gracePeriodTimers.set(boardId, timer);
     }
@@ -328,7 +329,7 @@ export function createWebSocketHandler(
                     return;
                 }
             } catch (error) {
-                console.error(`[WS] message handling failed for board=${boardId} conn=${connectionId}`, error);
+                logger.error({ err: error, boardId, connectionId }, '[WS] message handling failed');
             }
         });
 
@@ -361,7 +362,7 @@ export function createWebSocketHandler(
                     scheduleRoomFlush(boardId);
                 }
             } catch (error) {
-                console.error(`[WS] close handling failed for board=${boardId} conn=${connectionId}`, error);
+                logger.error({ err: error, boardId, connectionId }, '[WS] close handling failed');
             }
         });
     }

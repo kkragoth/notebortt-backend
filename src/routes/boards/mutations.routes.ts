@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type {BoardRouteDeps} from '@/routes/boards/shared.js';
+import { logger } from '@/lib/logger.js';
 import { sendForbidden } from '@/lib/http.js';
 import { buildElementMutationBatch } from '@/routes/boards.utils.js';
 import {
@@ -35,7 +36,7 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
         const latest = [...results].reverse().find((result) => result.status === 'applied') ?? results.at(-1);
 
         void deps.previewJobService.enqueue(params.id).catch((error) => {
-            console.error('[PreviewJob] enqueue after element patch failed', error);
+            logger.error({ err: error, boardId: params.id }, '[PreviewJob] enqueue after element patch failed');
         });
 
         res.json({
@@ -60,7 +61,7 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
         await deps.boardStateService.loadBoard(params.id);
         const results = await deps.mutationProcessor.processBatch(body.mutations, anonymousActorId(req, body.sessionId));
         void deps.previewJobService.enqueue(params.id).catch((error) => {
-            console.error('[PreviewJob] enqueue after mutation failed', error);
+            logger.error({ err: error, boardId: params.id }, '[PreviewJob] enqueue after mutation failed');
         });
         res.json({ results });
     });

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { eq } from 'drizzle-orm';
+import { logger } from '@/lib/logger.js';
 import { loadConfig } from '@/config.js';
 import { createDb } from '@/db/client.js';
 import { boards, users, workspaceMembers, workspaces } from '@/db/schema.js';
@@ -21,7 +22,7 @@ const DEV_USERS: DevUser[] = [
 async function seedDevUser(db: ReturnType<typeof createDb>, devUser: DevUser, withBoard = false) {
     const existing = await db.select().from(users).where(eq(users.email, devUser.email));
     if (existing.length > 0) {
-        console.log(`[Seed] User ${devUser.email} already exists, skipping.`);
+        logger.info({ email: devUser.email }, '[Seed] User already exists, skipping');
         return existing[0];
     }
 
@@ -30,14 +31,14 @@ async function seedDevUser(db: ReturnType<typeof createDb>, devUser: DevUser, wi
         name: devUser.name,
     }).returning();
 
-    console.log(`[Seed] Created user: ${user.id} (${user.email})`);
+    logger.info({ userId: user.id, email: user.email }, '[Seed] Created user');
 
     const [workspace] = await db.insert(workspaces).values({
         name: `${devUser.name}'s Workspace`,
         ownerId: user.id,
     }).returning();
 
-    console.log(`[Seed] Created workspace: ${workspace.id}`);
+    logger.info({ workspaceId: workspace.id }, '[Seed] Created workspace');
 
     await db.insert(workspaceMembers).values({
         workspaceId: workspace.id,
@@ -51,7 +52,7 @@ async function seedDevUser(db: ReturnType<typeof createDb>, devUser: DevUser, wi
             name: 'My First Board',
         }).returning();
 
-        console.log(`[Seed] Created board: ${board.id}`);
+        logger.info({ boardId: board.id }, '[Seed] Created board');
     }
 
     return user;
@@ -61,10 +62,10 @@ async function seed() {
     const config = loadConfig();
     const db = createDb(config.databaseUrl);
 
-    console.log('[Seed] Applying pending migrations...');
+    logger.info('[Seed] Applying pending migrations...');
     await migrate(db, { migrationsFolder: 'drizzle' });
 
-    console.log('[Seed] Inserting dev users (idempotent)...');
+    logger.info('[Seed] Inserting dev users (idempotent)...');
 
     const [primaryUser, ...rest] = DEV_USERS;
     await seedDevUser(db, primaryUser, true);
@@ -72,11 +73,11 @@ async function seed() {
         await seedDevUser(db, devUser, false);
     }
 
-    console.log('[Seed] Done!');
+    logger.info('[Seed] Done!');
     process.exit(0);
 }
 
 seed().catch((err) => {
-    console.error('[Seed] Failed:', err);
+    logger.error({ err }, '[Seed] Failed');
     process.exit(1);
 });

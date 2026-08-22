@@ -8,6 +8,7 @@ import type {
     SocketIoRealtimeServerOptions,
 } from '@/socketio/types.js';
 import type { ContextSnapshot, SocketIoHandlerRuntime } from '@/socketio/handlers/runtime.js';
+import { logger } from '@/lib/logger.js';
 import { createCrdtRoomStore } from '@/socketio/crdt-room.js';
 import { createParticipantsStore } from '@/socketio/participants.js';
 import { createTickPersistenceManager } from '@/socketio/tick-persistence.js';
@@ -236,11 +237,11 @@ export function createSocketIoRealtimeServer(
                     try {
                         await handler(payload);
                     } catch (error) {
-                        console.error('[socketio] unhandled handler error', {
+                        logger.error({
+                            err: error,
                             event,
                             socketId: socket.id,
-                            error,
-                        });
+                        }, '[socketio] unhandled handler error');
                         if (socket.connected) {
                             socket.emit('sync:error', { message: 'Internal realtime server error' });
                         }

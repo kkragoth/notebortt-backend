@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '@/db/client.js';
 import type Redis from 'ioredis';
+import { logger } from '@/lib/logger.js';
 import { mutations } from '@/db/schema.js';
 
 const LAST_ACTIVE_KEY_PATTERN = 'board:*:last_active';
@@ -61,9 +62,9 @@ export function createCompactionService(db: Database, redis: Redis) {
         const timer = setInterval(async () => {
             try {
                 const deleted = await compactStaleMutations();
-                if (deleted > 0) console.log(`[Compaction] Deleted ${deleted} stale mutations`);
+                if (deleted > 0) logger.info({ deleted }, '[Compaction] Deleted stale mutations');
             } catch (err) {
-                console.error('[Compaction] Error:', err);
+                logger.error({ err }, '[Compaction] Error');
             }
         }, intervalMs);
         return timer;

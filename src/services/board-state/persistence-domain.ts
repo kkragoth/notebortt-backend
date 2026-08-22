@@ -4,6 +4,7 @@ import type { Database } from '@/db/client.js';
 import type { RuntimeMetrics } from '@/observability/metrics.js';
 import type { BoardElement } from '@/mutations/types.js';
 import type { BoardRuntimeMetrics } from '@/services/board-state/types.js';
+import { logger } from '@/lib/logger.js';
 import {
     ACTIVE_BOARDS_KEY,
     BOARD_EVICTION_LOCK_TTL_MS,
@@ -481,7 +482,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
                     break;
                 } catch (error) {
                     if (attempt >= retryAttempts) {
-                        console.error(`[BoardPersistence] persist failed for board=${boardId} attempts=${retryAttempts}`, error);
+                        logger.error({ err: error, boardId, attempts: retryAttempts }, '[BoardPersistence] persist failed');
                         break;
                     }
 

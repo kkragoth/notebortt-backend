@@ -1,4 +1,5 @@
 import type { BoardStateService } from '@/services/board-state.service.js';
+import { logger } from '@/lib/logger.js';
 
 const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
 const DEFAULT_PERSIST_WINDOW_MS = 30_000;
@@ -19,7 +20,7 @@ export function createBoardPersistenceService(boardStateService: BoardStateServi
             try {
                 await flushDirtyBoards();
             } catch (error) {
-                console.error('[BoardPersistence] flush failed', error);
+                logger.error({ err: error }, '[BoardPersistence] flush failed');
             }
         }, intervalMs);
     }

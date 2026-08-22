@@ -5,6 +5,7 @@ import type { WebSocketServer } from 'ws';
 import type { AuthService } from '@/services/auth.service.js';
 import type { BoardService } from '@/services/board.service.js';
 import type { UserService } from '@/services/user.service.js';
+import { logger } from '@/lib/logger.js';
 
 export interface UpgradeContext {
   boardId: string
@@ -102,7 +103,7 @@ export function createUpgradeHandler(
 
             const origin = request.headers.origin;
             if (!isTrustedOrigin(origin, allowedOrigins)) {
-                console.warn('[WS Upgrade] Rejected untrusted origin', { origin, path: url.pathname });
+                logger.warn({ origin, path: url.pathname }, '[WS Upgrade] Rejected untrusted origin');
                 socket.destroy();
                 return;
             }
@@ -121,7 +122,7 @@ export function createUpgradeHandler(
 
             const access = await boardService.checkBoardAccess(boardId, userId, shareToken);
             if (!access.hasAccess) {
-                console.warn('[WS Upgrade] Rejected unauthorized board access', { boardId, userId: userId ?? null });
+                logger.warn({ boardId, userId: userId ?? null }, '[WS Upgrade] Rejected unauthorized board access');
                 socket.destroy();
                 return;
             }
@@ -158,7 +159,7 @@ export function createUpgradeHandler(
                 wss.emit('connection', ws, request);
             });
         } catch (err) {
-            console.error('[WS Upgrade] Failed:', err);
+            logger.error({ err }, '[WS Upgrade] Failed');
             socket.destroy();
         }
     };

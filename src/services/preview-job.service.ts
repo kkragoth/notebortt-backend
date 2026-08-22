@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import type { Database } from '@/db/client.js';
 import type { BoardPreviewRenderer } from '@/services/board-preview.service.js';
+import { logger } from '@/lib/logger.js';
 import { boards, elements } from '@/db/schema.js';
 
 const PREVIEW_JOB_DUE_ZSET = 'preview:jobs:due';
@@ -142,7 +143,7 @@ export function createPreviewJobService(db: Database, redis: Redis, renderer: Bo
 
         timer = setInterval(() => {
             void runDueJobs().catch((error) => {
-                console.error('[PreviewJob] runDueJobs failed', error);
+                logger.error({ err: error }, '[PreviewJob] runDueJobs failed');
             });
         }, intervalMs);
 

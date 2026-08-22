@@ -1,4 +1,5 @@
 import type { BoardRoomManager } from '@/ws/room.js';
+import { logger } from '@/lib/logger.js';
 import { serialize } from '@/ws/messages.js';
 
 export function createHeartbeatService(roomManager: BoardRoomManager) {
@@ -23,7 +24,7 @@ export function createHeartbeatService(roomManager: BoardRoomManager) {
         for (const [, room] of rooms) {
             for (const [connectionId, client] of room) {
                 if (now - client.lastPong > maxMissedMs) {
-                    console.log(`[Heartbeat] Closing stale connection ${connectionId}`);
+                    logger.info({ connectionId }, '[Heartbeat] Closing stale connection');
                     client.ws.close(4408, 'Heartbeat timeout');
                 }
             }

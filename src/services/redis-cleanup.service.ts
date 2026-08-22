@@ -1,5 +1,6 @@
 import type Redis from 'ioredis';
 import type { BoardStateService } from '@/services/board-state.service.js';
+import { logger } from '@/lib/logger.js';
 import { ACTIVE_BOARDS_KEY } from '@/services/board-state/keys.js';
 
 const LAST_ACTIVE_KEY_PATTERN = 'board:*:last_active';
@@ -134,14 +135,13 @@ export function createRedisCleanupService(
         }
 
         if (candidates.size > 0) {
-            console.log(JSON.stringify({
+            logger.info({
                 event: 'cleanup.scan_volume',
                 candidateSource: 'active_index_plus_last_active',
                 activeIndexSample: activeIndexedBoards.length,
                 candidateCount: candidates.size,
                 limit,
-                at: new Date().toISOString(),
-            }));
+            }, 'cleanup.scan_volume');
         }
 
         const idleThresholdSeconds = toIdleSeconds(idleTtlMs);
@@ -214,13 +214,13 @@ export function createRedisCleanupService(
                     cleanupTransientDataByIdleTime(),
                 ]);
                 if (flushed.length > 0) {
-                    console.log(`[RedisCleanup] Flushed ${flushed.length} inactive board(s) from Redis`);
+                    logger.info({ count: flushed.length }, '[RedisCleanup] Flushed inactive board(s) from Redis');
                 }
                 if (transientDeleted.length > 0) {
-                    console.log(`[RedisCleanup] Deleted ${transientDeleted.length} stale transient key(s)`);
+                    logger.info({ count: transientDeleted.length }, '[RedisCleanup] Deleted stale transient key(s)');
                 }
             } catch (error) {
-                console.error('[RedisCleanup] cleanup failed', error);
+                logger.error({ err: error }, '[RedisCleanup] cleanup failed');
             } finally {
                 isWorkerRunning = false;
             }
@@ -255,12 +255,11 @@ export function createRedisCleanupService(
         }
 
         if (deleted.length > 0) {
-            console.log(JSON.stringify({
+            logger.info({
                 event: 'cleanup.transient_scan_volume',
                 scanned,
                 deleted: deleted.length,
-                at: new Date().toISOString(),
-            }));
+            }, 'cleanup.transient_scan_volume');
         }
 
         return deleted;

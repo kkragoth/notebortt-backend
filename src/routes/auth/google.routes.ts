@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Router } from 'express';
 import type { AuthRouterDeps } from '@/routes/auth/types.js';
+import { logger } from '@/lib/logger.js';
 import { sendBadRequest, sendForbidden } from '@/lib/http.js';
 import { authCallbackQuerySchema } from '@/openapi/schemas.js';
 import { refreshTokens } from '@/db/schema.js';
@@ -120,7 +121,7 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
             redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
             res.redirect(redirectUrl.toString());
         } catch (err) {
-            console.error('[Auth] OAuth callback error:', err);
+            logger.error({ err }, '[Auth] OAuth callback error');
             res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' });
             res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' });
             res.status(500).json({ error: 'Authentication failed' });

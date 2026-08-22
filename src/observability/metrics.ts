@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger.js';
+
 type MetricTags = Record<string, string | number | boolean>
 
 interface CounterMetric {
@@ -66,11 +68,7 @@ export function createRuntimeMetrics(): RuntimeMetrics {
     }
 
     function logStructured(event: string, details: Record<string, unknown>): void {
-        console.log(JSON.stringify({
-            event,
-            at: new Date().toISOString(),
-            ...details,
-        }));
+        logger.info({ event, ...details }, event);
     }
 
     function getSnapshot() {
