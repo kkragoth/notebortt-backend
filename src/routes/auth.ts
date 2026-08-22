@@ -1,1 +1,1 @@
-export { createAuthRouter } from './auth/index.js'
+export { createAuthRouter } from '@/routes/auth/index.js';

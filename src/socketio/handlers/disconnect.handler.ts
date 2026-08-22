@@ -1,18 +1,18 @@
-import type { SocketIoHandlerRuntime } from './runtime.js'
+import type { SocketIoHandlerRuntime } from '@/socketio/handlers/runtime.js';
 
 export function createDisconnectHandler(
-  runtime: SocketIoHandlerRuntime,
-  cleanupConnectionState: () => void,
+    runtime: SocketIoHandlerRuntime,
+    cleanupConnectionState: () => void,
 ) {
-  return async (): Promise<void> => {
-    const context = runtime.getBoardContext()
-    if (!context) {
-      cleanupConnectionState()
-      return
-    }
+    return async (): Promise<void> => {
+        const context = runtime.getBoardContext();
+        if (!context) {
+            cleanupConnectionState();
+            return;
+        }
 
-    runtime.setBoardContext(null)
-    await runtime.detachFromBoard(context, true)
-    cleanupConnectionState()
-  }
+        runtime.setBoardContext(null);
+        await runtime.detachFromBoard(context, true);
+        cleanupConnectionState();
+    };
 }

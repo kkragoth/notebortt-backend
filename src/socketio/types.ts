@@ -1,9 +1,9 @@
-import type Redis from 'ioredis'
-import type { MutationProcessor } from '../mutations/processor.js'
-import type { AuthService } from '../services/auth.service.js'
-import type { BoardService } from '../services/board.service.js'
-import type { BoardStateService } from '../services/board-state.service.js'
-import type { UserService } from '../services/user.service.js'
+import type Redis from 'ioredis';
+import type { MutationProcessor } from '@/mutations/processor.js';
+import type { AuthService } from '@/services/auth.service.js';
+import type { BoardService } from '@/services/board.service.js';
+import type { BoardStateService } from '@/services/board-state.service.js';
+import type { UserService } from '@/services/user.service.js';
 
 export interface SocketIdentity {
   authUserId: string | undefined

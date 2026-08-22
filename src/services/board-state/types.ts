@@ -1,4 +1,4 @@
-import type { BoardElement } from '../../mutations/types.js'
+import type { BoardElement } from '@/mutations/types.js';
 
 export interface ElementChangeSet {
   upserts: BoardElement[]

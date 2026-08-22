@@ -1,12 +1,12 @@
-import type { Socket } from 'socket.io'
-import type { createCrdtRoomStore } from '../crdt-room.js'
-import type { createParticipantsStore } from '../participants.js'
-import type { createTickPersistenceManager } from '../tick-persistence.js'
+import type { Socket } from 'socket.io';
+import type { createCrdtRoomStore } from '@/socketio/crdt-room.js';
+import type { createParticipantsStore } from '@/socketio/participants.js';
+import type { createTickPersistenceManager } from '@/socketio/tick-persistence.js';
 import type {
-  SocketBoardContext,
-  SocketIdentity,
-  SocketIoRealtimeDependencies,
-} from '../types.js'
+    SocketBoardContext,
+    SocketIdentity,
+    SocketIoRealtimeDependencies,
+} from '@/socketio/types.js';
 
 export type PresenceTypingField = 'title' | 'body' | null
 
