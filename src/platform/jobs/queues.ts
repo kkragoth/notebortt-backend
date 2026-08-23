@@ -59,7 +59,6 @@ export function createRepeatableWorker<TData>(
     jobSchedulerId: string,
     processor: (data: TData) => Promise<unknown>,
     connection: Redis,
-    onFailed?: (error: Error) => void,
 ): JobsWorkerHandle {
     const worker = new Worker<TData>(
         queueName,
@@ -74,7 +73,6 @@ export function createRepeatableWorker<TData>(
 
     worker.on('failed', (job, err) => {
         logger.error({ err, queue: queueName, jobId: job?.id }, '[Jobs] repeatable job failed');
-        onFailed?.(err);
     });
     worker.on('error', (err) => {
         logger.error({ err, queue: queueName }, '[Jobs] worker error');

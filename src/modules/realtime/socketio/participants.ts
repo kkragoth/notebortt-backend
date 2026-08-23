@@ -6,19 +6,15 @@ const PRUNE_BATCH = 200;
 
 interface ParticipantsStoreOptions {
   ttlMs?: number
+  /** Namespace override so parallel test suites cannot clobber each other. */
+  keyPrefix?: string
 }
 
 interface StoredParticipant extends RoomParticipant {
   socketId: string
 }
 
-function participantsHashKey(boardId: string): string {
-    return `board:${boardId}:participants`;
-}
 
-function participantsExpiryKey(boardId: string): string {
-    return `board:${boardId}:participants_expiry`;
-}
 
 /**
  * Cross-node participant registry. Socket.IO rooms alone cannot answer
@@ -31,6 +27,15 @@ function participantsExpiryKey(boardId: string): string {
  */
 export function createParticipantsStore(redis: Redis, options: ParticipantsStoreOptions = {}) {
     const ttlMs = options.ttlMs ?? DEFAULT_PARTICIPANT_TTL_MS;
+    const keyPrefix = options.keyPrefix ?? '';
+
+    function participantsHashKey(boardId: string): string {
+        return `${keyPrefix}board:${boardId}:participants`;
+    }
+
+    function participantsExpiryKey(boardId: string): string {
+        return `${keyPrefix}board:${boardId}:participants_expiry`;
+    }
 
     async function pruneExpired(boardId: string): Promise<void> {
         const now = Date.now();

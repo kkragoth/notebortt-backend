@@ -84,4 +84,21 @@ describe('background jobs composition', () => {
         }
         expect(jobs.getQueues()).toEqual([]);
     });
+
+    it('worker processors invoke the matching collaboration services', async () => {
+        const jobs = createBackgroundJobs(runtime);
+        await jobs.start();
+
+        const processors = workerInstances.map(([, , processor]) => processor as (data: unknown) => Promise<unknown>);
+        expect(processors).toHaveLength(2);
+
+        await processors[0]({});
+        expect(runtime.boardPersistenceService.flushDirtyBoards).toHaveBeenCalledTimes(1);
+
+        await processors[1]({});
+        expect(runtime.redisCleanupService.cleanupInactiveBoards).toHaveBeenCalledTimes(1);
+        expect(runtime.redisCleanupService.cleanupTransientDataByIdleTime).toHaveBeenCalledTimes(1);
+
+        await jobs.stop();
+    });
 });

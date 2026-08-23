@@ -85,10 +85,17 @@ services:
       - backend_dev_node_modules:/app/node_modules
     ports:
       - "8080:8080"
-      - "8081:8081"
+      # Host 8085 -> container 8081 (realtime). 8081 on the host belongs to
+      # adminer in the debug profile.
+      - "8085:8081"
     stdin_open: true
     tty: true
-    command: sh -lc "npm ci && npm run db:migrate && npm run dev"
+    # Run all three apps: with the split, api-only dev would silently lose
+    # Socket.IO and preview generation. Migration must finish before any
+    # app starts; the braces keep the three watchers in one foreground wait.
+    command: >
+      sh -lc "npm ci && npm run db:migrate &&
+              { npm run dev & npm run dev:realtime & npm run dev:worker & wait; }"
 
   api:
     build:
@@ -105,6 +112,13 @@ services:
       REDIS_JOBS_URL: redis://redis-jobs:6379
       EVENT_BUS_MODE: stream
       PORT: "3000"
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +143,13 @@ services:
       EVENT_BUS_MODE: stream
       PORT: "3001"
       REALTIME_PORT: "3001"
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -151,6 +172,7 @@ services:
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
       EVENT_BUS_MODE: stream
+    # No HTTP surface: no healthcheck, nothing to expose.
     depends_on:
       postgres:
         condition: service_healthy

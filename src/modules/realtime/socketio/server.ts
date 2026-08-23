@@ -33,6 +33,8 @@ import { logger } from '@/shared/logger.js';
 
 const DEFAULT_ACTIVITY_WRITE_THROTTLE_MS = 3_000;
 const DEFAULT_ACTIVITY_WRITE_JITTER_MS = 400;
+// Well under the participants store TTL so three missed beats still survive.
+const DEFAULT_PARTICIPANT_HEARTBEAT_MS = 30_000;
 
 function parseAllowedOrigins(raw: string): string[] {
     return raw.split(',').map((value) => value.trim()).filter((value) => value.length > 0);
@@ -101,6 +103,15 @@ export function createSocketIoRealtimeServer(
         let latestJoinAttempt = 0;
         const lastActivityWriteAtBySocketId = new Map<string, number>();
         const activityJitterBySocketId = new Map<string, number>();
+        // Keeps the redis participant entry alive even for idle-but-connected
+        // sockets: activity-based refresh alone would expire quiet users after
+        // PARTICIPANT_TTL_MS and corrupt rosters / room-size checks.
+        const participantHeartbeat = setInterval(() => {
+            if (boardContext && socket.connected) {
+                void participantsStore.touchParticipant(boardContext.boardId, socket.id);
+            }
+        }, DEFAULT_PARTICIPANT_HEARTBEAT_MS);
+        participantHeartbeat.unref();
 
         function setBoardContext(next: SocketBoardContext | null): void {
             boardContext = next;
@@ -187,6 +198,11 @@ export function createSocketIoRealtimeServer(
         }
 
         async function cleanupBoardRealtimeStateIfEmpty(boardId: string): Promise<void> {
+            // Cross-node note: two replicas can both observe size 0 on
+            // simultaneous disconnects. Double flush of per-process tick/CRDT
+            // buffers is harmless (each node flushes only its own buffer);
+            // persistBoard is epoch-guarded and flushBoard takes the eviction
+            // lock, so no additional coordination is needed here.
             if (await participantsStore.getRoomSize(boardId) > 0) {
                 return;
             }
@@ -220,6 +236,7 @@ export function createSocketIoRealtimeServer(
         function cleanupConnectionState(): void {
             lastActivityWriteAtBySocketId.delete(socket.id);
             activityJitterBySocketId.delete(socket.id);
+            clearInterval(participantHeartbeat);
         }
 
         const runtime: SocketIoHandlerRuntime = {

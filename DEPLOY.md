@@ -52,6 +52,27 @@ curl -i "https://$API_DOMAIN/health"
 0 3 * * * cd /opt/note-canva-backend && /usr/bin/docker compose -f docker-compose.yml run --rm certbot renew --webroot -w /var/www/certbot && /usr/bin/docker compose -f docker-compose.yml restart nginx
 ```
 
+## 8) Retiring the worker tier
+
+Repeatable BullMQ schedules (`flush-dirty-boards`, `cleanup-inactive-boards`)
+live in Redis and survive restarts by design. If you permanently retire or
+rename the worker tier, delete its schedulers or orphan jobs keep
+materializing with no consumer:
+
+```bash
+docker compose run --rm worker node --input-type=module -e "
+import { Queue } from 'bullmq';
+import Redis from 'ioredis';
+const conn = new Redis(process.env.REDIS_JOBS_URL);
+for (const name of ['board-persist-flush', 'board-maintenance']) {
+  const q = new Queue(name, { connection: conn });
+  for (const s of await q.getJobSchedulers()) await q.removeJobScheduler(s.id);
+  await q.close();
+}
+conn.disconnect();
+"
+```
+
 ## Shortcut
 
 `just deploy` runs:

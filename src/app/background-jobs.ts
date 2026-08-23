@@ -62,10 +62,6 @@ export function createBackgroundJobs(
                 return { flushed: flushed.length, transientDeleted: transientDeleted.length };
             }, connection),
         );
-
-        // Warm the Bull Board registry so queue dashboards render before the
-        // first job lands.
-        void queues;
     }
 
     async function stop(): Promise<void> {
