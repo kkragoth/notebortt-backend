@@ -12,6 +12,7 @@ import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billi
 import { createDebugRouter } from '@/app/debug.routes.js';
 import { healthRoute } from '@/app/health.routes.js';
 import { createMetricsRoute } from '@/app/metrics.routes.js';
+import { BULL_BOARD_BASE_PATH, createBullBoardRouter } from '@/app/bull-board.routes.js';
 import { createOpenApiRouter } from '@/app/openapi.routes.js';
 import { createSwaggerRouter } from '@/app/swagger.routes.js';
 import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
@@ -37,7 +38,7 @@ export function createApp(runtime: AppRuntime) {
         limit: GLOBAL_RATE_LIMIT_MAX,
         standardHeaders: 'draft-8',
         legacyHeaders: false,
-        skip: (req) => req.path === '/health' || req.path === '/metrics',
+        skip: (req) => req.path === '/health' || req.path === '/metrics' || req.path.startsWith(BULL_BOARD_BASE_PATH),
     });
     const authLimiter = rateLimit({
         windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
@@ -55,6 +56,9 @@ export function createApp(runtime: AppRuntime) {
 
     app.get('/health', healthRoute(runtime.db, runtime.redis));
     app.get('/metrics', createMetricsRoute(runtime.metrics));
+    if (runtime.config.enableBullBoard) {
+        app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter([runtime.previewJobService.getQueue()]));
+    }
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));
