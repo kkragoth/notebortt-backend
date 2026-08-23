@@ -1,9 +1,11 @@
 import 'dotenv/config';
 import http from 'node:http';
+import type { Request, Response } from 'express';
 import { loadConfig } from '@/shared/config.js';
+import { logger } from '@/shared/logger.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { logger } from '@/shared/logger.js';
+import { runAppShell } from '@/apps/app-shell.js';
 
 /**
  * Realtime app. Owns Socket.IO: CRDT sessions, presence, mutation batches.
@@ -12,52 +14,52 @@ import { logger } from '@/shared/logger.js';
  * more than one replica.
  */
 const REALTIME_DEFAULT_PORT = 3001;
+const KEEP_ALIVE_GRACE_MS = 2_000;
 
 const config = loadConfig();
 const realtimePort = Number(process.env.REALTIME_PORT ?? REALTIME_DEFAULT_PORT);
 const runtime = createAppRuntime(config);
 
 const server = http.createServer((req, res) => {
+    if (req.url === '/metrics') {
+        void runtime.metrics.getPromRegistry().metrics().then((body) => {
+            res.setHeader('Content-Type', runtime.metrics.getPromRegistry().contentType);
+            res.end(body);
+        }, () => {
+            res.statusCode = 500;
+            res.end('metrics collection failed');
+        });
+        return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', app: 'realtime' }));
 });
 
-server.listen(realtimePort, () => {
-    logger.info({ port: realtimePort, env: config.nodeEnv }, '[Realtime] Listening');
+runAppShell({
+    name: 'Realtime',
+    start() {
+        return new Promise<void>((resolve) => {
+            server.listen(realtimePort, () => {
+                logger.info({ port: realtimePort, env: config.nodeEnv }, '[Realtime] Listening');
 
-    createSocketIoRealtimeServer(server, {
-        authService: runtime.authService,
-        userService: runtime.userService,
-        boardService: runtime.boardService,
-        boardStateService: runtime.boardStateService,
-        mutationProcessor: runtime.mutationProcessor,
-        events: runtime.events,
-        pubRedis: runtime.pubRedis,
-        subRedis: runtime.subRedis,
-    }, {
-        corsOrigin: config.corsOrigin,
-    });
-});
+                createSocketIoRealtimeServer(server, {
+                    authService: runtime.authService,
+                    userService: runtime.userService,
+                    boardService: runtime.boardService,
+                    boardStateService: runtime.boardStateService,
+                    mutationProcessor: runtime.mutationProcessor,
+                    events: runtime.events,
+                    pubRedis: runtime.pubRedis,
+                    subRedis: runtime.subRedis,
+                }, {
+                    corsOrigin: config.corsOrigin,
+                });
 
-const SHUTDOWN_TIMEOUT_MS = 10_000;
-const KEEP_ALIVE_GRACE_MS = 2_000;
-
-let shuttingDown = false;
-
-async function shutdown(signal: string): Promise<void> {
-    if (shuttingDown) {
-        return;
-    }
-    shuttingDown = true;
-    logger.info({ signal }, '[Realtime] Shutting down');
-
-    const forceExitTimer = setTimeout(() => {
-        logger.error('[Realtime] Forced exit: graceful shutdown timed out');
-        process.exit(1);
-    }, SHUTDOWN_TIMEOUT_MS);
-    forceExitTimer.unref();
-
-    try {
+                resolve();
+            });
+        });
+    },
+    async shutdown() {
         await new Promise<void>((resolve) => {
             server.close(() => resolve());
             setTimeout(() => {
@@ -72,19 +74,5 @@ async function shutdown(signal: string): Promise<void> {
             runtime.jobsRedis.quit(),
             runtime.db.$client.end(),
         ]);
-
-        clearTimeout(forceExitTimer);
-        logger.info('[Realtime] Shutdown complete');
-        process.exit(0);
-    } catch (err) {
-        logger.error({ err }, '[Realtime] Shutdown failed');
-        process.exit(1);
-    }
-}
-
-process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
-});
-process.on('SIGINT', () => {
-    void shutdown('SIGINT');
+    },
 });

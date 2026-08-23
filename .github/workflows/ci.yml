@@ -71,3 +71,19 @@ jobs:
 
       - name: Test
         run: npx vitest run
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose -f docker-compose.yml config -q
+
+      # Catches Dockerfile regressions (broken CMD/ARG wiring, missing
+      # dist entrypoints) that vitest cannot see.
+      - name: Build app images
+        run: |
+          docker build --build-arg APP=api -t nc-api .
+          docker build --build-arg APP=realtime -t nc-realtime .
+          docker build --build-arg APP=worker -t nc-worker .

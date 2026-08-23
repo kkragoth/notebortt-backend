@@ -200,6 +200,11 @@ function createStreamAppEventBus(redis: Redis, runtimeOpts: StreamBusRuntimeOpti
         loopStarted = true;
         running = true;
 
+        // A previous full-unsubscribe cycle disconnected the reader.
+        if (reader.status === 'end') {
+            reader.connect();
+        }
+
         void setInterval(() => {
             if (running) {
                 void reclaimPending();
@@ -259,10 +264,12 @@ function createStreamAppEventBus(redis: Redis, runtimeOpts: StreamBusRuntimeOpti
                 }
                 if (remaining === 0) {
                     running = false;
+                    // Allow a future on() to restart the read loop cleanly.
+                    loopStarted = false;
                     // Give an in-flight BLOCK up to one cycle to drain before
                     // tearing the reader connection down.
                     setTimeout(() => {
-                        if (!running) {
+                        if (!running && handlersByEvent.size === 0) {
                             reader.disconnect();
                         }
                     }, 6_000).unref();

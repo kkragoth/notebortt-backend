@@ -221,6 +221,10 @@ export function createSocketIoRealtimeServer(
         }
 
         async function detachFromBoard(context: SocketBoardContext, broadcastLeave: boolean): Promise<void> {
+            // Invalidate first so in-flight handlers and the participant
+            // heartbeat cannot keep touching a board this socket left.
+            setBoardContext(null);
+
             await deps.boardStateService.removeClient(context.boardId, context.userId, socket.id);
             await deps.boardStateService.removeViewerSession(context.boardId, context.sessionId);
 
