@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sendInitialState } from '@/ws/handler.utils.js';
+import { sendInitialState } from '@/modules/realtime/ws/handler.utils.js';
 
 describe('sendInitialState', () => {
     it('sends a snapshot from the board snapshot helper when there is no prior sequence', async () => {

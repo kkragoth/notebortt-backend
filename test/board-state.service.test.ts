@@ -1,14 +1,14 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import type { BoardElement } from '@/mutations/types.js';
-import { createRedisClient } from '@/redis/client.js';
-import { createBoardStateService } from '@/services/board-state.service.js';
+import type { BoardElement } from '@/modules/collaboration/mutations/types.js';
+import { createRedisClient } from '@/platform/redis/client.js';
+import { createBoardStateService } from '@/modules/collaboration/board-state.service.js';
 import {
     DIRTY_BOARDS_BY_AGE_KEY,
     DIRTY_BOARDS_KEY,
     boardDirtyElementIdsKey,
     boardElementsKey,
     boardSeqKey,
-} from '@/services/board-state/keys.js';
+} from '@/modules/collaboration/board-state/keys.js';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const redis = createRedisClient(REDIS_URL);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBoardPersistenceService } from '@/services/board-persistence.service.js';
+import { createBoardPersistenceService } from '@/modules/collaboration/board-persistence.service.js';
 
 describe('board persistence worker policy', () => {
     it('flushDirtyBoards uses 30s window and retry options', async () => {

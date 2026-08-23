@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createUpgradeHandler } from '@/ws/upgrade.js';
+import { createUpgradeHandler } from '@/modules/realtime/ws/upgrade.js';
 
 function createSocketMock() {
     return {

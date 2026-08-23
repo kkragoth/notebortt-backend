@@ -5,6 +5,7 @@ import importPlugin from "eslint-plugin-import-x";
 import nodePlugin from "eslint-plugin-n";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import boundariesPlugin from "eslint-plugin-boundaries";
 
 /**
  * Mirrors the shared TanStack ESLint config used by the note-canva frontend,
@@ -115,6 +116,84 @@ const importRules = {
     ] }]
 };
 
+const moduleNames = [
+    "auth",
+    "billing",
+    "boards",
+    "collaboration",
+    "previews",
+    "realtime",
+    "users",
+    "workspaces"
+];
+
+const boundariesRules = {
+    "boundaries/dependencies": ["error", {
+        default: "disallow",
+        policies: [
+            {
+                // Any element may import external packages and node builtins.
+                allow: { to: { module: { origin: "external" } } }
+            },
+            {
+                // shared depends only on itself.
+                from: { element: { type: "shared" } },
+                allow: { to: { element: { type: "shared" } } }
+            },
+            {
+                // platform may depend on shared and platform.
+                from: { element: { type: "platform" } },
+                allow: { to: { element: { types: { anyOf: ["shared", "platform"] } } } }
+            },
+            {
+                // Modules may depend on shared, platform, and other modules
+                // (entry-point discipline is enforced separately below).
+                from: { element: { type: "module" } },
+                allow: { to: { element: { types: { anyOf: ["shared", "platform", "module"] } } } }
+            },
+            {
+                // The composition root (app) may depend on everything.
+                from: { element: { type: "app" } },
+                allow: { to: { element: { types: { anyOf: ["app", "shared", "platform", "module"] } } } }
+            }
+        ]
+    }]
+};
+
+// Public-surface rule: outside of module X, imports must come from
+// `@/modules/X/index.js`, never from X's internal files.
+// One lint block per importer context so flat-config cascading never
+// drops another module's restriction for the same file.
+function surfacePatterns(exceptModuleName) {
+    return moduleNames
+        .filter((moduleName) => moduleName !== exceptModuleName)
+        .map((moduleName) => ({
+            group: [
+                `@/modules/${moduleName}/*`,
+                `@/modules/${moduleName}/*/**`,
+                `!@/modules/${moduleName}/index.js`
+            ],
+            message: `use the public surface @/modules/${moduleName}/index.js`
+        }));
+}
+
+const publicSurfaceBlocks = [
+    ...moduleNames.map((moduleName) => ({
+        name: `backend/module-surface/${moduleName}`,
+        files: [`src/modules/${moduleName}/**`],
+        rules: {
+            "no-restricted-imports": ["error", { patterns: surfacePatterns(moduleName) }]
+        }
+    })),
+    {
+        name: "backend/module-surface/composition-root",
+        files: ["src/app/**", "src/shared/**", "src/platform/**", "src/index.ts"],
+        rules: {
+            "no-restricted-imports": ["error", { patterns: surfacePatterns(null) }]
+        }
+    }
+];
+
 const nodeRules = { "node/prefer-node-protocol": "error" };
 
 const stylisticRules = { "@stylistic/spaced-comment": "error" };
@@ -132,6 +211,33 @@ export default [
             "nginx/**"
         ]
     },
+    {
+        name: "backend/architecture",
+        files: ["src/**/*.{js,ts}"],
+        plugins: {
+            "boundaries": boundariesPlugin
+        },
+        settings: {
+            "boundaries/include": ["src/**/*"],
+            "boundaries/exclude": ["src/**/*.test.ts"],
+            "import/resolver": {
+                typescript: {
+                    alwaysTryTypes: true,
+                    project: "./tsconfig.json"
+                }
+            },
+            "boundaries/elements": [
+                { type: "app", pattern: ["src/app/**", "src/index.ts"] },
+                { type: "module", pattern: "src/modules/*/**" },
+                { type: "platform", pattern: "src/platform/**" },
+                { type: "shared", pattern: "src/shared/**" }
+            ]
+        },
+        rules: {
+            ...boundariesRules
+        }
+    },
+    ...publicSurfaceBlocks,
     {
         name: "backend/javascript",
         files: ["**/*.{js,ts}"],

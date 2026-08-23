@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBoardService } from '@/services/board.service.js';
+import { createBoardService } from '@/modules/boards/board.service.js';
 
 function makeBoardInvitation(overrides: Record<string, unknown> = {}) {
     return {

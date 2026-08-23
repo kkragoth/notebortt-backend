@@ -1,9 +1,9 @@
 import 'dotenv/config';
-import { loadConfig } from '@/config.js';
+import { loadConfig } from '@/shared/config.js';
 import { createApp } from '@/app/create-app.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { createSocketIoRealtimeServer } from '@/socketio/server.js';
-import { logger } from '@/lib/logger.js';
+import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
+import { logger } from '@/shared/logger.js';
 
 const config = loadConfig();
 const runtime = createAppRuntime(config);
@@ -56,7 +56,7 @@ async function shutdown(signal: string): Promise<void> {
     try {
         clearInterval(persistenceWorker);
         clearInterval(redisCleanupWorker);
-        stopPreviewWorker();
+        await stopPreviewWorker();
         runtime.heartbeat.stopHeartbeat();
 
         for (const client of runtime.wss.clients) {

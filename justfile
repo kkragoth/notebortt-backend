@@ -53,7 +53,7 @@ db-studio:
     npx drizzle-kit studio
 
 db-seed:
-    npx tsx src/db/seed.ts
+    npx tsx src/platform/db/seed.ts
 
 db-reset:
     docker compose -f docker-compose.yml exec postgres \

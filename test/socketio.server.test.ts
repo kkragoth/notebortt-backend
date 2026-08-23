@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {  io as ioClient } from 'socket.io-client';
 import * as Y from 'yjs';
 import type {Socket} from 'socket.io-client';
-import { MutationType } from '@/mutations/types.js';
-import { createSocketIoRealtimeServer } from '@/socketio/server.js';
+import { MutationType } from '@/modules/collaboration/mutations/types.js';
+import { createSocketIoRealtimeServer } from '@/modules/realtime/socketio/server.js';
 
 interface Harness {
   server: http.Server

@@ -3,17 +3,18 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import type { AppRuntime } from '@/app/runtime.js';
-import { createCorsMiddleware } from '@/middleware/cors.js';
-import { createAuthRouter } from '@/routes/auth.js';
-import { createBoardRouter } from '@/routes/boards.js';
-import { createBillingRouter, createBillingWebhookRouter } from '@/routes/billing.js';
-import { createDebugRouter } from '@/routes/debug.js';
-import { healthRoute } from '@/routes/health.js';
-import { createOpenApiRouter } from '@/routes/openapi.js';
-import { createSwaggerRouter } from '@/routes/swagger.js';
-import { createUserRouter } from '@/routes/users.js';
-import { createWorkspaceRouter } from '@/routes/workspaces.js';
-import { errorHandler, jsonNotFoundHandler } from '@/lib/errors.js';
+import { createCorsMiddleware } from '@/shared/cors.js';
+import { createAuthRouter } from '@/modules/auth/index.js';
+import { createUserRouter } from '@/modules/users/index.js';
+import { createWorkspaceRouter } from '@/modules/workspaces/index.js';
+import { createBoardRouter } from '@/modules/boards/index.js';
+import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billing/index.js';
+import { createDebugRouter } from '@/app/debug.routes.js';
+import { healthRoute } from '@/app/health.routes.js';
+import { createMetricsRoute } from '@/app/metrics.routes.js';
+import { createOpenApiRouter } from '@/app/openapi.routes.js';
+import { createSwaggerRouter } from '@/app/swagger.routes.js';
+import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
 
 const GLOBAL_RATE_LIMIT_MAX = 300;
 const GLOBAL_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -36,7 +37,7 @@ export function createApp(runtime: AppRuntime) {
         limit: GLOBAL_RATE_LIMIT_MAX,
         standardHeaders: 'draft-8',
         legacyHeaders: false,
-        skip: (req) => req.path === '/health',
+        skip: (req) => req.path === '/health' || req.path === '/metrics',
     });
     const authLimiter = rateLimit({
         windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
@@ -53,6 +54,7 @@ export function createApp(runtime: AppRuntime) {
     app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
     app.get('/health', healthRoute(runtime.db, runtime.redis));
+    app.get('/metrics', createMetricsRoute(runtime.metrics));
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));

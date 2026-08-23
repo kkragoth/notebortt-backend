@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { LockContext } from '@/mutations/lock-enforcement.js';
-import type { BoardElement, Operation } from '@/mutations/types.js';
-import { isMutationBlockedByLock, validateReconcileMonthRange } from '@/mutations/lock-enforcement.js';
-import { MutationType } from '@/mutations/types.js';
+import type { LockContext } from '@/modules/collaboration/mutations/lock-enforcement.js';
+import type { BoardElement, Operation } from '@/modules/collaboration/mutations/types.js';
+import { isMutationBlockedByLock, validateReconcileMonthRange } from '@/modules/collaboration/mutations/lock-enforcement.js';
+import { MutationType } from '@/modules/collaboration/mutations/types.js';
 
 function metaColumn(id: string, monthRange: unknown = { startYear: 2026, startMonth: 0, endYear: 2026, endMonth: 1, cols: 1 }): BoardElement {
     return {

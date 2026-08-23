@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { healthRoute } from '@/routes/health.js';
-import { resetOpenSocketIoConnectionsForTests } from '@/socketio/stats.js';
+import { healthRoute } from '@/app/health.routes.js';
+import { resetOpenSocketIoConnectionsForTests } from '@/modules/realtime/socketio/stats.js';
 
 function createApp(mockDb: any, mockRedis: any) {
     const app = express();

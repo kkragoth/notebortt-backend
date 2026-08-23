@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage } from 'node:http';
-import { createWebSocketHandler } from '@/ws/handler.js';
-import { createBoardRoomManager } from '@/ws/room.js';
-import { MutationType } from '@/mutations/types.js';
+import { createWebSocketHandler } from '@/modules/realtime/ws/handler.js';
+import { createBoardRoomManager } from '@/modules/realtime/ws/room.js';
+import { MutationType } from '@/modules/collaboration/mutations/types.js';
 
 class MockWebSocket extends EventEmitter {
     readyState = 1;

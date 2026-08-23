@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBoardStateService } from '@/services/board-state.service.js';
+import { createBoardStateService } from '@/modules/collaboration/board-state.service.js';
 
 describe('board persistence domain logging', () => {
     it('does not emit dirty backlog logs for empty scans', async () => {

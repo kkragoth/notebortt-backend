@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import type { Mutation } from '@/mutations/types.js';
-import { createDb } from '@/db/client.js';
-import { createRedisClient } from '@/redis/client.js';
-import { createBoardStateService } from '@/services/board-state.service.js';
-import { createMutationProcessor } from '@/mutations/processor.js';
-import { MutationType } from '@/mutations/types.js';
-import { boards, elements, users, workspaces } from '@/db/schema.js';
+import type { Mutation } from '@/modules/collaboration/mutations/types.js';
+import { createDb } from '@/platform/db/client.js';
+import { createRedisClient } from '@/platform/redis/client.js';
+import { createBoardStateService } from '@/modules/collaboration/board-state.service.js';
+import { createMutationProcessor } from '@/modules/collaboration/mutations/processor.js';
+import { MutationType } from '@/modules/collaboration/mutations/types.js';
+import { boards, elements, users, workspaces } from '@/platform/db/schema.js';
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://notecanva:localdev@localhost:5432/notecanva';
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
