@@ -25,16 +25,9 @@ const io = createSocketIoRealtimeServer(server, {
     corsOrigin: config.corsOrigin,
 });
 
-server.on('upgrade', runtime.upgradeHandler);
-
-runtime.wss.on('connection', (ws, request) => {
-    runtime.wsHandler.onConnection(ws, request);
-});
-
 const persistenceWorker = runtime.boardPersistenceService.startWorker();
 const redisCleanupWorker = runtime.redisCleanupService.startWorker();
 const stopPreviewWorker = runtime.previewJobService.startWorker();
-runtime.heartbeat.startHeartbeat();
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const KEEP_ALIVE_GRACE_MS = 2_000;
@@ -58,14 +51,6 @@ async function shutdown(signal: string): Promise<void> {
         clearInterval(persistenceWorker);
         clearInterval(redisCleanupWorker);
         await stopPreviewWorker();
-        runtime.heartbeat.stopHeartbeat();
-
-        for (const client of runtime.wss.clients) {
-            client.terminate();
-        }
-        await new Promise<void>((resolve) => {
-            runtime.wss.close(() => resolve());
-        });
 
         io.close();
         await new Promise<void>((resolve) => {

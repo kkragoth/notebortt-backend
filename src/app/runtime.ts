@@ -1,4 +1,3 @@
-import { WebSocketServer } from 'ws';
 import type { AppConfig } from '@/shared/config.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
@@ -21,19 +20,12 @@ import {
     createBoardPreviewRenderer,
     createPreviewJobService,
 } from '@/modules/previews/index.js';
-import {
-    createBoardRoomManager,
-    createHeartbeatService,
-    createUpgradeHandler,
-    createWebSocketHandler,
-} from '@/modules/realtime/index.js';
 
 export function createAppRuntime(config: AppConfig) {
     const db = createDb(config.databaseUrl);
     const redis = createRedisClient(config.redisRealtimeUrl);
     const pubRedis = createRedisClient(config.redisRealtimeUrl);
     const jobsRedis = createRedisClient(config.redisJobsUrl, { maxRetriesPerRequest: null });
-    const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
     const authService = createAuthService(config);
     const authMiddleware = createAuthMiddleware(authService);
@@ -55,13 +47,6 @@ export function createAppRuntime(config: AppConfig) {
     const mutationProcessor = createMutationProcessor(boardStateService, {
         enableTargetedReads: config.enableTargetedMutationReads,
     });
-    const roomManager = createBoardRoomManager();
-    const heartbeat = createHeartbeatService(roomManager);
-    const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis, {
-        presenceWriteThrottleMs: config.presenceWriteThrottleMs,
-        presenceWriteJitterMs: config.presenceWriteJitterMs,
-    }, previewJobService);
-    const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService, config.corsOrigin);
 
     return {
         config,
@@ -69,7 +54,6 @@ export function createAppRuntime(config: AppConfig) {
         redis,
         pubRedis,
         jobsRedis,
-        wss,
         authService,
         authMiddleware,
         userService,
@@ -81,10 +65,6 @@ export function createAppRuntime(config: AppConfig) {
         redisCleanupService,
         previewJobService,
         mutationProcessor,
-        roomManager,
-        heartbeat,
-        wsHandler,
-        upgradeHandler,
         metrics,
     };
 }

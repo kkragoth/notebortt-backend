@@ -1,4 +1,4 @@
-import { getUserColor } from '../../ws/room.js';
+import { getUserColor } from '../../socketio/user-color.js';
 import { resolveSocketIdentity } from '../../socketio/identity.js';
 import { parseBoardJoinPayload } from '../../socketio/payloads.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
