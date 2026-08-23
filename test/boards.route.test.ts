@@ -123,32 +123,33 @@ function createHarness(
     const app = express();
     app.use(express.json());
     app.use('/',
-        createBoardRouter(
-      {
-          checkBoardAccess: async () => ({ hasAccess: true, permission }),
-      } as any,
-      {
-          isWorkspaceMember: async () => true,
-      } as any,
-      (req, _res, next) => {
-          req.userId = USER_ID;
-          next();
-      },
-      boardStateService,
-      mutationProcessor,
-      {
-          verifyAccessToken: (token: string) => {
-              if (token !== TOKEN) {
-                  throw new Error('invalid token');
-              }
+        createBoardRouter({
+            boardService: {
+                checkBoardAccess: async () => ({ hasAccess: true, permission }),
+            } as any,
+            workspaceService: {
+                isWorkspaceMember: async () => true,
+            } as any,
+            authMiddleware: (req, _res, next) => {
+                req.userId = USER_ID;
+                next();
+            },
+            boardStateService,
+            mutationProcessor,
+            authService: {
+                verifyAccessToken: (token: string) => {
+                    if (token !== TOKEN) {
+                        throw new Error('invalid token');
+                    }
 
-              return { sub: USER_ID };
-          },
-      } as any,
-      {
-          enqueue: async () => ({ boardId: BOARD_ID, dueAt: 1_700_000_100_000 }),
-      } as any,
-        ),
+                    return { sub: USER_ID };
+                },
+            } as any,
+            previewJobService: {
+                enqueue: async () => ({ boardId: BOARD_ID, dueAt: 1_700_000_100_000 }),
+            } as any,
+            events: createTestEventBus(),
+        }),
     );
 
     return { app, state, batches };
@@ -157,34 +158,42 @@ function createHarness(
 function createAuthScopingHarness() {
     const app = express();
     app.use(express.json());
-    app.use('/', createBoardRouter(
-    {
-        getShareByToken: async () => ({ boardId: BOARD_ID, permission: 'view' }),
-    } as any,
-    {} as any,
-    (req, res, next) => {
-        const header = req.headers.authorization;
-        if (!header?.startsWith('Bearer ')) {
-            res.status(401).json({ error: 'Missing authentication token' });
-            return;
-        }
-        req.userId = USER_ID;
-        next();
-    },
-    {} as any,
-    {} as any,
-    {
-        verifyAccessToken: (token: string) => {
-            if (token !== TOKEN) {
-                throw new Error('invalid token');
+    app.use('/', createBoardRouter({
+        boardService: {
+            getShareByToken: async () => ({ boardId: BOARD_ID, permission: 'view' }),
+        } as any,
+        workspaceService: {} as any,
+        authMiddleware: (req, res, next) => {
+            const header = req.headers.authorization;
+            if (!header?.startsWith('Bearer ')) {
+                res.status(401).json({ error: 'Missing authentication token' });
+                return;
             }
-            return { sub: USER_ID };
+            req.userId = USER_ID;
+            next();
         },
-    } as any,
-    {} as any,
-    ));
+        boardStateService: {} as any,
+        mutationProcessor: {} as any,
+        authService: {
+            verifyAccessToken: (token: string) => {
+                if (token !== TOKEN) {
+                    throw new Error('invalid token');
+                }
+                return { sub: USER_ID };
+            },
+        } as any,
+        previewJobService: {} as any,
+        events: createTestEventBus(),
+    }));
 
     return { app };
+}
+
+function createTestEventBus() {
+    return {
+        emit: () => undefined,
+        on: () => () => undefined,
+    };
 }
 
 describe('board router auth scoping', () => {

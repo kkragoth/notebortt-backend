@@ -8,10 +8,9 @@ import {
     parseOrSendBadRequest,
     patchElementsBodySchema,
     requireBoardAccess
-  
+
 } from '../routes/shared.js';
 import type {BoardRouteDeps} from '../routes/shared.js';
-import { logger } from '@/shared/logger.js';
 import { sendForbidden } from '@/shared/http.js';
 
 export function createBoardMutationRoutes(deps: BoardRouteDeps) {
@@ -35,9 +34,7 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
         const results = await deps.mutationProcessor.processBatch(mutations, anonymousActorId(req, body.sessionId));
         const latest = [...results].reverse().find((result) => result.status === 'applied') ?? results.at(-1);
 
-        void deps.previewJobService.enqueue(params.id).catch((error) => {
-            logger.error({ err: error, boardId: params.id }, '[PreviewJob] enqueue after element patch failed');
-        });
+        deps.events.emit('board.mutated', { boardId: params.id });
 
         res.json({
             ok: true,
@@ -60,9 +57,7 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
 
         await deps.boardStateService.loadBoard(params.id);
         const results = await deps.mutationProcessor.processBatch(body.mutations, anonymousActorId(req, body.sessionId));
-        void deps.previewJobService.enqueue(params.id).catch((error) => {
-            logger.error({ err: error, boardId: params.id }, '[PreviewJob] enqueue after mutation failed');
-        });
+        deps.events.emit('board.mutated', { boardId: params.id });
         res.json({ results });
     });
 

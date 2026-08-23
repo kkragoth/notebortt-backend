@@ -2,6 +2,8 @@ import type { AppConfig } from '@/shared/config.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
+import { createAppEventBus } from '@/shared/events.js';
+import { logger } from '@/shared/logger.js';
 import {
     createAuthMiddleware,
     createAuthService,
@@ -22,10 +24,17 @@ import {
 } from '@/modules/previews/index.js';
 
 export function createAppRuntime(config: AppConfig) {
-    const db = createDb(config.databaseUrl);
+    const db = createDb(config.databaseUrl, {
+        max: config.dbPoolMax,
+        idleTimeoutSeconds: config.dbIdleTimeoutSeconds,
+        connectTimeoutSeconds: config.dbConnectTimeoutSeconds,
+        statementTimeoutMs: config.dbStatementTimeoutMs,
+    });
     const redis = createRedisClient(config.redisRealtimeUrl);
     const pubRedis = createRedisClient(config.redisRealtimeUrl);
     const jobsRedis = createRedisClient(config.redisJobsUrl, { maxRetriesPerRequest: null });
+
+    const events = createAppEventBus();
 
     const authService = createAuthService(config);
     const authMiddleware = createAuthMiddleware(authService);
@@ -48,8 +57,21 @@ export function createAppRuntime(config: AppConfig) {
         enableTargetedReads: config.enableTargetedMutationReads,
     });
 
+    // Cross-module reactions live here so emitters stay decoupled from consumers.
+    events.on('board.mutated', ({ boardId }) => {
+        void previewJobService.enqueue(boardId).catch((error) => {
+            logger.error({ err: error, boardId }, '[PreviewJob] enqueue after board.mutated failed');
+        });
+    });
+    events.on('board.editorsLeft', ({ boardId }) => {
+        void previewJobService.enqueueFlush(boardId).catch((error) => {
+            logger.error({ err: error, boardId }, '[PreviewJob] flush enqueue after board.editorsLeft failed');
+        });
+    });
+
     return {
         config,
+        events,
         db,
         redis,
         pubRedis,

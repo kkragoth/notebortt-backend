@@ -96,6 +96,12 @@ async function getBoardStateHealth(redis: Redis): Promise<{
     }
 }
 
+export function livenessRoute(_req: Request, res: Response) {
+    // Liveness means "the process is up" only. Deep dependencies belong in the
+    // readiness probe so a Redis blip doesn't get pods restarted.
+    res.status(200).json({ status: HealthStatus.OK, uptime: uptimeSeconds() });
+}
+
 export function healthRoute(db: Database, redis: Redis) {
     return async (_req: Request, res: Response) => {
         const [postgresStatus, redisStatus, boardStateHealth] = await Promise.all([

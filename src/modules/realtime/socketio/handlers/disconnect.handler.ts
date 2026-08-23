@@ -17,7 +17,7 @@ export function createDisconnectHandler(
         if (context.permission === 'edit') {
             // Tab close / navigation also lands here (socket dies), so no
             // client-side beforeunload call is needed.
-            void runtime.deps.previewJobService.enqueueFlush(context.boardId).catch(() => undefined);
+            runtime.deps.events.emit('board.editorsLeft', { boardId: context.boardId });
         }
 
         cleanupConnectionState();
