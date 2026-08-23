@@ -23,6 +23,8 @@ const envSchema = z.object({
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
+    BULL_BOARD_USERNAME: z.string().min(1).default('admin'),
+    BULL_BOARD_PASSWORD: z.string().min(8).optional(),
     STRIPE_BILLING_ENABLED: z.coerce.boolean().default(false),
     STRIPE_SECRET_KEY: z.string().optional(),
     STRIPE_PRICE_STARTUP: z.string().optional(),
@@ -52,6 +54,8 @@ export interface AppConfig {
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
   enableBullBoard: boolean
+  bullBoardUsername: string
+  bullBoardPassword: string | null
   stripeBillingEnabled: boolean
   stripeSecretKey: string | null
   stripePriceStartup: string | null
@@ -90,6 +94,8 @@ export function loadConfig(): AppConfig {
         enableBullBoard: parsed.ENABLE_BULL_BOARD
             ? parsed.ENABLE_BULL_BOARD === 'true'
             : parsed.NODE_ENV !== 'production',
+        bullBoardUsername: parsed.BULL_BOARD_USERNAME,
+        bullBoardPassword: parsed.BULL_BOARD_PASSWORD ?? null,
         stripeBillingEnabled: parsed.STRIPE_BILLING_ENABLED,
         stripeSecretKey: parsed.STRIPE_SECRET_KEY ?? null,
         stripePriceStartup: parsed.STRIPE_PRICE_STARTUP ?? null,

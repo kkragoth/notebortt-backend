@@ -12,7 +12,8 @@ import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billi
 import { createDebugRouter } from '@/app/debug.routes.js';
 import { healthRoute } from '@/app/health.routes.js';
 import { createMetricsRoute } from '@/app/metrics.routes.js';
-import { BULL_BOARD_BASE_PATH, createBullBoardRouter } from '@/app/bull-board.routes.js';
+import { BULL_BOARD_BASE_PATH, createBasicAuthGate, createBullBoardRouter } from '@/app/bull-board.routes.js';
+import { logger } from '@/shared/logger.js';
 import { createOpenApiRouter } from '@/app/openapi.routes.js';
 import { createSwaggerRouter } from '@/app/swagger.routes.js';
 import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
@@ -57,7 +58,19 @@ export function createApp(runtime: AppRuntime) {
     app.get('/health', healthRoute(runtime.db, runtime.redis));
     app.get('/metrics', createMetricsRoute(runtime.metrics));
     if (runtime.config.enableBullBoard) {
-        app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter([runtime.previewJobService.getQueue()]));
+        const { bullBoardUsername, bullBoardPassword, nodeEnv } = runtime.config;
+        if (bullBoardPassword) {
+            app.use(
+                BULL_BOARD_BASE_PATH,
+                createBasicAuthGate(bullBoardUsername, bullBoardPassword),
+                createBullBoardRouter([runtime.previewJobService.getQueue()]),
+            );
+        } else if (nodeEnv === 'production') {
+            logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
+        } else {
+            logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
+            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter([runtime.previewJobService.getQueue()]));
+        }
     }
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
