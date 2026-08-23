@@ -7,6 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
 import type Redis from 'ioredis';
 import type { BoardStateService, Mutation , MutationProcessor  } from '@/modules/collaboration/index.js';
+import type { PreviewJobService } from '@/modules/previews/index.js';
 import type { BoardRoomManager } from '../ws/room.js';
 import type { HeartbeatService } from '../ws/heartbeat.js';
 import type {RateLimitState} from '../ws/handler.utils.js';
@@ -43,12 +44,14 @@ export function createWebSocketHandler(
     heartbeat: HeartbeatService,
     pubRedis: Redis,
     options: WebSocketHandlerOptions = {},
+    previewJobService?: PreviewJobService,
 ) {
     const presenceWriteThrottleMs = options.presenceWriteThrottleMs ?? DEFAULT_PRESENCE_WRITE_THROTTLE_MS;
     const presenceWriteJitterMs = options.presenceWriteJitterMs ?? DEFAULT_PRESENCE_WRITE_JITTER_MS;
     const mutationPubSub = createBoardMutationPubSub(pubRedis, roomManager);
     const gracePeriodTimers = new Map<string, NodeJS.Timeout>();
     const pendingMutationBatches = new Map<string, PendingMutationBatch>();
+    const mutatedConnections = new Set<string>();
     const lastPresenceWriteAtByConnection = new Map<string, number>();
     const presenceJitterByConnection = new Map<string, number>();
 
@@ -146,6 +149,7 @@ export function createWebSocketHandler(
 
         try {
             const results = await mutationProcessor.processBatch(batch, userId);
+            void previewJobService?.enqueue(boardId).catch(() => undefined);
             if (options.sendAcks && ws.readyState === 1) {
                 for (const result of results) {
                     ws.send(serialize({ type: 'MUTATION_RESULT', result }));
@@ -172,6 +176,7 @@ export function createWebSocketHandler(
     ): void {
         const batchState = getOrCreateBatch(connectionId);
         batchState.mutations.push(mutation);
+        mutatedConnections.add(connectionId);
 
         if (batchState.mutations.length >= MUTATION_BATCH_MAX_SIZE) {
             void flushMutationBatch(boardId, userId, connectionId, ws);
@@ -339,6 +344,12 @@ export function createWebSocketHandler(
                 }
                 await flushMutationBatch(boardId, userId, connectionId, ws, { sendAcks: false });
                 pendingMutationBatches.delete(connectionId);
+                const hadEdits = mutatedConnections.delete(connectionId);
+                if (permission === 'edit' && hadEdits) {
+                    // Editor left (incl. tab close): render final state soon,
+                    // bypassing debounce + min-interval.
+                    void previewJobService?.enqueueFlush(boardId).catch(() => undefined);
+                }
                 lastPresenceWriteAtByConnection.delete(connectionId);
                 presenceJitterByConnection.delete(connectionId);
 

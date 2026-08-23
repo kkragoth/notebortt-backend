@@ -1,5 +1,6 @@
 import { parseMutationBatchPayload } from '../../socketio/payloads.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
+import { logger } from '@/shared/logger.js';
 
 function hasConsistentBatchBoardId(boardId: string, mutations: unknown[]): boolean {
     return mutations.every((mutation) => {
@@ -37,6 +38,9 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         if (!runtime.isSnapshotActive(snapshot)) {
             return;
         }
+        void runtime.deps.previewJobService.enqueue(snapshot.context.boardId).catch((error) => {
+            logger.error({ err: error, boardId: snapshot.context.boardId }, '[PreviewJob] enqueue after realtime mutation failed');
+        });
 
         const acknowledgedIds: string[] = [];
         let latestSequence: number | undefined;

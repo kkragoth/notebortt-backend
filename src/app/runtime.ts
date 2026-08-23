@@ -60,7 +60,7 @@ export function createAppRuntime(config: AppConfig) {
     const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis, {
         presenceWriteThrottleMs: config.presenceWriteThrottleMs,
         presenceWriteJitterMs: config.presenceWriteJitterMs,
-    });
+    }, previewJobService);
     const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService, config.corsOrigin);
 
     return {

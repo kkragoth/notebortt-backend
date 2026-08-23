@@ -60,6 +60,10 @@ async function createHarness(): Promise<Harness> {
         boardService: boardService as any,
         boardStateService: boardStateService as any,
         mutationProcessor: mutationProcessor as any,
+        previewJobService: {
+            enqueue: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
+            enqueueFlush: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
+        } as any,
         pubRedis: { publish: vi.fn().mockResolvedValue(1) } as any,
     }, {
         corsOrigin: 'http://localhost:3000',

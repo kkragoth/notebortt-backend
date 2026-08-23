@@ -13,6 +13,13 @@ export function createDisconnectHandler(
 
         runtime.setBoardContext(null);
         await runtime.detachFromBoard(context, true);
+
+        if (context.permission === 'edit') {
+            // Tab close / navigation also lands here (socket dies), so no
+            // client-side beforeunload call is needed.
+            void runtime.deps.previewJobService.enqueueFlush(context.boardId).catch(() => undefined);
+        }
+
         cleanupConnectionState();
     };
 }

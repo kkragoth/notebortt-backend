@@ -3,6 +3,7 @@ import type { BoardStateService, MutationProcessor  } from '@/modules/collaborat
 import type { AuthService } from '@/modules/auth/index.js';
 import type { BoardService } from '@/modules/boards/index.js';
 import type { UserService } from '@/modules/users/index.js';
+import type { PreviewJobService } from '@/modules/previews/index.js';
 
 export interface SocketIdentity {
   authUserId: string | undefined
@@ -41,5 +42,6 @@ export interface SocketIoRealtimeDependencies {
   boardService: BoardService
   boardStateService: BoardStateService
   mutationProcessor: MutationProcessor
+  previewJobService: PreviewJobService
   pubRedis: Redis
 }

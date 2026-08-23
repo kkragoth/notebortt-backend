@@ -15,9 +15,11 @@ const PREVIEW_REMOVE_ON_FAIL_AGE = 7 * 24 * 60 * 60;
 
 export const PREVIEW_DEBOUNCE_WINDOW_MS = 90_000;
 export const PREVIEW_MIN_INTERVAL_MS = 180_000;
+export const PREVIEW_FLUSH_DELAY_MS = 3_000;
 
-interface PreviewJobData {
+export interface PreviewJobData {
     boardId: string;
+    flush?: boolean;
 }
 
 function parseMs(value: Date | null): number | null {
@@ -27,9 +29,14 @@ function parseMs(value: Date | null): number | null {
     return new Date(value).getTime();
 }
 
-// BullMQ forbids ":" in custom job ids.
-function jobIdFor(boardId: string): string {
+// Deduplication id for the debounced render of a board.
+// (BullMQ forbids ":" in custom ids, hence no colons here.)
+function dedupIdFor(boardId: string): string {
     return `preview-${boardId}`;
+}
+
+function flushDedupIdFor(boardId: string): string {
+    return `preview-flush-${boardId}`;
 }
 
 export function createPreviewJobService(db: Database, connection: Redis, renderer: BoardPreviewRenderer) {
@@ -56,14 +63,40 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
 
     async function enqueue(boardId: string): Promise<{ boardId: string; dueAt: number }> {
         const dueAt = Date.now() + PREVIEW_DEBOUNCE_WINDOW_MS;
-        // Re-arming debounce: drop any still-delayed job, then schedule fresh.
-        await getQueue().remove(jobIdFor(boardId)).catch(() => undefined);
+        // Native trailing-edge debounce: while a job with this dedup id is still
+        // delayed, `replace` atomically swaps it for this add (fresh timer);
+        // `extend` slides the dedup window so late edits can't spawn a second job.
         await getQueue().add(
             'render',
             { boardId },
             {
-                jobId: jobIdFor(boardId),
+                deduplication: {
+                    id: dedupIdFor(boardId),
+                    ttl: PREVIEW_DEBOUNCE_WINDOW_MS,
+                    extend: true,
+                    replace: true,
+                },
                 delay: PREVIEW_DEBOUNCE_WINDOW_MS,
+            },
+        );
+        return { boardId, dueAt };
+    }
+
+    async function enqueueFlush(boardId: string): Promise<{ boardId: string; dueAt: number }> {
+        // Editor left the board (or tab closed): render soon after final state,
+        // bypassing both the debounce and the min-interval guard.
+        const dueAt = Date.now() + PREVIEW_FLUSH_DELAY_MS;
+        await getQueue().add(
+            'render',
+            { boardId, flush: true },
+            {
+                deduplication: {
+                    id: flushDedupIdFor(boardId),
+                    ttl: PREVIEW_FLUSH_DELAY_MS,
+                    extend: true,
+                    replace: true,
+                },
+                delay: PREVIEW_FLUSH_DELAY_MS,
             },
         );
         return { boardId, dueAt };
@@ -96,19 +129,25 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         return { deferred: true, dueAt };
     }
 
-    async function processBoardPreview(boardId: string): Promise<'updated' | 'skipped' | 'deferred'> {
-        const deferred = await maybeDeferForMinInterval(boardId);
-        if (deferred.deferred) {
-            await getQueue().remove(jobIdFor(boardId)).catch(() => undefined);
-            await getQueue().add(
-                'render',
-                { boardId },
-                {
-                    jobId: jobIdFor(boardId),
-                    delay: Math.max(deferred.dueAt - Date.now(), 0),
-                },
-            );
-            return 'deferred';
+    async function processBoardPreview(boardId: string, options: { skipMinInterval?: boolean } = {}): Promise<'updated' | 'skipped' | 'deferred'> {
+        if (!options.skipMinInterval) {
+            const deferred = await maybeDeferForMinInterval(boardId);
+            if (deferred.deferred) {
+                await getQueue().add(
+                    'render',
+                    { boardId },
+                    {
+                        deduplication: {
+                            id: dedupIdFor(boardId),
+                            ttl: Math.max(deferred.dueAt - Date.now(), 0),
+                            extend: true,
+                            replace: true,
+                        },
+                        delay: Math.max(deferred.dueAt - Date.now(), 0),
+                    },
+                );
+                return 'deferred';
+            }
         }
 
         const boardRows = await db
@@ -155,7 +194,9 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         worker = new Worker<PreviewJobData>(
             PREVIEW_QUEUE_NAME,
             async (job) => {
-                const result = await processBoardPreview(job.data.boardId);
+                const result = await processBoardPreview(job.data.boardId, {
+                    skipMinInterval: job.data.flush === true,
+                });
                 if (result === 'skipped') {
                     logger.debug({ boardId: job.data.boardId }, '[PreviewJob] skipped');
                 }
@@ -186,8 +227,10 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
 
     return {
         enqueue,
+        enqueueFlush,
         startWorker,
         processBoardPreview,
+        getQueue,
     };
 }
 

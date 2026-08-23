@@ -19,6 +19,7 @@ const io = createSocketIoRealtimeServer(server, {
     boardService: runtime.boardService,
     boardStateService: runtime.boardStateService,
     mutationProcessor: runtime.mutationProcessor,
+    previewJobService: runtime.previewJobService,
     pubRedis: runtime.pubRedis,
 }, {
     corsOrigin: config.corsOrigin,
