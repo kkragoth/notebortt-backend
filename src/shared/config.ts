@@ -26,6 +26,9 @@ const envSchema = z.object({
     PRESENCE_WRITE_THROTTLE_MS: z.coerce.number().int().min(0).default(3000),
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
+    EVENT_BUS_MODE: z.enum(['local', 'stream']).default('local'),
+    BOARD_PERSIST_INTERVAL_MS: z.coerce.number().int().min(1_000).default(30_000),
+    REDIS_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(120_000),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
     ENABLE_LEGACY_API_ROUTES: z.coerce.boolean().default(true),
     // DEPRECATED: tokens in the OAuth redirect fragment leak via history and
@@ -67,6 +70,9 @@ export interface AppConfig {
   presenceWriteThrottleMs: number
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
+  eventBusStreamEnabled: boolean
+  boardPersistIntervalMs: number
+  redisCleanupIntervalMs: number
   enableBullBoard: boolean
   enableLegacyApiRoutes: boolean
   enableOauthFragmentTokens: boolean
@@ -111,6 +117,9 @@ export function loadConfig(): AppConfig {
         presenceWriteThrottleMs: parsed.PRESENCE_WRITE_THROTTLE_MS,
         presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
         enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
+        eventBusStreamEnabled: parsed.EVENT_BUS_MODE === 'stream',
+        boardPersistIntervalMs: parsed.BOARD_PERSIST_INTERVAL_MS,
+        redisCleanupIntervalMs: parsed.REDIS_CLEANUP_INTERVAL_MS,
         // Bull Board exposes internal job data; default on outside production.
         enableBullBoard: parsed.ENABLE_BULL_BOARD
             ? parsed.ENABLE_BULL_BOARD === 'true'

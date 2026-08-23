@@ -18,19 +18,13 @@ describe('board persistence worker policy', () => {
         });
     });
 
-    it('starts the worker with a 30s poll interval by default', () => {
+    it('exposes no in-process scheduling surface (BullMQ owns timing)', () => {
         const boardStateService = {
             persistDirtyBoards: vi.fn().mockResolvedValue([]),
         } as any;
-        const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockReturnValue(0 as any);
+
         const service = createBoardPersistenceService(boardStateService);
 
-        try {
-            service.startWorker();
-
-            expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
-        } finally {
-            setIntervalSpy.mockRestore();
-        }
+        expect(Object.keys(service)).toEqual(['flushDirtyBoards']);
     });
 });

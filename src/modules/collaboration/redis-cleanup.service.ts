@@ -103,7 +103,6 @@ export function createRedisCleanupService(
     boardStateService: BoardStateService,
     options: RedisCleanupOptions = {},
 ) {
-    let isWorkerRunning = false;
     const useActiveIndex = options.useActiveIndex ?? true;
 
     async function findInactiveBoardCandidates(idleTtlMs: number, limit: number): Promise<string[]> {
@@ -201,32 +200,6 @@ export function createRedisCleanupService(
         return flushedBoardIds;
     }
 
-    function startWorker(intervalMs = DEFAULT_CLEANUP_INTERVAL_MS): NodeJS.Timeout {
-        return setInterval(async () => {
-            if (isWorkerRunning) {
-                return;
-            }
-
-            isWorkerRunning = true;
-            try {
-                const [flushed, transientDeleted] = await Promise.all([
-                    cleanupInactiveBoards(),
-                    cleanupTransientDataByIdleTime(),
-                ]);
-                if (flushed.length > 0) {
-                    logger.info({ count: flushed.length }, '[RedisCleanup] Flushed inactive board(s) from Redis');
-                }
-                if (transientDeleted.length > 0) {
-                    logger.info({ count: transientDeleted.length }, '[RedisCleanup] Deleted stale transient key(s)');
-                }
-            } catch (error) {
-                logger.error({ err: error }, '[RedisCleanup] cleanup failed');
-            } finally {
-                isWorkerRunning = false;
-            }
-        }, intervalMs);
-    }
-
     async function cleanupTransientDataByIdleTime(
         idleTtlMs = DEFAULT_IDLE_TTL_MS,
         scanLimit = DEFAULT_SCAN_LIMIT,
@@ -268,7 +241,6 @@ export function createRedisCleanupService(
     return {
         cleanupInactiveBoards,
         cleanupTransientDataByIdleTime,
-        startWorker,
     };
 }
 

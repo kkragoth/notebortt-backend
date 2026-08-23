@@ -1,4 +1,5 @@
 import { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { createCrdtRoomStore } from '../socketio/crdt-room.js';
 import { createParticipantsStore } from '../socketio/participants.js';
 import { createTickPersistenceManager } from '../socketio/tick-persistence.js';
@@ -50,6 +51,10 @@ export function createSocketIoRealtimeServer(
         },
     });
 
+    // Cross-replica broadcasting (rooms, USER_JOINED/LEFT, element changes)
+    // requires the redis adapter once more than one realtime replica runs.
+    io.adapter(createAdapter(deps.pubRedis, deps.subRedis));
+
     async function publishElementsChanged(boardId: string, userId: string, change: unknown, senderId: string): Promise<void> {
         await deps.pubRedis.publish(
             boardMutationsChannel(boardId),
@@ -60,7 +65,7 @@ export function createSocketIoRealtimeServer(
         );
     }
 
-    const participantsStore = createParticipantsStore();
+    const participantsStore = createParticipantsStore(deps.pubRedis);
     const tickPersistence = createTickPersistenceManager(deps, { onPersistedChange: publishElementsChanged });
     const crdtStore = createCrdtRoomStore(deps.boardStateService, deps.mutationProcessor, {
         debounceMs: options.crdtDebounceMs,
@@ -178,10 +183,11 @@ export function createSocketIoRealtimeServer(
 
             await deps.boardStateService.touchViewerSession(snapshot.context.boardId, snapshot.context.sessionId);
             await deps.boardStateService.trackClient(snapshot.context.boardId, snapshot.context.userId, socket.id);
+            await participantsStore.touchParticipant(snapshot.context.boardId, socket.id);
         }
 
         async function cleanupBoardRealtimeStateIfEmpty(boardId: string): Promise<void> {
-            if (participantsStore.getRoomSize(boardId) > 0) {
+            if (await participantsStore.getRoomSize(boardId) > 0) {
                 return;
             }
 
@@ -202,7 +208,7 @@ export function createSocketIoRealtimeServer(
             await deps.boardStateService.removeClient(context.boardId, context.userId, socket.id);
             await deps.boardStateService.removeViewerSession(context.boardId, context.sessionId);
 
-            const participant = participantsStore.removeParticipant(context.boardId, socket.id);
+            const participant = await participantsStore.removeParticipant(context.boardId, socket.id);
             if (broadcastLeave && participant) {
                 emitUserLeft(context.boardId, participant);
             }

@@ -44,4 +44,5 @@ export interface SocketIoRealtimeDependencies {
   mutationProcessor: MutationProcessor
   events: AppEventBus
   pubRedis: Redis
+  subRedis: Redis
 }

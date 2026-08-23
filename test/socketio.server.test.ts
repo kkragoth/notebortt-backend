@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {  io as ioClient } from 'socket.io-client';
 import * as Y from 'yjs';
+import Redis from 'ioredis';
 import type {Socket} from 'socket.io-client';
 import { MutationType } from '@/modules/collaboration/mutations/types.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/socketio/server.js';
@@ -24,8 +25,29 @@ interface Harness {
 
 let activeHarness: Harness | null = null;
 
+const REDIS_URL = process.env.REDIS_REALTIME_URL ?? 'redis://localhost:6379';
+
+// The realtime tier now shares presence state through Redis (participants +
+// adapter); stale keys from previous runs would leak into join replays.
+async function flushParticipantsNamespace(redis: Redis): Promise<void> {
+    const patterns = ['board:*:participants', 'board:*:participants_expiry'];
+    for (const pattern of patterns) {
+        let cursor = '0';
+        do {
+            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+            cursor = nextCursor;
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } while (cursor !== '0');
+    }
+}
+
 async function createHarness(): Promise<Harness> {
     const server = http.createServer();
+    const pubRedis = new Redis(REDIS_URL);
+    const subRedis = new Redis(REDIS_URL);
+    await flushParticipantsNamespace(pubRedis);
     const boardService = {
         checkBoardAccess: vi.fn().mockResolvedValue({ hasAccess: true, permission: 'edit' }),
     };
@@ -69,7 +91,8 @@ async function createHarness(): Promise<Harness> {
             emit: vi.fn(),
             on: vi.fn().mockReturnValue(() => undefined),
         },
-        pubRedis: { publish: vi.fn().mockResolvedValue(1) } as any,
+        pubRedis,
+        subRedis,
     }, {
         corsOrigin: 'http://localhost:3000',
         crdtDebounceMs: 30,
@@ -94,6 +117,8 @@ async function createHarness(): Promise<Harness> {
                 }
             }
             await new Promise<void>((resolve) => server.close(() => resolve()));
+            pubRedis.disconnect();
+            subRedis.disconnect();
         },
     };
 }

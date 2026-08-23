@@ -2,32 +2,27 @@ import 'dotenv/config';
 import { loadConfig } from '@/shared/config.js';
 import { createApp } from '@/app/create-app.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
+import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
 import { logger } from '@/shared/logger.js';
 
+/**
+ * REST API app. Owns HTTP concerns only: routes, rate limiting, health,
+ * metrics and the Bull Board dashboard (read-only view over the job queues
+ * the worker app processes).
+ */
 const config = loadConfig();
 const runtime = createAppRuntime(config);
-const app = createApp(runtime);
+
+const app = createApp(runtime, {
+    bullBoardQueues: () => [
+        createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardPersistFlush),
+        createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardMaintenance),
+    ],
+});
 
 const server = app.listen(config.port, () => {
-    logger.info({ port: config.port, env: config.nodeEnv }, '[Server] Listening');
+    logger.info({ port: config.port, env: config.nodeEnv }, '[API] Listening');
 });
-
-const io = createSocketIoRealtimeServer(server, {
-    authService: runtime.authService,
-    userService: runtime.userService,
-    boardService: runtime.boardService,
-    boardStateService: runtime.boardStateService,
-    mutationProcessor: runtime.mutationProcessor,
-    events: runtime.events,
-    pubRedis: runtime.pubRedis,
-}, {
-    corsOrigin: config.corsOrigin,
-});
-
-const persistenceWorker = runtime.boardPersistenceService.startWorker();
-const redisCleanupWorker = runtime.redisCleanupService.startWorker();
-const stopPreviewWorker = runtime.previewJobService.startWorker();
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const KEEP_ALIVE_GRACE_MS = 2_000;
@@ -39,20 +34,15 @@ async function shutdown(signal: string): Promise<void> {
         return;
     }
     shuttingDown = true;
-    logger.info({ signal }, '[Server] Shutting down');
+    logger.info({ signal }, '[API] Shutting down');
 
     const forceExitTimer = setTimeout(() => {
-        logger.error('[Server] Forced exit: graceful shutdown timed out');
+        logger.error('[API] Forced exit: graceful shutdown timed out');
         process.exit(1);
     }, SHUTDOWN_TIMEOUT_MS);
     forceExitTimer.unref();
 
     try {
-        clearInterval(persistenceWorker);
-        clearInterval(redisCleanupWorker);
-        await stopPreviewWorker();
-
-        io.close();
         await new Promise<void>((resolve) => {
             server.close(() => resolve());
             setTimeout(() => {
@@ -63,15 +53,16 @@ async function shutdown(signal: string): Promise<void> {
         await Promise.allSettled([
             runtime.redis.quit(),
             runtime.pubRedis.quit(),
+            runtime.subRedis.quit(),
             runtime.jobsRedis.quit(),
             runtime.db.$client.end(),
         ]);
 
         clearTimeout(forceExitTimer);
-        logger.info('[Server] Shutdown complete');
+        logger.info('[API] Shutdown complete');
         process.exit(0);
     } catch (err) {
-        logger.error({ err }, '[Server] Shutdown failed');
+        logger.error({ err }, '[API] Shutdown failed');
         process.exit(1);
     }
 }
@@ -82,7 +73,3 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
     void shutdown('SIGINT');
 });
-
-export { app, server, persistenceWorker, redisCleanupWorker, stopPreviewWorker };
-export { io };
-export const { db, redis } = runtime;

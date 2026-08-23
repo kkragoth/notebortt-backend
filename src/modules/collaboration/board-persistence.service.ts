@@ -1,11 +1,13 @@
 import type { BoardStateService } from './/board-state.service.js';
-import { logger } from '@/shared/logger.js';
 
-const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
 const DEFAULT_PERSIST_WINDOW_MS = 30_000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 250;
 
+/**
+ * Flush policy only — scheduling lives in src/app/background-jobs.ts as a
+ * BullMQ repeatable job so it is single-flight across replicas.
+ */
 export function createBoardPersistenceService(boardStateService: BoardStateService) {
     async function flushDirtyBoards(): Promise<string[]> {
         return boardStateService.persistDirtyBoards({
@@ -15,19 +17,8 @@ export function createBoardPersistenceService(boardStateService: BoardStateServi
         });
     }
 
-    function startWorker(intervalMs = DEFAULT_PERSIST_INTERVAL_MS): NodeJS.Timeout {
-        return setInterval(async () => {
-            try {
-                await flushDirtyBoards();
-            } catch (error) {
-                logger.error({ err: error }, '[BoardPersistence] flush failed');
-            }
-        }, intervalMs);
-    }
-
     return {
         flushDirtyBoards,
-        startWorker,
     };
 }
 

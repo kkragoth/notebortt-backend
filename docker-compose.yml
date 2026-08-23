@@ -66,7 +66,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
+      EVENT_BUS_MODE: stream
       PORT: "8080"
+      REALTIME_PORT: "8081"
       NODE_ENV: development
       CORS_ORIGIN: http://localhost:8080,http://localhost:5173,http://localhost:3000
       CHOKIDAR_USEPOLLING: "true"
@@ -83,14 +85,17 @@ services:
       - backend_dev_node_modules:/app/node_modules
     ports:
       - "8080:8080"
+      - "8081:8081"
     stdin_open: true
     tty: true
     command: sh -lc "npm ci && npm run db:migrate && npm run dev"
 
-  backend:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP: api
     restart: unless-stopped
     env_file:
       - ./.env
@@ -98,7 +103,54 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
+      EVENT_BUS_MODE: stream
       PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-realtime:
+        condition: service_started
+      redis-jobs:
+        condition: service_started
+
+  realtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: realtime
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_REALTIME_URL: redis://redis-realtime:6379
+      REDIS_JOBS_URL: redis://redis-jobs:6379
+      EVENT_BUS_MODE: stream
+      PORT: "3001"
+      REALTIME_PORT: "3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-realtime:
+        condition: service_started
+      redis-jobs:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: worker
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_REALTIME_URL: redis://redis-realtime:6379
+      REDIS_JOBS_URL: redis://redis-jobs:6379
+      EVENT_BUS_MODE: stream
     depends_on:
       postgres:
         condition: service_healthy

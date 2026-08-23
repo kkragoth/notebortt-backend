@@ -71,7 +71,7 @@ build:
     npm run build
 
 build-docker:
-    docker compose -f docker-compose.yml build backend
+    docker compose -f docker-compose.yml build api realtime worker
 
 health:
     @curl -s http://localhost:8080/health | python3 -m json.tool
@@ -104,7 +104,7 @@ setup-ssl:
     docker compose -f docker-compose.yml restart nginx
 
 run-deploy:
-    docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs backend nginx
+    docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs api realtime worker nginx
     docker compose -f docker-compose.yml --profile tools run --rm migrator
     docker compose -f docker-compose.yml restart nginx
 

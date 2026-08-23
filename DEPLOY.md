@@ -14,7 +14,7 @@ At minimum set:
 ## 2) Start stack (HTTP first)
 
 ```bash
-docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs backend nginx
+docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs api realtime worker nginx
 ```
 
 Before the first certificate is issued, nginx serves HTTP only by design.

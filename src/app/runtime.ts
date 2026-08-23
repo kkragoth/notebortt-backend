@@ -2,7 +2,7 @@ import type { AppConfig } from '@/shared/config.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
-import { APP_EVENTS, createAppEventBus } from '@/shared/events.js';
+import { createAppEventBus } from '@/shared/events.js';
 import { logger } from '@/shared/logger.js';
 import {
     createAuthMiddleware,
@@ -32,9 +32,15 @@ export function createAppRuntime(config: AppConfig) {
     });
     const redis = createRedisClient(config.redisRealtimeUrl);
     const pubRedis = createRedisClient(config.redisRealtimeUrl);
+    // Dedicated subscriber-mode connection for the socket.io redis adapter.
+    const subRedis = createRedisClient(config.redisRealtimeUrl);
     const jobsRedis = createRedisClient(config.redisJobsUrl, { maxRetriesPerRequest: null });
 
-    const events = createAppEventBus();
+    // In-process EventEmitter locally; Redis Stream transport when the apps
+    // run as separate processes (EVENT_BUS_MODE=stream).
+    const events = createAppEventBus(
+        config.eventBusStreamEnabled ? { redis } : {},
+    );
 
     const authService = createAuthService(config);
     const authMiddleware = createAuthMiddleware(authService);
@@ -57,17 +63,9 @@ export function createAppRuntime(config: AppConfig) {
         enableTargetedReads: config.enableTargetedMutationReads,
     });
 
-    // Cross-module reactions live here so emitters stay decoupled from consumers.
-    events.on(APP_EVENTS.BOARD_MUTATED, ({ boardId }) => {
-        void previewJobService.enqueue(boardId).catch((error) => {
-            logger.error({ err: error, boardId }, '[PreviewJob] enqueue after board.mutated failed');
-        });
-    });
-    events.on(APP_EVENTS.BOARD_EDITORS_LEFT, ({ boardId }) => {
-        void previewJobService.enqueueFlush(boardId).catch((error) => {
-            logger.error({ err: error, boardId }, '[PreviewJob] flush enqueue after board.editorsLeft failed');
-        });
-    });
+    // Cross-module reactions moved to src/apps/worker.main.ts: with the apps
+    // split across processes, BOARD_MUTATED / BOARD_EDITORS_LEFT cross the
+    // process boundary through the Redis Stream event bus.
 
     return {
         config,
@@ -75,6 +73,7 @@ export function createAppRuntime(config: AppConfig) {
         db,
         redis,
         pubRedis,
+        subRedis,
         jobsRedis,
         authService,
         authMiddleware,
