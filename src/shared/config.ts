@@ -28,6 +28,10 @@ const envSchema = z.object({
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
     ENABLE_LEGACY_API_ROUTES: z.coerce.boolean().default(true),
+    // DEPRECATED: tokens in the OAuth redirect fragment leak via history and
+    // extensions. Cookies are already set; flip to false once the frontend
+    // stops reading location.hash on /callback.
+    ENABLE_OAUTH_FRAGMENT_TOKENS: z.coerce.boolean().default(true),
     BULL_BOARD_USERNAME: z.string().min(1).default('admin'),
     BULL_BOARD_PASSWORD: z.string().min(8).optional(),
     STRIPE_BILLING_ENABLED: z.coerce.boolean().default(false),
@@ -65,6 +69,7 @@ export interface AppConfig {
   enableCleanupActiveIndex: boolean
   enableBullBoard: boolean
   enableLegacyApiRoutes: boolean
+  enableOauthFragmentTokens: boolean
   bullBoardUsername: string
   bullBoardPassword: string | null
   stripeBillingEnabled: boolean
@@ -111,6 +116,7 @@ export function loadConfig(): AppConfig {
             ? parsed.ENABLE_BULL_BOARD === 'true'
             : parsed.NODE_ENV !== 'production',
         enableLegacyApiRoutes: parsed.ENABLE_LEGACY_API_ROUTES,
+        enableOauthFragmentTokens: parsed.ENABLE_OAUTH_FRAGMENT_TOKENS,
         bullBoardUsername: parsed.BULL_BOARD_USERNAME,
         bullBoardPassword: parsed.BULL_BOARD_PASSWORD ?? null,
         stripeBillingEnabled: parsed.STRIPE_BILLING_ENABLED,
