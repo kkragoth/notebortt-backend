@@ -1,14 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { healthRoute } from '@/app/health.routes.js';
+import { healthRoute, livenessRoute } from '@/app/health.routes.js';
 import { resetOpenSocketIoConnectionsForTests } from '@/modules/realtime/socketio/stats.js';
 
 function createApp(mockDb: any, mockRedis: any) {
     const app = express();
     app.get('/health', healthRoute(mockDb, mockRedis));
+    app.get('/health/live', livenessRoute);
     return app;
 }
+
+describe('GET /health/live', () => {
+    it('returns ok regardless of dependency state', async () => {
+        const app = express();
+        app.get('/health/live', livenessRoute);
+        const res = await request(app).get('/health/live');
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe('ok');
+        expect(res.body).toHaveProperty('uptime');
+    });
+});
 
 describe('GET /health', () => {
     it('returns status ok with postgres and redis status', async () => {

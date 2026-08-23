@@ -1,13 +1,14 @@
 import { getUserColor } from '../../socketio/user-color.js';
 import { resolveSocketIdentity } from '../../socketio/identity.js';
 import { parseBoardJoinPayload } from '../../socketio/payloads.js';
+import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
 
 export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
     return async (rawPayload: unknown): Promise<void> => {
         const payload = parseBoardJoinPayload(rawPayload);
         if (!payload) {
-            runtime.socket.emit('sync:error', { message: 'Invalid board join payload' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid board join payload' });
             return;
         }
 
@@ -31,7 +32,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             return;
         }
         if (!access.hasAccess) {
-            runtime.socket.emit('sync:error', { message: 'No access to board' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No access to board' });
             return;
         }
 
@@ -72,7 +73,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             if (existingParticipant.sessionId === payload.sessionId) {
                 continue;
             }
-            runtime.socket.emit('USER_JOINED', existingParticipant);
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.USER_JOINED, existingParticipant);
         }
 
         runtime.participantsStore.setParticipant(payload.boardId, runtime.socket.id, {
@@ -83,7 +84,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             color,
         });
 
-        runtime.socket.to(payload.boardId).emit('USER_JOINED', {
+        runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.USER_JOINED, {
             sessionId: payload.sessionId,
             userId: identity.runtimeUserId,
             userName,
@@ -97,7 +98,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             return;
         }
 
-        runtime.socket.emit('board:snapshot', {
+        runtime.socket.emit(SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT, {
             elements: snapshot.elements,
             lastSequence: snapshot.sequence,
         });

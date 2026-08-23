@@ -9,6 +9,12 @@ export default defineConfig({
         env: {
             LOG_LEVEL: 'warn',
         },
+        coverage: {
+            provider: 'v8',
+            reporter: ['text', 'html'],
+            include: ['src/**/*.ts'],
+            exclude: ['src/platform/db/seed.ts', 'src/**/*.d.ts'],
+        },
     },
     resolve: {
         alias: {

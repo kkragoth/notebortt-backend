@@ -1,4 +1,5 @@
 import { parseRealtimeTickPayload } from '../../socketio/payloads.js';
+import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
 
 export function createRealtimeTickHandler(runtime: SocketIoHandlerRuntime) {
@@ -6,7 +7,7 @@ export function createRealtimeTickHandler(runtime: SocketIoHandlerRuntime) {
         const payload = parseRealtimeTickPayload(rawPayload);
         const snapshot = payload ? runtime.takeContextSnapshot(payload.boardId) : null;
         if (!payload || !snapshot) {
-            runtime.socket.emit('sync:error', { message: 'Invalid realtime tick payload' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid realtime tick payload' });
             return;
         }
 
@@ -16,7 +17,7 @@ export function createRealtimeTickHandler(runtime: SocketIoHandlerRuntime) {
         runtime.setLastTickId(payload.tickId);
 
         if (payload.moves.length > 0 && snapshot.context.permission !== 'edit') {
-            runtime.socket.emit('sync:error', { message: 'No edit access to this board' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No edit access to this board' });
             return;
         }
 
@@ -29,7 +30,7 @@ export function createRealtimeTickHandler(runtime: SocketIoHandlerRuntime) {
             runtime.tickPersistence.queueMoves(payload.boardId, snapshot.context.userId, payload.moves);
         }
 
-        runtime.socket.to(payload.boardId).emit('realtime:tick', {
+        runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.REALTIME_TICK, {
             boardId: payload.boardId,
             tickId: payload.tickId,
             sessionId: snapshot.context.sessionId,

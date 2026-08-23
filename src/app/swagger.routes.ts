@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import type { AppConfig } from '@/shared/config.js';
 import { createOpenApiDocument } from '@/shared/openapi/document.js';
@@ -16,6 +17,9 @@ export function createSwaggerRouter(config: Pick<AppConfig, 'nodeEnv'>) {
         next();
     });
 
+    // Swagger UI needs inline scripts; relax CSP here only so the rest of the
+    // API keeps the strict helmet defaults.
+    router.use(helmet({ contentSecurityPolicy: false }));
     router.use('/', swaggerUi.serve);
     router.get('/', swaggerUi.setup(createOpenApiDocument(), {
         explorer: true,

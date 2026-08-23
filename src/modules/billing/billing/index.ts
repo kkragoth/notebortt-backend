@@ -27,7 +27,12 @@ export function createBillingService(
     );
 
     const stripe = isStripeConfigured
-        ? new Stripe(config.stripeSecretKey as string, { appInfo: { name: 'note-canva-backend', version: '1.0.0' } })
+        ? new Stripe(config.stripeSecretKey as string, {
+            appInfo: { name: 'note-canva-backend', version: '1.0.0' },
+            // Don't let a hung Stripe call pin an Express request forever.
+            timeout: 10_000,
+            maxNetworkRetries: 2,
+        })
         : null;
 
     const customerDomain = createBillingCustomerDomain({ db, stripe });

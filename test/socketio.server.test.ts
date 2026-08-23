@@ -6,6 +6,11 @@ import * as Y from 'yjs';
 import type {Socket} from 'socket.io-client';
 import { MutationType } from '@/modules/collaboration/mutations/types.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/socketio/server.js';
+import {
+    SOCKET_CLIENT_EVENTS,
+    SOCKET_RESERVED_EVENTS,
+    SOCKET_SERVER_EVENTS,
+} from '@/modules/realtime/socketio/constants.js';
 
 interface Harness {
   server: http.Server
@@ -60,10 +65,10 @@ async function createHarness(): Promise<Harness> {
         boardService: boardService as any,
         boardStateService: boardStateService as any,
         mutationProcessor: mutationProcessor as any,
-        previewJobService: {
-            enqueue: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
-            enqueueFlush: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
-        } as any,
+        events: {
+            emit: vi.fn(),
+            on: vi.fn().mockReturnValue(() => undefined),
+        },
         pubRedis: { publish: vi.fn().mockResolvedValue(1) } as any,
     }, {
         corsOrigin: 'http://localhost:3000',
@@ -99,7 +104,7 @@ async function connectSocket(harness: Harness): Promise<Socket> {
         extraHeaders: { origin: 'http://localhost:3000' },
     });
     harness.sockets.push(socket);
-    await once(socket, 'connect');
+    await once(socket, SOCKET_RESERVED_EVENTS.CONNECT);
     return socket;
 }
 
@@ -117,16 +122,16 @@ describe('createSocketIoRealtimeServer', () => {
         const sender = await connectSocket(activeHarness);
         const peer = await connectSocket(activeHarness);
 
-        sender.emit('board:join', { boardId: 'board-1', lastSequence: 0, sessionId: 'session-1' });
-        await once(sender, 'board:snapshot');
+        sender.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-1', lastSequence: 0, sessionId: 'session-1' });
+        await once(sender, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
 
-        peer.emit('board:join', { boardId: 'board-1', lastSequence: 0, sessionId: 'session-2' });
-        await once(peer, 'board:snapshot');
+        peer.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-1', lastSequence: 0, sessionId: 'session-2' });
+        await once(peer, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
 
-        const peerMutationPromise = once(peer, 'mutation');
-        const senderAckPromise = once(sender, 'mutation:ack');
+        const peerMutationPromise = once(peer, SOCKET_SERVER_EVENTS.MUTATION_BROADCAST);
+        const senderAckPromise = once(sender, SOCKET_SERVER_EVENTS.MUTATION_ACK);
 
-        sender.emit('mutation:batch', {
+        sender.emit(SOCKET_CLIENT_EVENTS.MUTATION_BATCH, {
             boardId: 'board-1',
             mutations: [{
                 mutationId: 'mut-1',
@@ -151,17 +156,17 @@ describe('createSocketIoRealtimeServer', () => {
         const sender = await connectSocket(activeHarness);
         const peer = await connectSocket(activeHarness);
 
-        sender.emit('board:join', { boardId: 'board-2', lastSequence: 0, sessionId: 'session-a' });
-        await once(sender, 'board:snapshot');
-        peer.emit('board:join', { boardId: 'board-2', lastSequence: 0, sessionId: 'session-b' });
-        await once(peer, 'board:snapshot');
+        sender.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-2', lastSequence: 0, sessionId: 'session-a' });
+        await once(sender, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
+        peer.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-2', lastSequence: 0, sessionId: 'session-b' });
+        await once(peer, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
 
         const yDoc = new Y.Doc();
         yDoc.getMap('moves').set('e1', { x: 42, y: 77 });
         const update = Y.encodeStateAsUpdate(yDoc);
 
-        const peerCrdtPromise = once(peer, 'crdt:update');
-        sender.emit('crdt:update', { boardId: 'board-2', update });
+        const peerCrdtPromise = once(peer, SOCKET_SERVER_EVENTS.CRDT_UPDATE);
+        sender.emit(SOCKET_CLIENT_EVENTS.CRDT_UPDATE, { boardId: 'board-2', update });
         const [crdtPayload] = await peerCrdtPromise;
         expect(crdtPayload.boardId).toBe('board-2');
 

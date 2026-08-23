@@ -6,31 +6,33 @@ import { createBoardMemberRoutes } from '../routes/members.routes.js';
 import { createBoardInvitationRoutes } from '../routes/invitations.routes.js';
 import { createBoardLinkSharingRoutes } from '../routes/link-sharing.routes.js';
 import type { RequestHandler } from 'express';
-import type { BoardService } from '../board.service.js';
-import type { WorkspaceService } from '@/modules/workspaces/index.js';
-import type { BoardStateService, MutationProcessor  } from '@/modules/collaboration/index.js';
-import type { AuthService } from '@/modules/auth/index.js';
-import type { PreviewJobService } from '@/modules/previews/index.js';
+import type { BoardRouteDeps } from './shared.js';
 import { createOptionalAuth } from '@/modules/auth/index.js';
 
-export function createBoardRouter(
-    boardService: BoardService,
-    workspaceService: WorkspaceService,
-    authMiddleware: RequestHandler,
-    boardStateService: BoardStateService,
-    mutationProcessor: MutationProcessor,
-    authService: AuthService,
-    previewJobService: PreviewJobService,
-) {
+export interface BoardRouterOptions extends BoardRouteDeps {
+    authMiddleware: RequestHandler
+}
+
+export function createBoardRouter({
+    boardService,
+    workspaceService,
+    authMiddleware,
+    boardStateService,
+    mutationProcessor,
+    authService,
+    previewJobService,
+    events,
+}: BoardRouterOptions) {
     const router = Router();
     const optionalAuth = createOptionalAuth(authService);
-    const deps = {
+    const deps: BoardRouteDeps = {
         boardService,
         workspaceService,
         boardStateService,
         mutationProcessor,
         authService,
         previewJobService,
+        events,
     };
 
     router.use(optionalAuth, createBoardAccessRoutes(deps));

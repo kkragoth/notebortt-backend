@@ -1,4 +1,5 @@
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
+import { APP_EVENTS } from '@/shared/events.js';
 
 export function createDisconnectHandler(
     runtime: SocketIoHandlerRuntime,
@@ -17,7 +18,7 @@ export function createDisconnectHandler(
         if (context.permission === 'edit') {
             // Tab close / navigation also lands here (socket dies), so no
             // client-side beforeunload call is needed.
-            void runtime.deps.previewJobService.enqueueFlush(context.boardId).catch(() => undefined);
+            runtime.deps.events.emit(APP_EVENTS.BOARD_EDITORS_LEFT, { boardId: context.boardId });
         }
 
         cleanupConnectionState();

@@ -45,6 +45,7 @@ jobs:
       NODE_ENV: test
       GOOGLE_CLIENT_ID: ci-placeholder
       GOOGLE_CLIENT_SECRET: ci-placeholder
+      GOOGLE_REDIRECT_URI: http://localhost:3000/auth/callback
       JWT_SECRET: ci-secret-ci-secret-ci-secret
       LOG_LEVEL: warn
 

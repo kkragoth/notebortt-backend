@@ -11,7 +11,8 @@ export type AuthRouterConfig = Pick<AppConfig,
   | 'nodeEnv'
   | 'refreshTokenExpiresDays'
   | 'jwtExpiresIn'
-  | 'corsOrigin'>
+  | 'corsOrigin'
+  | 'enableOauthFragmentTokens'>
 
 export interface AuthRouterDeps {
   config: AuthRouterConfig

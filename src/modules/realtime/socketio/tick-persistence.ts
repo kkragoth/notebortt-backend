@@ -4,6 +4,7 @@ import {
 } from '../socketio/constants.js';
 import type { Mutation } from '@/modules/collaboration/index.js';
 import type { SocketIoRealtimeDependencies } from '../socketio/types.js';
+import { APP_EVENTS } from '@/shared/events.js';
 import { MutationType } from '@/modules/collaboration/index.js';
 
 interface TickPersistenceOptions {
@@ -62,7 +63,7 @@ export function createTickPersistenceManager(
             operation: { type: MutationType.MOVE_ELEMENTS, moves },
         };
         const results = await deps.mutationProcessor.processBatch([mutation], userId);
-        void deps.previewJobService.enqueue(boardId).catch(() => undefined);
+        deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
         for (const result of results) {
             if (result.status === 'applied' && result.change) {
                 await options.onPersistedChange(boardId, userId, result.change, `tick:${boardId}`);

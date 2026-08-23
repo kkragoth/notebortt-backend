@@ -4,7 +4,7 @@ default:
     @just --list
 
 ensure-node:
-    @node -e "const major = Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Node 20+ is required. Current:', process.version); console.error('If you use nvm: nvm install 22 && nvm use 22'); process.exit(1); }"
+    @node -e "const major = Number(process.versions.node.split('.')[0]); if (major < 22) { console.error('Node 22+ is required. Current:', process.version); console.error('If you use nvm: nvm install 22 && nvm use 22'); process.exit(1); }"
 
 repair-node-modules:
     @node -e "const fs = require('fs'); const path = require('path'); const { execSync } = require('child_process'); const platform = process.platform; const arch = process.arch; const map = { darwin: { arm64: '@esbuild/darwin-arm64', x64: '@esbuild/darwin-x64' }, linux: { arm64: '@esbuild/linux-arm64', x64: '@esbuild/linux-x64' } }; const expected = map[platform]?.[arch]; if (!expected) process.exit(0); const nodeModules = path.join(process.cwd(), 'node_modules'); const expectedPath = path.join(nodeModules, expected); if (!fs.existsSync(nodeModules)) { console.log('Installing dependencies for local platform...'); execSync('npm ci', { stdio: 'inherit' }); process.exit(0); } if (fs.existsSync(expectedPath)) process.exit(0); console.log('Detected cross-platform node_modules. Reinstalling for local platform...'); fs.rmSync(nodeModules, { recursive: true, force: true }); execSync('npm ci', { stdio: 'inherit' });"

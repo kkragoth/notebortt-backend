@@ -5,6 +5,7 @@ import type { WorkspaceService } from '@/modules/workspaces/index.js';
 import type { BoardStateService, Mutation ,MutationProcessor } from '@/modules/collaboration/index.js';
 import type { AuthService } from '@/modules/auth/index.js';
 import type { PreviewJobService } from '@/modules/previews/index.js';
+import type { AppEventBus } from '@/shared/events.js';
 import {  MutationType } from '@/modules/collaboration/index.js';
 import { sendBadRequest } from '@/shared/http.js';
 import { parseWithSchema } from '@/shared/validation.js';
@@ -16,6 +17,7 @@ export interface BoardRouteDeps {
   mutationProcessor: MutationProcessor
   authService: AuthService
   previewJobService: PreviewJobService
+  events: AppEventBus
 }
 
 const uuidParamSchema = z.string().trim().uuid();

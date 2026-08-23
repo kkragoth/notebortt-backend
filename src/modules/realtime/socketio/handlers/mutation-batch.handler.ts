@@ -1,6 +1,7 @@
 import { parseMutationBatchPayload } from '../../socketio/payloads.js';
+import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
-import { logger } from '@/shared/logger.js';
+import { APP_EVENTS } from '@/shared/events.js';
 
 function hasConsistentBatchBoardId(boardId: string, mutations: unknown[]): boolean {
     return mutations.every((mutation) => {
@@ -17,15 +18,15 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         const payload = parseMutationBatchPayload(rawPayload);
         const snapshot = payload ? runtime.takeContextSnapshot(payload.boardId) : null;
         if (!payload || !snapshot) {
-            runtime.socket.emit('sync:error', { message: 'Invalid mutation batch payload' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid mutation batch payload' });
             return;
         }
         if (!hasConsistentBatchBoardId(payload.boardId, payload.mutations)) {
-            runtime.socket.emit('sync:error', { message: 'Mutation board mismatch' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Mutation board mismatch' });
             return;
         }
         if (snapshot.context.permission !== 'edit') {
-            runtime.socket.emit('sync:error', { message: 'No edit access to this board' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No edit access to this board' });
             return;
         }
 
@@ -38,9 +39,7 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         if (!runtime.isSnapshotActive(snapshot)) {
             return;
         }
-        void runtime.deps.previewJobService.enqueue(snapshot.context.boardId).catch((error) => {
-            logger.error({ err: error, boardId: snapshot.context.boardId }, '[PreviewJob] enqueue after realtime mutation failed');
-        });
+        runtime.deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: snapshot.context.boardId });
 
         const acknowledgedIds: string[] = [];
         let latestSequence: number | undefined;
@@ -58,7 +57,7 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
             }
 
             if (result.status !== 'already_applied') {
-                runtime.socket.to(payload.boardId).emit('mutation', { mutation });
+                runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.MUTATION_BROADCAST, { mutation });
             }
 
             if (result.status === 'applied' && result.change) {
@@ -67,7 +66,7 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         }
 
         if (runtime.socket.connected && runtime.isSnapshotActive(snapshot)) {
-            runtime.socket.emit('mutation:ack', { mutationIds: acknowledgedIds, sequence: latestSequence });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.MUTATION_ACK, { mutationIds: acknowledgedIds, sequence: latestSequence });
         }
     };
 }

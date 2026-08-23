@@ -5,6 +5,10 @@ const envSchema = z.object({
         (s) => s.startsWith('postgres://') || s.startsWith('postgresql://'),
         { message: 'Must be a valid PostgreSQL connection string' }
     ),
+    DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
+    DB_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().min(0).default(20),
+    DB_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(5),
+    DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(15_000),
     REDIS_URL: z.string().optional(),
     REDIS_REALTIME_URL: z.string().optional(),
     REDIS_JOBS_URL: z.string().optional(),
@@ -23,6 +27,11 @@ const envSchema = z.object({
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
+    ENABLE_LEGACY_API_ROUTES: z.coerce.boolean().default(true),
+    // DEPRECATED: tokens in the OAuth redirect fragment leak via history and
+    // extensions. Cookies are already set; flip to false once the frontend
+    // stops reading location.hash on /callback.
+    ENABLE_OAUTH_FRAGMENT_TOKENS: z.coerce.boolean().default(true),
     BULL_BOARD_USERNAME: z.string().min(1).default('admin'),
     BULL_BOARD_PASSWORD: z.string().min(8).optional(),
     STRIPE_BILLING_ENABLED: z.coerce.boolean().default(false),
@@ -37,6 +46,11 @@ const envSchema = z.object({
 
 export interface AppConfig {
   databaseUrl: string
+  dbPoolMax: number
+  dbIdleTimeoutSeconds: number
+  dbConnectTimeoutSeconds: number
+  dbStatementTimeoutMs: number
+  hasRedisUrl: boolean
   redisRealtimeUrl: string
   redisJobsUrl: string
   port: number
@@ -54,6 +68,8 @@ export interface AppConfig {
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
   enableBullBoard: boolean
+  enableLegacyApiRoutes: boolean
+  enableOauthFragmentTokens: boolean
   bullBoardUsername: string
   bullBoardPassword: string | null
   stripeBillingEnabled: boolean
@@ -74,6 +90,11 @@ export function loadConfig(): AppConfig {
 
     return {
         databaseUrl: parsed.DATABASE_URL,
+        dbPoolMax: parsed.DB_POOL_MAX,
+        dbIdleTimeoutSeconds: parsed.DB_IDLE_TIMEOUT_SECONDS,
+        dbConnectTimeoutSeconds: parsed.DB_CONNECT_TIMEOUT_SECONDS,
+        dbStatementTimeoutMs: parsed.DB_STATEMENT_TIMEOUT_MS,
+        hasRedisUrl: parsed.REDIS_URL !== undefined,
         redisRealtimeUrl,
         redisJobsUrl,
         port: parsed.PORT,
@@ -94,6 +115,8 @@ export function loadConfig(): AppConfig {
         enableBullBoard: parsed.ENABLE_BULL_BOARD
             ? parsed.ENABLE_BULL_BOARD === 'true'
             : parsed.NODE_ENV !== 'production',
+        enableLegacyApiRoutes: parsed.ENABLE_LEGACY_API_ROUTES,
+        enableOauthFragmentTokens: parsed.ENABLE_OAUTH_FRAGMENT_TOKENS,
         bullBoardUsername: parsed.BULL_BOARD_USERNAME,
         bullBoardPassword: parsed.BULL_BOARD_PASSWORD ?? null,
         stripeBillingEnabled: parsed.STRIPE_BILLING_ENABLED,

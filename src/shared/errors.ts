@@ -35,7 +35,8 @@ export const jsonNotFoundHandler: RequestHandler = (req, res) => {
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     const status = resolveStatus(err);
-    const payload = { method: req.method, url: req.originalUrl };
+    const requestId = typeof (req as { id?: unknown }).id === 'string' ? (req as { id: string }).id : undefined;
+    const payload = { method: req.method, url: req.originalUrl, requestId };
 
     if (res.headersSent) {
         next(err);
@@ -44,7 +45,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
 
     if (status >= 500) {
         logger.error({ err, ...payload }, 'unhandled_request_error');
-        res.status(status).json({ error: 'Internal server error' });
+        res.status(status).json({ error: 'Internal server error', ...(requestId ? { requestId } : {}) });
         return;
     }
 

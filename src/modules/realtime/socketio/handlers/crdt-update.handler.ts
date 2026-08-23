@@ -1,4 +1,5 @@
 import { parseCrdtUpdatePayload } from '../../socketio/payloads.js';
+import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
 
 export function createCrdtUpdateHandler(runtime: SocketIoHandlerRuntime) {
@@ -6,11 +7,11 @@ export function createCrdtUpdateHandler(runtime: SocketIoHandlerRuntime) {
         const payload = parseCrdtUpdatePayload(rawPayload);
         const snapshot = payload ? runtime.takeContextSnapshot(payload.boardId) : null;
         if (!payload || !snapshot) {
-            runtime.socket.emit('sync:error', { message: 'Invalid CRDT update payload' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid CRDT update payload' });
             return;
         }
         if (snapshot.context.permission !== 'edit') {
-            runtime.socket.emit('sync:error', { message: 'No edit access to this board' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No edit access to this board' });
             return;
         }
 
@@ -20,6 +21,6 @@ export function createCrdtUpdateHandler(runtime: SocketIoHandlerRuntime) {
         }
 
         runtime.crdtStore.applyRemoteUpdate(payload.boardId, snapshot.context.userId, payload.update);
-        runtime.socket.to(payload.boardId).emit('crdt:update', { boardId: payload.boardId, update: payload.update });
+        runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.CRDT_UPDATE, { boardId: payload.boardId, update: payload.update });
     };
 }

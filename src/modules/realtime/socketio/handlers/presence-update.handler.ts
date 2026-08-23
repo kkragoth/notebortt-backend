@@ -1,4 +1,5 @@
 import { parsePresenceUpdatePayload } from '../../socketio/payloads.js';
+import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
 
 export function createPresenceUpdateHandler(runtime: SocketIoHandlerRuntime) {
@@ -6,7 +7,7 @@ export function createPresenceUpdateHandler(runtime: SocketIoHandlerRuntime) {
         const payload = parsePresenceUpdatePayload(rawPayload);
         const snapshot = payload ? runtime.takeContextSnapshot(payload.boardId) : null;
         if (!payload || !snapshot) {
-            runtime.socket.emit('sync:error', { message: 'Invalid presence payload' });
+            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid presence payload' });
             return;
         }
 
@@ -15,7 +16,7 @@ export function createPresenceUpdateHandler(runtime: SocketIoHandlerRuntime) {
             return;
         }
 
-        runtime.socket.to(payload.boardId).emit('PRESENCE', {
+        runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.PRESENCE, {
             sessionId: snapshot.context.sessionId,
             userId: snapshot.context.userId,
             userName: snapshot.context.userName,

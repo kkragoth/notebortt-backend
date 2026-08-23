@@ -1,4 +1,4 @@
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
     ACCESS_TOKEN_COOKIE_NAME,
@@ -16,6 +16,7 @@ import type { Router } from 'express';
 import type { AuthRouterDeps } from '../routes/types.js';
 import { sendForbidden, sendNotFound } from '@/shared/http.js';
 import { devLoginBodySchema } from '@/shared/openapi/schemas.js';
+import { logger } from '@/shared/logger.js';
 import { refreshTokens } from '@/platform/db/schema.js';
 
 const emptyBodySchema = z.object({}).passthrough();
@@ -54,25 +55,59 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
         const found = await db
             .select()
             .from(refreshTokens)
-            .where(and(eq(refreshTokens.tokenHash, tokenHash), gt(refreshTokens.expiresAt, now)))
+            .where(eq(refreshTokens.tokenHash, tokenHash))
             .limit(1);
 
-        if (found.length === 0) {
+        if (found.length === 0 || found[0].expiresAt <= now) {
             res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH });
             res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, { path: '/' });
             res.status(401).json({ error: 'Invalid or expired refresh token' });
             return;
         }
-
         const existingToken = found[0];
-        await db.delete(refreshTokens).where(eq(refreshTokens.id, existingToken.id));
+
+        // Atomic claim: only one concurrent request can revoke the token.
+        // Losing the race means another client already rotated it — i.e. this
+        // token was replayed.
+        const claimed = await db
+            .update(refreshTokens)
+            .set({ revokedAt: now })
+            .where(and(eq(refreshTokens.id, existingToken.id), isNull(refreshTokens.revokedAt)))
+            .returning({ id: refreshTokens.id });
+
+        if (claimed.length === 0) {
+            // Reuse of an already-rotated token: assume theft and kill the
+            // entire token family so the attacker's copy dies too.
+            await db
+                .update(refreshTokens)
+                .set({ revokedAt: now })
+                .where(and(
+                    eq(refreshTokens.familyId, existingToken.familyId),
+                    isNull(refreshTokens.revokedAt),
+                ));
+            logger.warn({
+                userId: existingToken.userId,
+                familyId: existingToken.familyId,
+            }, '[Auth] refresh token reuse detected; family revoked');
+
+            res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH });
+            res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, { path: '/' });
+            res.status(401).json({ error: 'Refresh token reuse detected; session revoked' });
+            return;
+        }
 
         const newAccessToken = authService.generateAccessToken(existingToken.userId);
         const newRefreshToken = authService.generateRefreshToken();
         const newTokenHash = authService.hashRefreshToken(newRefreshToken);
         const expiresAt = buildRefreshTokenExpiry(config.refreshTokenExpiresDays);
 
-        await db.insert(refreshTokens).values({ userId: existingToken.userId, tokenHash: newTokenHash, expiresAt });
+        // Rotation stays inside the same family so a later replay can nuke it.
+        await db.insert(refreshTokens).values({
+            userId: existingToken.userId,
+            familyId: existingToken.familyId,
+            tokenHash: newTokenHash,
+            expiresAt,
+        });
 
         const accessCookieOptions = buildAccessTokenCookieOptions(config);
         const refreshCookieOptions = buildRefreshTokenCookieOptions(config);
@@ -139,8 +174,15 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
             refreshToken = req.body.refreshToken as string | undefined;
         }
         if (refreshToken) {
-            const tokenHash = authService.hashRefreshToken(refreshToken);
-            await db.delete(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash));
+            // Revoke instead of delete: the row must survive so that a later
+            // replay of this token triggers family-wide revocation.
+            await db
+                .update(refreshTokens)
+                .set({ revokedAt: sql`now()` })
+                .where(and(
+                    eq(refreshTokens.tokenHash, authService.hashRefreshToken(refreshToken)),
+                    isNull(refreshTokens.revokedAt),
+                ));
         }
 
         res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH });
