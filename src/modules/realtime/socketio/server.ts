@@ -2,7 +2,13 @@ import { Server } from 'socket.io';
 import { createCrdtRoomStore } from '../socketio/crdt-room.js';
 import { createParticipantsStore } from '../socketio/participants.js';
 import { createTickPersistenceManager } from '../socketio/tick-persistence.js';
-import { WS_ELEMENTS_CHANGED_TYPE } from '../socketio/constants.js';
+import {
+    SOCKET_CLIENT_EVENTS,
+    SOCKET_RESERVED_EVENTS,
+    SOCKET_SERVER_EVENTS,
+    WS_ELEMENTS_CHANGED_TYPE,
+    boardMutationsChannel,
+} from '../socketio/constants.js';
 import { createBoardJoinHandler } from '../socketio/handlers/join.handler.js';
 import { createMutationBatchHandler } from '../socketio/handlers/mutation-batch.handler.js';
 import { createCrdtUpdateHandler } from '../socketio/handlers/crdt-update.handler.js';
@@ -46,7 +52,7 @@ export function createSocketIoRealtimeServer(
 
     async function publishElementsChanged(boardId: string, userId: string, change: unknown, senderId: string): Promise<void> {
         await deps.pubRedis.publish(
-            `board:${boardId}:mutations`,
+            boardMutationsChannel(boardId),
             JSON.stringify({
                 message: { type: WS_ELEMENTS_CHANGED_TYPE, change, fromUserId: userId },
                 senderConnectionId: `socketio:${senderId}`,
@@ -61,7 +67,7 @@ export function createSocketIoRealtimeServer(
         maxWaitMs: options.crdtMaxWaitMs,
         onPersistedChange: async (boardId, userId, change) => {
             await deps.pubRedis.publish(
-                `board:${boardId}:mutations`,
+                boardMutationsChannel(boardId),
                 JSON.stringify({
                     message: { type: WS_ELEMENTS_CHANGED_TYPE, change, fromUserId: userId },
                     senderConnectionId: `socketio:crdt:${boardId}`,
@@ -71,15 +77,15 @@ export function createSocketIoRealtimeServer(
     });
 
     function emitUserLeft(boardId: string, participant: RoomParticipant): void {
-        io.to(boardId).emit('USER_LEFT', {
+        io.to(boardId).emit(SOCKET_SERVER_EVENTS.USER_LEFT, {
             sessionId: participant.sessionId,
             userId: participant.userId,
         });
     }
 
-    io.on('connection', (socket) => {
+    io.on(SOCKET_RESERVED_EVENTS.CONNECTION, (socket) => {
         incrementOpenSocketIoConnections();
-        socket.once('disconnect', () => {
+        socket.once(SOCKET_RESERVED_EVENTS.DISCONNECT, () => {
             decrementOpenSocketIoConnections();
         });
 
@@ -231,7 +237,10 @@ export function createSocketIoRealtimeServer(
             publishElementsChanged,
         };
 
-        function registerHandler(event: string, handler: (payload: unknown) => Promise<void>): void {
+        type SocketServerEvent = (typeof SOCKET_CLIENT_EVENTS)[keyof typeof SOCKET_CLIENT_EVENTS]
+            | typeof SOCKET_RESERVED_EVENTS.DISCONNECT;
+
+        function registerHandler(event: SocketServerEvent, handler: (payload: unknown) => Promise<void>): void {
             socket.on(event, (payload: unknown) => {
                 void (async () => {
                     try {
@@ -243,19 +252,19 @@ export function createSocketIoRealtimeServer(
                             socketId: socket.id,
                         }, '[socketio] unhandled handler error');
                         if (socket.connected) {
-                            socket.emit('sync:error', { message: 'Internal realtime server error' });
+                            socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Internal realtime server error' });
                         }
                     }
                 })();
             });
         }
 
-        registerHandler('board:join', createBoardJoinHandler(runtime));
-        registerHandler('mutation:batch', createMutationBatchHandler(runtime));
-        registerHandler('crdt:update', createCrdtUpdateHandler(runtime));
-        registerHandler('presence:update', createPresenceUpdateHandler(runtime));
-        registerHandler('realtime:tick', createRealtimeTickHandler(runtime));
-        registerHandler('disconnect', createDisconnectHandler(runtime, cleanupConnectionState));
+        registerHandler(SOCKET_CLIENT_EVENTS.BOARD_JOIN, createBoardJoinHandler(runtime));
+        registerHandler(SOCKET_CLIENT_EVENTS.MUTATION_BATCH, createMutationBatchHandler(runtime));
+        registerHandler(SOCKET_CLIENT_EVENTS.CRDT_UPDATE, createCrdtUpdateHandler(runtime));
+        registerHandler(SOCKET_CLIENT_EVENTS.PRESENCE_UPDATE, createPresenceUpdateHandler(runtime));
+        registerHandler(SOCKET_CLIENT_EVENTS.REALTIME_TICK, createRealtimeTickHandler(runtime));
+        registerHandler(SOCKET_RESERVED_EVENTS.DISCONNECT, createDisconnectHandler(runtime, cleanupConnectionState));
     });
 
     return io;

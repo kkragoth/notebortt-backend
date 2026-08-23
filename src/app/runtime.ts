@@ -2,7 +2,7 @@ import type { AppConfig } from '@/shared/config.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
-import { createAppEventBus } from '@/shared/events.js';
+import { APP_EVENTS, createAppEventBus } from '@/shared/events.js';
 import { logger } from '@/shared/logger.js';
 import {
     createAuthMiddleware,
@@ -58,12 +58,12 @@ export function createAppRuntime(config: AppConfig) {
     });
 
     // Cross-module reactions live here so emitters stay decoupled from consumers.
-    events.on('board.mutated', ({ boardId }) => {
+    events.on(APP_EVENTS.BOARD_MUTATED, ({ boardId }) => {
         void previewJobService.enqueue(boardId).catch((error) => {
             logger.error({ err: error, boardId }, '[PreviewJob] enqueue after board.mutated failed');
         });
     });
-    events.on('board.editorsLeft', ({ boardId }) => {
+    events.on(APP_EVENTS.BOARD_EDITORS_LEFT, ({ boardId }) => {
         void previewJobService.enqueueFlush(boardId).catch((error) => {
             logger.error({ err: error, boardId }, '[PreviewJob] flush enqueue after board.editorsLeft failed');
         });

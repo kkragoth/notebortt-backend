@@ -6,11 +6,16 @@ import { logger } from './logger.js';
  * subscribers are wired in the composition root (src/app/runtime.ts).
  * Keep payloads small and serializable.
  */
-export interface AppEventMap {
+export const APP_EVENTS = {
     /** Board state changed (REST mutation or realtime CRDT tick). */
-    'board.mutated': { boardId: string }
+    BOARD_MUTATED: 'board.mutated',
     /** Last editor left a board; consumers should flush pending work soon. */
-    'board.editorsLeft': { boardId: string }
+    BOARD_EDITORS_LEFT: 'board.editorsLeft',
+} as const;
+
+export interface AppEventMap {
+    [APP_EVENTS.BOARD_MUTATED]: { boardId: string }
+    [APP_EVENTS.BOARD_EDITORS_LEFT]: { boardId: string }
 }
 
 export type AppEventHandler<TEvent extends keyof AppEventMap> = (payload: AppEventMap[TEvent]) => void;

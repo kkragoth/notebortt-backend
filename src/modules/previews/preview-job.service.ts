@@ -7,6 +7,7 @@ import { logger } from '@/shared/logger.js';
 import { boards, elements } from '@/platform/db/schema.js';
 
 export const PREVIEW_QUEUE_NAME = 'board-preview';
+export const PREVIEW_JOB_NAME = 'render';
 
 const PREVIEW_JOB_ATTEMPTS = 3;
 const PREVIEW_JOB_BACKOFF_DELAY_MS = 5_000;
@@ -67,7 +68,7 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         // delayed, `replace` atomically swaps it for this add (fresh timer);
         // `extend` slides the dedup window so late edits can't spawn a second job.
         await getQueue().add(
-            'render',
+            PREVIEW_JOB_NAME,
             { boardId },
             {
                 deduplication: {
@@ -87,7 +88,7 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         // bypassing both the debounce and the min-interval guard.
         const dueAt = Date.now() + PREVIEW_FLUSH_DELAY_MS;
         await getQueue().add(
-            'render',
+            PREVIEW_JOB_NAME,
             { boardId, flush: true },
             {
                 deduplication: {
@@ -134,7 +135,7 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
             const deferred = await maybeDeferForMinInterval(boardId);
             if (deferred.deferred) {
                 await getQueue().add(
-                    'render',
+                    PREVIEW_JOB_NAME,
                     { boardId },
                     {
                         deduplication: {
