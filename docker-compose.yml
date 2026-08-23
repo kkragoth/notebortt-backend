@@ -180,7 +180,8 @@ services:
     env_file:
       - ./.env
     depends_on:
-      - backend
+      - api
+      - realtime
     ports:
       - "80:80"
       - "443:443"
