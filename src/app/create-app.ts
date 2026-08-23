@@ -1,26 +1,77 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import type { AppRuntime } from '@/app/runtime.js';
-import { createCorsMiddleware } from '@/middleware/cors.js';
-import { createAuthRouter } from '@/routes/auth.js';
-import { createBoardRouter } from '@/routes/boards.js';
-import { createBillingRouter, createBillingWebhookRouter } from '@/routes/billing.js';
-import { createDebugRouter } from '@/routes/debug.js';
-import { healthRoute } from '@/routes/health.js';
-import { createOpenApiRouter } from '@/routes/openapi.js';
-import { createSwaggerRouter } from '@/routes/swagger.js';
-import { createUserRouter } from '@/routes/users.js';
-import { createWorkspaceRouter } from '@/routes/workspaces.js';
+import { createCorsMiddleware } from '@/shared/cors.js';
+import { createAuthRouter } from '@/modules/auth/index.js';
+import { createUserRouter } from '@/modules/users/index.js';
+import { createWorkspaceRouter } from '@/modules/workspaces/index.js';
+import { createBoardRouter } from '@/modules/boards/index.js';
+import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billing/index.js';
+import { createDebugRouter } from '@/app/debug.routes.js';
+import { healthRoute } from '@/app/health.routes.js';
+import { createMetricsRoute } from '@/app/metrics.routes.js';
+import { BULL_BOARD_BASE_PATH, createBasicAuthGate, createBullBoardRouter } from '@/app/bull-board.routes.js';
+import { logger } from '@/shared/logger.js';
+import { createOpenApiRouter } from '@/app/openapi.routes.js';
+import { createSwaggerRouter } from '@/app/swagger.routes.js';
+import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
+
+const GLOBAL_RATE_LIMIT_MAX = 300;
+const GLOBAL_RATE_LIMIT_WINDOW_MS = 60_000;
+const AUTH_RATE_LIMIT_MAX = 20;
+const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+const JSON_BODY_LIMIT = '1mb';
 
 export function createApp(runtime: AppRuntime) {
     const app = express();
 
+    app.disable('x-powered-by');
+    app.set('trust proxy', 1);
+    // CSP stays disabled: Swagger UI relies on inline scripts.
+    app.use(helmet({ contentSecurityPolicy: false }));
     app.use(createCorsMiddleware(runtime.config.corsOrigin));
     app.use(cookieParser());
+
+    const globalLimiter = rateLimit({
+        windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
+        limit: GLOBAL_RATE_LIMIT_MAX,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+        skip: (req) => req.path === '/health' || req.path === '/metrics' || req.path.startsWith(BULL_BOARD_BASE_PATH),
+    });
+    const authLimiter = rateLimit({
+        windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+        limit: AUTH_RATE_LIMIT_MAX,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+    });
+
+    app.use(globalLimiter);
+    app.use('/auth', authLimiter);
+
+    // Stripe webhook must see the raw body, so it stays before express.json().
     app.use('/', createBillingWebhookRouter(runtime.billingService));
-    app.use(express.json());
+    app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
     app.get('/health', healthRoute(runtime.db, runtime.redis));
+    app.get('/metrics', createMetricsRoute(runtime.metrics));
+    if (runtime.config.enableBullBoard) {
+        const { bullBoardUsername, bullBoardPassword, nodeEnv } = runtime.config;
+        if (bullBoardPassword) {
+            app.use(
+                BULL_BOARD_BASE_PATH,
+                createBasicAuthGate(bullBoardUsername, bullBoardPassword),
+                createBullBoardRouter([runtime.previewJobService.getQueue()]),
+            );
+        } else if (nodeEnv === 'production') {
+            logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
+        } else {
+            logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
+            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter([runtime.previewJobService.getQueue()]));
+        }
+    }
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));
@@ -37,6 +88,9 @@ export function createApp(runtime: AppRuntime) {
         runtime.authService,
         runtime.previewJobService,
     ));
+
+    app.use(jsonNotFoundHandler);
+    app.use(errorHandler);
 
     return app;
 }

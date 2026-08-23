@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createDebugRouter } from '@/routes/debug.js';
+import { createDebugRouter } from '@/app/debug.routes.js';
 
 describe('GET /debug/state', () => {
     it('returns 404 in production', async () => {

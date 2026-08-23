@@ -1,31 +1,31 @@
-import { WebSocketServer } from 'ws';
-import type { AppConfig } from '@/config.js';
-import { createDb } from '@/db/client.js';
-import { createAuthMiddleware } from '@/middleware/auth.js';
-import { createRedisClient } from '@/redis/client.js';
-import { createMutationProcessor } from '@/mutations/processor.js';
-import { createRuntimeMetrics } from '@/observability/metrics.js';
-import { createAuthService } from '@/services/auth.service.js';
-import { createBoardPersistenceService } from '@/services/board-persistence.service.js';
-import { createBoardPreviewRenderer } from '@/services/board-preview.service.js';
-import { createBoardStateService } from '@/services/board-state.service.js';
-import { createRedisCleanupService } from '@/services/redis-cleanup.service.js';
-import { createBoardService } from '@/services/board.service.js';
-import { createPreviewJobService } from '@/services/preview-job.service.js';
-import { createBillingService } from '@/services/billing.service.js';
-import { createUserService } from '@/services/user.service.js';
-import { createWorkspaceService } from '@/services/workspace.service.js';
-import { createHeartbeatService } from '@/ws/heartbeat.js';
-import { createBoardRoomManager } from '@/ws/room.js';
-import { createUpgradeHandler } from '@/ws/upgrade.js';
-import { createWebSocketHandler } from '@/ws/handler.js';
+import type { AppConfig } from '@/shared/config.js';
+import { createDb } from '@/platform/db/client.js';
+import { createRedisClient } from '@/platform/redis/client.js';
+import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
+import {
+    createAuthMiddleware,
+    createAuthService,
+} from '@/modules/auth/index.js';
+import { createUserService } from '@/modules/users/index.js';
+import { createWorkspaceService } from '@/modules/workspaces/index.js';
+import { createBoardService } from '@/modules/boards/index.js';
+import { createBillingService } from '@/modules/billing/index.js';
+import {
+    createBoardPersistenceService,
+    createBoardStateService,
+    createMutationProcessor,
+    createRedisCleanupService,
+} from '@/modules/collaboration/index.js';
+import {
+    createBoardPreviewRenderer,
+    createPreviewJobService,
+} from '@/modules/previews/index.js';
 
 export function createAppRuntime(config: AppConfig) {
     const db = createDb(config.databaseUrl);
     const redis = createRedisClient(config.redisRealtimeUrl);
     const pubRedis = createRedisClient(config.redisRealtimeUrl);
-    const jobsRedis = createRedisClient(config.redisJobsUrl);
-    const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+    const jobsRedis = createRedisClient(config.redisJobsUrl, { maxRetriesPerRequest: null });
 
     const authService = createAuthService(config);
     const authMiddleware = createAuthMiddleware(authService);
@@ -47,13 +47,6 @@ export function createAppRuntime(config: AppConfig) {
     const mutationProcessor = createMutationProcessor(boardStateService, {
         enableTargetedReads: config.enableTargetedMutationReads,
     });
-    const roomManager = createBoardRoomManager();
-    const heartbeat = createHeartbeatService(roomManager);
-    const wsHandler = createWebSocketHandler(roomManager, boardStateService, mutationProcessor, heartbeat, pubRedis, {
-        presenceWriteThrottleMs: config.presenceWriteThrottleMs,
-        presenceWriteJitterMs: config.presenceWriteJitterMs,
-    });
-    const upgradeHandler = createUpgradeHandler(wss, authService, userService, boardService, config.corsOrigin);
 
     return {
         config,
@@ -61,7 +54,6 @@ export function createAppRuntime(config: AppConfig) {
         redis,
         pubRedis,
         jobsRedis,
-        wss,
         authService,
         authMiddleware,
         userService,
@@ -73,10 +65,6 @@ export function createAppRuntime(config: AppConfig) {
         redisCleanupService,
         previewJobService,
         mutationProcessor,
-        roomManager,
-        heartbeat,
-        wsHandler,
-        upgradeHandler,
         metrics,
     };
 }

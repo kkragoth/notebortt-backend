@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { createRedisClient } from '@/redis/client.js';
-import { createRedisCleanupService } from '@/services/redis-cleanup.service.js';
+import { createRedisClient } from '@/platform/redis/client.js';
+import { createRedisCleanupService } from '@/modules/collaboration/redis-cleanup.service.js';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const redis = createRedisClient(REDIS_URL);

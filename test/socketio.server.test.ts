@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {  io as ioClient } from 'socket.io-client';
 import * as Y from 'yjs';
 import type {Socket} from 'socket.io-client';
-import { MutationType } from '@/mutations/types.js';
-import { createSocketIoRealtimeServer } from '@/socketio/server.js';
+import { MutationType } from '@/modules/collaboration/mutations/types.js';
+import { createSocketIoRealtimeServer } from '@/modules/realtime/socketio/server.js';
 
 interface Harness {
   server: http.Server
@@ -60,6 +60,10 @@ async function createHarness(): Promise<Harness> {
         boardService: boardService as any,
         boardStateService: boardStateService as any,
         mutationProcessor: mutationProcessor as any,
+        previewJobService: {
+            enqueue: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
+            enqueueFlush: vi.fn().mockResolvedValue({ boardId: 'b1', dueAt: Date.now() }),
+        } as any,
         pubRedis: { publish: vi.fn().mockResolvedValue(1) } as any,
     }, {
         corsOrigin: 'http://localhost:3000',

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createRedisClient } from '@/redis/client.js';
-import { createBoardMutationLockDomain } from '@/services/board-state/mutation-lock-domain.js';
-import { boardMutationLockKey } from '@/services/board-state/keys.js';
+import { createRedisClient } from '@/platform/redis/client.js';
+import { createBoardMutationLockDomain } from '@/modules/collaboration/board-state/mutation-lock-domain.js';
+import { boardMutationLockKey } from '@/modules/collaboration/board-state/keys.js';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const BOARD_ID = `board-lock-test-${Date.now()}`;

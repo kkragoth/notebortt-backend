@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createWorkspaceService } from '@/services/workspace.service.js';
+import { createWorkspaceService } from '@/modules/workspaces/workspace.service.js';
 
 function makeInvitation(overrides: Record<string, unknown> = {}) {
     return {

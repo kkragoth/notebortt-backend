@@ -1,9 +1,9 @@
 import express from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import type {BoardElement, Mutation} from '@/mutations/types.js';
-import { createBoardRouter } from '@/routes/boards.js';
-import {   MutationType } from '@/mutations/types.js';
+import type {BoardElement, Mutation} from '@/modules/collaboration/mutations/types.js';
+import { createBoardRouter } from '@/modules/boards/routes/index.js';
+import {   MutationType } from '@/modules/collaboration/mutations/types.js';
 
 const BOARD_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';

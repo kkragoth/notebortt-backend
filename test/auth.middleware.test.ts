@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createAuthMiddleware } from '@/middleware/auth.js';
+import { createAuthMiddleware } from '@/modules/auth/auth.middleware.js';
 
 const mockAuthService = {
     verifyAccessToken: (token: string) => {

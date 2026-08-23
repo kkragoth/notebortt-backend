@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAuthService } from '@/services/auth.service.js';
+import { createAuthService } from '@/modules/auth/auth.service.js';
 
 const mockConfig = {
     jwtSecret: 'test-secret-at-least-16-characters',
