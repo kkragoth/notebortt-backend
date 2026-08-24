@@ -13,19 +13,31 @@ const streamKey = `${APP_EVENTS_STREAM_KEY}:test:${Date.now()}:${Math.random().t
 
 describe('stream-backed app event bus', () => {
     let clients: Redis[] = [];
+    let unsubscribes: Array<() => void> = [];
 
     beforeEach(() => {
         clients = [];
+        unsubscribes = [];
     });
 
     afterEach(async () => {
+        // Stop read loops before killing connections so pending BLOCKs
+        // don't reject into the void as unhandled errors.
+        for (const off of unsubscribes.splice(0)) {
+            off();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
         const cleaner = new Redis(REDIS_URL);
         await cleaner.del(streamKey);
         cleaner.disconnect();
-        for (const client of clients) {
-            client.disconnect();
+        for (const client of clients.splice(0)) {
+            client.quit().catch(() => undefined);
         }
     });
+
+    function trackUnsubscribe(off: () => void): void {
+        unsubscribes.push(off);
+    }
 
     function makeClient(): Redis {
         const client = new Redis(REDIS_URL);
@@ -63,7 +75,7 @@ describe('stream-backed app event bus', () => {
 
         const bus = makeBus(group);
         const handler = vi.fn().mockResolvedValue(undefined);
-        bus.on(APP_EVENTS.BOARD_MUTATED, handler);
+        trackUnsubscribe(bus.on(APP_EVENTS.BOARD_MUTATED, handler));
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -81,8 +93,8 @@ describe('stream-backed app event bus', () => {
         const bus = makeBus(group);
         const first = vi.fn().mockResolvedValue(undefined);
         const second = vi.fn().mockResolvedValue(undefined);
-        bus.on(APP_EVENTS.BOARD_EDITORS_LEFT, first);
-        bus.on(APP_EVENTS.BOARD_EDITORS_LEFT, second);
+        trackUnsubscribe(bus.on(APP_EVENTS.BOARD_EDITORS_LEFT, first));
+        trackUnsubscribe(bus.on(APP_EVENTS.BOARD_EDITORS_LEFT, second));
 
         await new Promise((resolve) => setTimeout(resolve, 100));
         bus.emit(APP_EVENTS.BOARD_EDITORS_LEFT, { boardId: 'b-2' });
@@ -105,8 +117,8 @@ describe('stream-backed app event bus', () => {
             }
         });
         const healthy = vi.fn().mockResolvedValue(undefined);
-        bus.on(APP_EVENTS.BOARD_MUTATED, flaky);
-        bus.on(APP_EVENTS.BOARD_MUTATED, healthy);
+        trackUnsubscribe(bus.on(APP_EVENTS.BOARD_MUTATED, flaky));
+        trackUnsubscribe(bus.on(APP_EVENTS.BOARD_MUTATED, healthy));
         void bus;
 
         await new Promise((resolve) => setTimeout(resolve, 100));

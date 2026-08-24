@@ -80,13 +80,21 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
     const rateLimitSendCommand: SendCommandFn = (...args: string[]) =>
         runtime.redis.call(...(args as [string, ...string[]])) as Promise<RedisReply>;
 
-    const rateLimitStore = runtime.config.hasRedisUrl
-        ? new RedisStore({
-            // Dedicated keyspace; commands fail-open via passOnStoreError below.
-            prefix: 'rl:',
-            sendCommand: rateLimitSendCommand,
-        })
-        : undefined;
+    // express-rate-limit forbids sharing one store instance between
+    // limiters (ERR_ERL_STORE_REUSE), and distinct prefixes keep counter
+    // keys from colliding — otherwise the auth limiter and the global
+    // limiter would drain each other's budgets.
+    function createRateLimitStore(prefix: string): RedisStore | undefined {
+        return runtime.config.hasRedisUrl
+            ? new RedisStore({
+                prefix,
+                sendCommand: rateLimitSendCommand,
+            })
+            : undefined;
+    }
+
+    const globalRateLimitStore = createRateLimitStore('rl:');
+    const authRateLimitStore = createRateLimitStore('rl:auth:');
 
     const globalLimiter = rateLimit({
         windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -96,7 +104,7 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
         // Availability over strictness: never 500 the whole API because the
         // counters are unreachable.
         passOnStoreError: true,
-        ...(rateLimitStore ? { store: rateLimitStore } : {}),
+        ...(globalRateLimitStore ? { store: globalRateLimitStore } : {}),
         skip: (req) => UNVERSIONED_PATHS.some((prefix) =>
             req.path === prefix || req.path.startsWith(`${prefix}/`)),
     });
@@ -106,7 +114,7 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
         standardHeaders: 'draft-8',
         legacyHeaders: false,
         passOnStoreError: true,
-        ...(rateLimitStore ? { store: rateLimitStore } : {}),
+        ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     });
 
     app.use(globalLimiter);

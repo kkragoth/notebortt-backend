@@ -117,8 +117,11 @@ async function createHarness(): Promise<Harness> {
                 }
             }
             await new Promise<void>((resolve) => server.close(() => resolve()));
-            pubRedis.disconnect();
-            subRedis.disconnect();
+            // Let in-flight disconnect-handler redis ops (participant removal,
+            // viewer cleanup) settle before killing the connections, or their
+            // rejections escape as unhandled and fail the whole vitest run.
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            await Promise.allSettled([pubRedis.quit(), subRedis.quit()]);
         },
     };
 }
