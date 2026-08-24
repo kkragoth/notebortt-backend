@@ -61,7 +61,24 @@ db-reset:
     just db-migrate
     just db-seed
 
+# Recreate the throwaway integration-test database from the baseline schema.
+test-db:
+    #!/bin/sh
+    set -eu
+    set -a; . ./.env; set +a
+    docker compose -f docker-compose.yml up -d postgres
+    i=0; until docker compose -f docker-compose.yml exec -T postgres pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 30 ] && exit 1; sleep 1; done
+    docker compose -f docker-compose.yml exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP DATABASE IF EXISTS notecanva_test WITH (FORCE);" -c "CREATE DATABASE notecanva_test;"
+    # drizzle-kit reads DATABASE_URL from drizzle.config.ts
+    DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/notecanva_test" npx drizzle-kit migrate
+
 test:
+    just test-db
+    #!/bin/sh
+    set -eu
+    set -a; . ./.env; set +a
+    export DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/notecanva_test"
+    export TEST_DATABASE_URL="$DATABASE_URL"
     npx vitest run
 
 test-watch:

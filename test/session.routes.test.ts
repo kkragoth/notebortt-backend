@@ -1,20 +1,24 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import {  beginRollbackTx } from './helpers/fixtures.js';
+import type {RollbackTxHandle} from './helpers/fixtures.js';
 import type { AuthRouterDeps } from '@/modules/auth/routes/types.js';
 import { loadConfig } from '@/shared/config.js';
 import { createAuthService } from '@/modules/auth/auth.service.js';
 import { createUserService } from '@/modules/users/index.js';
 import { registerSessionRoutes } from '@/modules/auth/routes/session.routes.js';
-import { createDb } from '@/platform/db/client.js';
 import { refreshTokens, users } from '@/platform/db/schema.js';
 
 const config = loadConfig();
-const db = createDb(config.databaseUrl);
 const authService = createAuthService(config);
-const userService = createUserService(db);
+// The whole suite runs inside one transaction that is rolled back at
+// teardown: users/tokens created here never reach the database.
+let tx: RollbackTxHandle;
+let db: typeof tx.db;
+let userService: ReturnType<typeof createUserService>;
 
 function buildApp(deps: AuthRouterDeps) {
     const app = express();
@@ -25,12 +29,19 @@ function buildApp(deps: AuthRouterDeps) {
     return app;
 }
 
-const app = buildApp({
-    config: { ...config, nodeEnv: 'test' },
-    oauth2Client: {} as AuthRouterDeps['oauth2Client'],
-    authService,
-    userService,
-    db,
+let app: express.Express;
+
+beforeAll(async () => {
+    tx = await beginRollbackTx();
+    db = tx.db;
+    userService = createUserService(db);
+    app = buildApp({
+        config: { ...config, nodeEnv: 'test' },
+        oauth2Client: {} as AuthRouterDeps['oauth2Client'],
+        authService,
+        userService,
+        db,
+    });
 });
 
 // Session routes reject untrusted origins; supertest sends none by default.
@@ -45,6 +56,7 @@ async function createTestUser(): Promise<string> {
     const [user] = await db.insert(users).values({ email, name: 'Session Test' }).returning({ id: users.id });
     return user.id;
 }
+
 
 async function insertToken(userId: string, options: { familyId?: string; revoked?: boolean; expiresInDays?: number } = {}) {
     const rawToken = authService.generateRefreshToken();
@@ -63,18 +75,13 @@ async function familyRows(familyId: string) {
 }
 
 let userId: string;
-// Every beforeEach mints a fresh fixture user; track them all or each run
-// leaks all but the last one into the database.
-const createdUserIds: string[] = [];
 
 beforeEach(async () => {
     userId = await createTestUser();
-    createdUserIds.push(userId);
 });
 
 afterAll(async () => {
-    await db.delete(users).where(inArray(users.id, createdUserIds));
-    await db.$client.end();
+    await tx.rollback();
 });
 
 describe('refresh token rotation with reuse detection', () => {

@@ -6,12 +6,13 @@ import 'dotenv/config';
  */
 async function assertInfraAvailable(): Promise<void> {
     const checks: Array<{ name: string; probe: Promise<unknown> }> = [];
+    const dbUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 
-    if (process.env.DATABASE_URL) {
+    if (dbUrl) {
         const postgres = (await import('postgres')).default;
-        const sql = postgres(process.env.DATABASE_URL, { connect_timeout: 3, max: 1 });
+        const sql = postgres(dbUrl, { connect_timeout: 3, max: 1 });
         checks.push({
-            name: `Postgres (${process.env.DATABASE_URL.replace(/:\/\/[^@]*@/, '://***@')})`,
+            name: `Postgres (${dbUrl.replace(/:\/\/[^@]*@/, '://***@')})`,
             probe: sql`select 1`.then(() => sql.end()),
         });
     }
