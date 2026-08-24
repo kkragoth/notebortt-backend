@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { AuthRouterDeps } from '@/modules/auth/routes/types.js';
 import { loadConfig } from '@/shared/config.js';
 import { createAuthService } from '@/modules/auth/auth.service.js';
@@ -63,13 +63,17 @@ async function familyRows(familyId: string) {
 }
 
 let userId: string;
+// Every beforeEach mints a fresh fixture user; track them all or each run
+// leaks all but the last one into the database.
+const createdUserIds: string[] = [];
 
 beforeEach(async () => {
     userId = await createTestUser();
+    createdUserIds.push(userId);
 });
 
 afterAll(async () => {
-    await db.delete(users).where(eq(users.id, userId));
+    await db.delete(users).where(inArray(users.id, createdUserIds));
     await db.$client.end();
 });
 
