@@ -5,7 +5,7 @@ import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell } from '@/apps/app-shell.js';
+import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 
 /**
  * Realtime app. Owns Socket.IO: CRDT sessions, presence, mutation batches.
@@ -53,6 +53,8 @@ runAppShell({
                     subRedis: runtime.subRedis,
                 }, {
                     corsOrigin: config.corsOrigin,
+                    activityWriteThrottleMs: config.presenceWriteThrottleMs,
+                    activityWriteJitterMs: config.presenceWriteJitterMs,
                 });
 
                 resolve();
@@ -67,12 +69,6 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
-        await Promise.allSettled([
-            runtime.redis.quit(),
-            runtime.pubRedis.quit(),
-            runtime.subRedis.quit(),
-            runtime.jobsRedis.quit(),
-            runtime.db.$client.end(),
-        ]);
+        await shutdownInfra(runtime);
     },
 });

@@ -13,6 +13,13 @@
 - `createAppRuntime` members are lazy memoized getters; apps only pay for
   what they touch. Don't eagerly construct services in entrypoints.
 
+## Database migrations
+- The drizzle meta snapshot chain is stale (stops at `0002`), so
+  `drizzle-kit generate` cannot diff cleanly and will demand interactive
+  rename resolution. Author schema changes as hand-written
+  `drizzle/NNNN_*.sql` files and append a matching entry to
+  `drizzle/meta/_journal.json`; then `npm run db:migrate`.
+
 ## API Validation
 - Validate every request input with Zod before business logic.
 - This includes `req.params`, `req.query`, and `req.body` for every route.

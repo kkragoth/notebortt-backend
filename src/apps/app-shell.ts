@@ -1,6 +1,26 @@
+import type Redis from 'ioredis';
 import { logger } from '@/shared/logger.js';
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+
+export interface InfraHandle {
+    db: { $client: { end: () => Promise<void> } }
+    redis: Redis
+    pubRedis: Redis
+    subRedis: Redis
+    jobsRedis: Redis
+}
+
+/** Uniform teardown of the shared infrastructure clients. */
+export async function shutdownInfra(infra: InfraHandle): Promise<void> {
+    await Promise.allSettled([
+        infra.redis.quit(),
+        infra.pubRedis.quit(),
+        infra.subRedis.quit(),
+        infra.jobsRedis.quit(),
+        infra.db.$client.end(),
+    ]);
+}
 
 export interface AppShellOptions {
     /** Human-readable service name used in logs. */

@@ -28,21 +28,21 @@ import type {
 } from '../socketio/types.js';
 import type { Server as HttpServer } from 'node:http';
 import { logger } from '@/shared/logger.js';
+import { parseAllowedOrigins } from '@/shared/cors.js';
 
 const DEFAULT_ACTIVITY_WRITE_THROTTLE_MS = 3_000;
 const DEFAULT_ACTIVITY_WRITE_JITTER_MS = 400;
 // Well under the participants store TTL so three missed beats still survive.
 const DEFAULT_PARTICIPANT_HEARTBEAT_MS = 30_000;
 
-function parseAllowedOrigins(raw: string): string[] {
-    return raw.split(',').map((value) => value.trim()).filter((value) => value.length > 0);
-}
-
 export function createSocketIoRealtimeServer(
     httpServer: HttpServer,
     deps: SocketIoRealtimeDependencies,
     options: SocketIoRealtimeServerOptions,
 ) {
+    const activityWriteThrottleMs = options.activityWriteThrottleMs ?? DEFAULT_ACTIVITY_WRITE_THROTTLE_MS;
+    const activityWriteJitterMs = options.activityWriteJitterMs ?? DEFAULT_ACTIVITY_WRITE_JITTER_MS;
+
     const io = new Server(httpServer, {
         transports: ['websocket'],
         cors: {
@@ -178,9 +178,9 @@ export function createSocketIoRealtimeServer(
             const now = Date.now();
             const lastWriteAt = lastActivityWriteAtBySocketId.get(socket.id) ?? 0;
             const jitter = activityJitterBySocketId.get(socket.id)
-        ?? Math.floor(Math.random() * (DEFAULT_ACTIVITY_WRITE_JITTER_MS + 1));
+        ?? Math.floor(Math.random() * (activityWriteJitterMs + 1));
             activityJitterBySocketId.set(socket.id, jitter);
-            const effectiveWindow = Math.max(0, DEFAULT_ACTIVITY_WRITE_THROTTLE_MS + jitter);
+            const effectiveWindow = Math.max(0, activityWriteThrottleMs + jitter);
 
             if ((now - lastWriteAt) >= effectiveWindow) {
                 lastActivityWriteAtBySocketId.set(socket.id, now);

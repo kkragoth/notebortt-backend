@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { OAUTH_COOKIE_MAX_AGE_MS } from '../routes/constants.js';
 import type { AppConfig } from '@/shared/config.js';
+import { parseAllowedOrigins } from '@/shared/cors.js';
 
 export function isProduction(config: Pick<AppConfig, 'nodeEnv'>): boolean {
     return config.nodeEnv === 'production';
@@ -18,13 +19,6 @@ export function buildCookieSecurityOptions(config: Pick<AppConfig, 'nodeEnv'>) {
         secure: false,
         sameSite: 'lax' as const,
     };
-}
-
-export function parseAllowedOrigins(raw: string): string[] {
-    return raw
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0);
 }
 
 export function resolveFrontendOrigin(corsOrigin: string): string {

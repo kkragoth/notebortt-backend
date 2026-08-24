@@ -25,7 +25,7 @@ interface CrdtRoomStoreOptions {
 export function createCrdtRoomStore(
     boardStateService: BoardStateService,
     mutationProcessor: MutationProcessor,
-    options: CrdtRoomStoreOptions,
+    options: CrdtRoomStoreOptions = {},
 ) {
     const rooms = new Map<string, CrdtRoomState>();
     const debounceMs = options.debounceMs ?? DEFAULT_CRDT_DEBOUNCE_MS;

@@ -3,7 +3,7 @@ import cors from 'cors';
 const AllowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
 const AllowedHeaders = ['Content-Type', 'Authorization'] as const;
 
-function parseAllowedOrigins(raw: string): string[] {
+export function parseAllowedOrigins(raw: string): string[] {
     return raw
         .split(',')
         .map((value) => value.trim())

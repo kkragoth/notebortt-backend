@@ -5,7 +5,7 @@ import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { createApp } from '@/app/create-app.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell } from '@/apps/app-shell.js';
+import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
 
 /**
@@ -53,13 +53,7 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
-        await Promise.allSettled([
-            ...displayQueues.map((queue) => queue.close()),
-            runtime.redis.quit(),
-            runtime.pubRedis.quit(),
-            runtime.subRedis.quit(),
-            runtime.jobsRedis.quit(),
-            runtime.db.$client.end(),
-        ]);
+        await Promise.all(displayQueues.map((queue) => queue.close()));
+        await shutdownInfra(runtime);
     },
 });

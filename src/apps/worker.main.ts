@@ -3,7 +3,7 @@ import http from 'node:http';
 import { loadConfig } from '@/shared/config.js';
 import { createBackgroundJobs } from '@/app/background-jobs.js';
 import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell } from '@/apps/app-shell.js';
+import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { APP_EVENTS } from '@/shared/events.js';
 import { logger } from '@/shared/logger.js';
 
@@ -83,12 +83,6 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
-        await Promise.allSettled([
-            runtime.redis.quit(),
-            runtime.pubRedis.quit(),
-            runtime.subRedis.quit(),
-            runtime.jobsRedis.quit(),
-            runtime.db.$client.end(),
-        ]);
+        await shutdownInfra(runtime);
     },
 });
