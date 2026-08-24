@@ -77,8 +77,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare compose env
+        # Compose needs a real .env for env_file + ${POSTGRES_*} interpolation;
+        # the example ships every required key.
+        run: cp .env.example .env
+
       - name: Validate compose file
         run: docker compose -f docker-compose.yml config -q
+
+      - name: Validate nginx templates
+        run: ./scripts/validate-nginx.sh
 
       # Catches Dockerfile regressions (broken CMD/ARG wiring, missing
       # dist entrypoints) that vitest cannot see.
