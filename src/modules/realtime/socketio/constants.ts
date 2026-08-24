@@ -30,15 +30,6 @@ export const SOCKET_RESERVED_EVENTS = {
     DISCONNECT: 'disconnect',
 } as const;
 
-/**
- * Redis pub/sub channel that fans out persisted element changes to all
- * backend instances connected to the same Redis.
- */
-export function boardMutationsChannel(boardId: string): string {
-    return `board:${boardId}:mutations`;
-}
-
 export const ACCESS_TOKEN_COOKIE_NAME = 'accessToken';
-export const WS_ELEMENTS_CHANGED_TYPE = 'ELEMENTS_CHANGED';
 export const TICK_PERSIST_DEBOUNCE_MS = 400;
 export const TICK_PERSIST_MAX_WAIT_MS = 1500;

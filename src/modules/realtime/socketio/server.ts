@@ -7,8 +7,6 @@ import {
     SOCKET_CLIENT_EVENTS,
     SOCKET_RESERVED_EVENTS,
     SOCKET_SERVER_EVENTS,
-    WS_ELEMENTS_CHANGED_TYPE,
-    boardMutationsChannel,
 } from '../socketio/constants.js';
 import { createBoardJoinHandler } from '../socketio/handlers/join.handler.js';
 import { createMutationBatchHandler } from '../socketio/handlers/mutation-batch.handler.js';
@@ -57,30 +55,16 @@ export function createSocketIoRealtimeServer(
     // requires the redis adapter once more than one realtime replica runs.
     io.adapter(createAdapter(deps.pubRedis, deps.subRedis));
 
-    async function publishElementsChanged(boardId: string, userId: string, change: unknown, senderId: string): Promise<void> {
-        await deps.pubRedis.publish(
-            boardMutationsChannel(boardId),
-            JSON.stringify({
-                message: { type: WS_ELEMENTS_CHANGED_TYPE, change, fromUserId: userId },
-                senderConnectionId: `socketio:${senderId}`,
-            }),
-        );
-    }
-
     const participantsStore = createParticipantsStore(deps.pubRedis);
-    const tickPersistence = createTickPersistenceManager(deps, { onPersistedChange: publishElementsChanged });
+    // Persisted-change diffs are not re-broadcast: clients already applied
+    // the live MUTATION_BROADCAST / CRDT_UPDATE / REALTIME_TICK events, and
+    // reconnecting clients reconcile via BOARD_SNAPSHOT. (The old
+    // boardMutationsChannel pub/sub predates the socket.io adapter and had
+    // no subscriber.)
+    const tickPersistence = createTickPersistenceManager(deps);
     const crdtStore = createCrdtRoomStore(deps.boardStateService, deps.mutationProcessor, {
         debounceMs: options.crdtDebounceMs,
         maxWaitMs: options.crdtMaxWaitMs,
-        onPersistedChange: async (boardId, userId, change) => {
-            await deps.pubRedis.publish(
-                boardMutationsChannel(boardId),
-                JSON.stringify({
-                    message: { type: WS_ELEMENTS_CHANGED_TYPE, change, fromUserId: userId },
-                    senderConnectionId: `socketio:crdt:${boardId}`,
-                }),
-            );
-        },
     });
 
     function emitUserLeft(boardId: string, participant: RoomParticipant): void {
@@ -105,18 +89,37 @@ export function createSocketIoRealtimeServer(
         const activityJitterBySocketId = new Map<string, number>();
         // Keeps the redis participant entry alive even for idle-but-connected
         // sockets: activity-based refresh alone would expire quiet users after
-        // PARTICIPANT_TTL_MS and corrupt rosters / room-size checks.
-        const participantHeartbeat = setInterval(() => {
-            if (boardContext && socket.connected) {
-                void participantsStore.touchParticipant(boardContext.boardId, socket.id);
+        // PARTICIPANT_TTL_MS and corrupt rosters / room-size checks. Started
+        // lazily on first join so never-joined sockets hold no timers.
+        let participantHeartbeat: NodeJS.Timeout | undefined;
+        function startParticipantHeartbeat(): void {
+            if (participantHeartbeat) {
+                return;
             }
-        }, DEFAULT_PARTICIPANT_HEARTBEAT_MS);
-        participantHeartbeat.unref();
+            participantHeartbeat = setInterval(() => {
+                if (boardContext && socket.connected) {
+                    void participantsStore.touchParticipant(boardContext.boardId, socket.id);
+                } else if (!boardContext) {
+                    stopParticipantHeartbeat();
+                }
+            }, DEFAULT_PARTICIPANT_HEARTBEAT_MS);
+            participantHeartbeat.unref();
+        }
+
+        function stopParticipantHeartbeat(): void {
+            clearInterval(participantHeartbeat);
+            participantHeartbeat = undefined;
+        }
 
         function setBoardContext(next: SocketBoardContext | null): void {
             boardContext = next;
             boardContextVersion += 1;
             lastTickId = -1;
+            if (next) {
+                startParticipantHeartbeat();
+            } else {
+                stopParticipantHeartbeat();
+            }
         }
 
         function getBoardContext(): SocketBoardContext | null {
@@ -240,7 +243,7 @@ export function createSocketIoRealtimeServer(
         function cleanupConnectionState(): void {
             lastActivityWriteAtBySocketId.delete(socket.id);
             activityJitterBySocketId.delete(socket.id);
-            clearInterval(participantHeartbeat);
+            stopParticipantHeartbeat();
         }
 
         const runtime: SocketIoHandlerRuntime = {
@@ -261,7 +264,6 @@ export function createSocketIoRealtimeServer(
             setLastTickId,
             refreshSocketActivity,
             detachFromBoard,
-            publishElementsChanged,
         };
 
         type SocketServerEvent = (typeof SOCKET_CLIENT_EVENTS)[keyof typeof SOCKET_CLIENT_EVENTS]

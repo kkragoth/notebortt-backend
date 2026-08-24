@@ -18,11 +18,15 @@ const KEEP_ALIVE_GRACE_MS = 2_000;
 const config = loadConfig();
 const runtime = createAppRuntime(config);
 
+// Read-only Bull Board views over the worker-owned queues. Kept by handle so
+// shutdown can close them (they wrap jobsRedis).
+const displayQueues = [
+    createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardPersistFlush),
+    createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardMaintenance),
+];
+
 const app = createApp(runtime, {
-    bullBoardQueues: () => [
-        createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardPersistFlush),
-        createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardMaintenance),
-    ],
+    bullBoardQueues: () => displayQueues,
 });
 
 let server: Server | undefined;
@@ -50,6 +54,7 @@ runAppShell({
         });
 
         await Promise.allSettled([
+            ...displayQueues.map((queue) => queue.close()),
             runtime.redis.quit(),
             runtime.pubRedis.quit(),
             runtime.subRedis.quit(),

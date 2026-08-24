@@ -51,6 +51,8 @@ export interface AppEventBusOptions {
     reclaimIntervalMs?: number
     /** Overrides the stream key (tests / multi-tenant isolation). */
     streamKey?: string
+    /** Consumers idle longer than this (with empty PEL) are deregistered. */
+    consumerIdleTtlMs?: number
 }
 
 function serializeEvent<TEvent extends AppEventName>(event: TEvent, payload: AppEventMap[TEvent]): string[] {
@@ -67,6 +69,7 @@ interface StreamBusRuntimeOptions {
     consumerGroup: string
     reclaimMinIdleMs: number
     reclaimIntervalMs: number
+    consumerIdleTtlMs: number
 }
 
 function createStreamAppEventBus(redis: Redis, runtimeOpts: StreamBusRuntimeOptions): AppEventBus {
@@ -165,8 +168,37 @@ function createStreamAppEventBus(redis: Redis, runtimeOpts: StreamBusRuntimeOpti
         }
     }
 
+    // Dead processes leave their named consumers behind forever; drop any
+    // that have been idle beyond the TTL with nothing pending. Our own
+    // consumer is exempt (its idle resets on every BLOCK wake-up anyway).
+    async function pruneStaleConsumers(): Promise<void> {
+        const consumers = await redis.xinfo(
+            'CONSUMERS', runtimeOpts.streamKey, consumerGroup,
+        ) as Array<Array<string | number>>;
+        for (const entry of consumers ?? []) {
+            const fields: Record<string, string | number> = {};
+            for (let i = 0; i < (entry?.length ?? 0); i += 2) {
+                fields[String(entry[i])] = entry[i + 1];
+            }
+            const pending = Number(fields.pending ?? 0);
+            const idle = Number(fields.idle ?? 0);
+            const name = String(fields.name ?? '');
+            if (name && name !== consumerName && pending === 0 && idle >= runtimeOpts.consumerIdleTtlMs) {
+                await redis.xgroup('DELCONSUMER', runtimeOpts.streamKey, consumerGroup, name);
+                logger.info({ consumer: name, idleMs: idle }, '[EventBus] pruned stale stream consumer');
+            }
+        }
+    }
+
     async function reclaimPending(): Promise<void> {
         try {
+            // Best-effort housekeeping; the key/group may not exist yet.
+            try {
+                await pruneStaleConsumers();
+            } catch {
+                /* ignore */
+            }
+
             // Reclaims run on the main connection: they must not queue
             // behind the reader's blocking XREADGROUP.
             const result = await redis.xautoclaim(
@@ -312,6 +344,7 @@ export function createAppEventBus(options: AppEventBusOptions = {}): AppEventBus
             consumerGroup: options.consumerGroup ?? 'app-events',
             reclaimMinIdleMs: options.reclaimMinIdleMs ?? 30_000,
             reclaimIntervalMs: options.reclaimIntervalMs ?? 60_000,
+            consumerIdleTtlMs: options.consumerIdleTtlMs ?? 10 * 60_000,
         });
     }
     return createInProcessAppEventBus();

@@ -33,5 +33,4 @@ export interface SocketIoHandlerRuntime {
   setLastTickId: (tickId: number) => void
   refreshSocketActivity: (snapshot: ContextSnapshot, forceWrite?: boolean) => Promise<void>
   detachFromBoard: (context: SocketBoardContext, broadcastLeave: boolean) => Promise<void>
-  publishElementsChanged: (boardId: string, userId: string, change: unknown, senderId: string) => Promise<void>
 }
