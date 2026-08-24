@@ -83,11 +83,9 @@ services:
     volumes:
       - .:/app
       - backend_dev_node_modules:/app/node_modules
-    ports:
-      - "8080:8080"
-      # Host 8085 -> container 8081 (realtime). 8081 on the host belongs to
-      # adminer in the debug profile.
-      - "8085:8081"
+    # No published ports: the dev-proxy is the single origin (:8080),
+    # mirroring production nginx path-splitting. Reach apps directly via
+    # `docker compose exec` if ever needed.
     stdin_open: true
     tty: true
     # Run all three apps: with the split, api-only dev would silently lose
@@ -96,6 +94,17 @@ services:
     command: >
       sh -lc "npm ci && npm run db:migrate &&
               { npm run dev & npm run dev:realtime & npm run dev:worker & wait; }"
+
+  dev-proxy:
+    image: nginx:1.27-alpine
+    profiles: ["dev"]
+    restart: unless-stopped
+    depends_on:
+      - backend-dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/dev.conf:/etc/nginx/conf.d/default.conf:ro
 
   api:
     build:
