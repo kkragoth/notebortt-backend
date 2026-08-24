@@ -1,4 +1,5 @@
 import { ACCESS_TOKEN_COOKIE_NAME } from '../socketio/constants.js';
+import type { Socket } from 'socket.io';
 import type { SocketIdentity, SocketIoRealtimeDependencies } from '../socketio/types.js';
 
 function parseCookieHeader(raw: string | undefined): Record<string, string> {
@@ -17,9 +18,9 @@ function parseCookieHeader(raw: string | undefined): Record<string, string> {
     return cookies;
 }
 
-export async function resolveSocketIdentity(socket: any, deps: SocketIoRealtimeDependencies): Promise<SocketIdentity> {
+export async function resolveSocketIdentity(socket: Socket, deps: SocketIoRealtimeDependencies): Promise<SocketIdentity> {
     const headers = socket.request?.headers ?? {};
-    const cookies = parseCookieHeader(headers.cookie as string | undefined);
+    const cookies = parseCookieHeader(headers.cookie);
     const cookieToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
     const authHeader = typeof headers.authorization === 'string' ? headers.authorization : '';
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;

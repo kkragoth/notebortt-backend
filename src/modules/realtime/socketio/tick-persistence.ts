@@ -8,12 +8,12 @@ import { APP_EVENTS } from '@/shared/events.js';
 import { MutationType } from '@/modules/collaboration/index.js';
 
 interface TickPersistenceOptions {
-  onPersistedChange: (boardId: string, userId: string, change: unknown, senderId: string) => Promise<void>
+  onPersistedChange?: (boardId: string, userId: string, change: unknown, senderId: string) => Promise<void>
 }
 
 export function createTickPersistenceManager(
     deps: SocketIoRealtimeDependencies,
-    options: TickPersistenceOptions,
+    options: TickPersistenceOptions = {},
 ) {
     const pendingTickMovesByBoard = new Map<string, Map<string, { x: number; y: number }>>();
     const tickPersistDebounceTimers = new Map<string, NodeJS.Timeout>();
@@ -66,7 +66,7 @@ export function createTickPersistenceManager(
         deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
         for (const result of results) {
             if (result.status === 'applied' && result.change) {
-                await options.onPersistedChange(boardId, userId, result.change, `tick:${boardId}`);
+                await options.onPersistedChange?.(boardId, userId, result.change, `tick:${boardId}`);
             }
         }
         tickPersistUserByBoard.delete(boardId);

@@ -39,3 +39,17 @@ describe('auth service', () => {
         expect(valid).toBe(false);
     });
 });
+
+describe('access token algorithm pinning', () => {
+    it('rejects tokens signed with a different algorithm (alg confusion)', async () => {
+        const { default: jwt } = await import('jsonwebtoken');
+        const service = createAuthService({ jwtSecret: 'test-secret-at-least-16-chars', jwtExpiresIn: '15m' });
+
+        // Forged as "none" alg — classic confusion payload.
+        const forged = jwt.sign({ sub: 'user-1' }, 'test-secret-at-least-16-chars', { algorithm: 'none' });
+        expect(() => service.verifyAccessToken(forged)).toThrow();
+
+        const legit = service.generateAccessToken('user-1');
+        expect(service.verifyAccessToken(legit).sub).toBe('user-1');
+    });
+});

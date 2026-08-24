@@ -68,15 +68,15 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             color,
         });
 
-        const participants = runtime.participantsStore.getRoomParticipants(payload.boardId);
-        for (const existingParticipant of participants.values()) {
+        const participants = await runtime.participantsStore.getRoomParticipants(payload.boardId);
+        for (const existingParticipant of participants) {
             if (existingParticipant.sessionId === payload.sessionId) {
                 continue;
             }
             runtime.socket.emit(SOCKET_SERVER_EVENTS.USER_JOINED, existingParticipant);
         }
 
-        runtime.participantsStore.setParticipant(payload.boardId, runtime.socket.id, {
+        await runtime.participantsStore.setParticipant(payload.boardId, runtime.socket.id, {
             sessionId: payload.sessionId,
             userId: identity.runtimeUserId,
             userName,

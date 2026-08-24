@@ -19,7 +19,7 @@ jobs:
         env:
           POSTGRES_USER: notecanva
           POSTGRES_PASSWORD: notecanva
-          POSTGRES_DB: notecanva
+          POSTGRES_DB: notecanva_test
         ports:
           - 5432:5432
         options: >-
@@ -38,7 +38,7 @@ jobs:
           --health-retries 10
 
     env:
-      DATABASE_URL: postgres://notecanva:notecanva@localhost:5432/notecanva
+      DATABASE_URL: postgres://notecanva:notecanva@localhost:5432/notecanva_test
       REDIS_URL: redis://localhost:6379
       REDIS_REALTIME_URL: redis://localhost:6379
       REDIS_JOBS_URL: redis://localhost:6379
@@ -71,3 +71,27 @@ jobs:
 
       - name: Test
         run: npx vitest run
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare compose env
+        # Compose needs a real .env for env_file + ${POSTGRES_*} interpolation;
+        # the example ships every required key.
+        run: cp .env.example .env
+
+      - name: Validate compose file
+        run: docker compose -f docker-compose.yml config -q
+
+      - name: Validate nginx templates
+        run: ./scripts/validate-nginx.sh
+
+      # Catches Dockerfile regressions (broken CMD/ARG wiring, missing
+      # dist entrypoints) that vitest cannot see.
+      - name: Build app images
+        run: |
+          docker build --build-arg APP=api -t nc-api .
+          docker build --build-arg APP=realtime -t nc-realtime .
+          docker build --build-arg APP=worker -t nc-worker .

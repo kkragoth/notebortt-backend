@@ -80,21 +80,6 @@ export const elements = pgTable('elements', {
     check('valid_element_type', sql`${table.type} IN ('NOTE','TEXT','ARROW','DRAWING','SHAPE','COLUMN','TABLE','IMAGE','LINK_PREVIEW','META_COLUMN','RANGE')`),
 ]);
 
-export const mutations = pgTable('mutations', {
-    id: text('id').primaryKey(),
-    boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),
-    sequence: bigint('sequence', { mode: 'number' }).notNull(),
-    operationType: text('operation_type').notNull(),
-    operationData: jsonb('operation_data').notNull(),
-    clientTs: timestamp('client_ts', { withTimezone: true }).notNull(),
-    serverTs: timestamp('server_ts', { withTimezone: true }).defaultNow(),
-    userId: uuid('user_id').references(() => users.id),
-    sessionId: text('session_id'),
-}, (table) => [
-    uniqueIndex('mutation_board_seq_idx').on(table.boardId, table.sequence),
-    check('valid_operation_type', sql`${table.operationType} IN ('CREATE_ELEMENT','UPDATE_ELEMENT','DELETE_ELEMENTS','MOVE_ELEMENTS','UPDATE_ELEMENTS','REORDER_ELEMENT')`),
-]);
-
 export const commits = pgTable('commits', {
     id: uuid('id').primaryKey().defaultRandom(),
     boardId: uuid('board_id').notNull().references(() => boards.id, { onDelete: 'cascade' }),

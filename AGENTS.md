@@ -1,5 +1,25 @@
 # Agent Rules
 
+## Architecture (apps split)
+- Three entrypoints share one codebase: `src/apps/api.main.ts` (REST),
+  `src/apps/realtime.main.ts` (Socket.IO), `src/apps/worker.main.ts`
+  (all BullMQ workers + preview reactions). Compose builds them from one
+  Dockerfile via `--build-arg APP=...`.
+- Cross-process domain events ride a Redis Stream bus behind
+  `AppEventBus` (`src/shared/events.ts`); set `EVENT_BUS_MODE=stream`
+  for any multi-app deployment, `local` for single-process.
+- Background schedules are BullMQ repeatable jobs registered in
+  `src/app/background-jobs.ts` — never add `setInterval` loops to services.
+- `createAppRuntime` members are lazy memoized getters; apps only pay for
+  what they touch. Don't eagerly construct services in entrypoints.
+
+## Database migrations
+- History is squashed to a single baseline (`0000_init.sql`); the snapshot
+  chain is clean, so `drizzle-kit generate` works normally.
+- drizzle-kit swallows connection errors from `migrate` (silent exit 1).
+  If a migrate "does nothing", check credentials first — don't debug
+  Postgres versions.
+
 ## API Validation
 - Validate every request input with Zod before business logic.
 - This includes `req.params`, `req.query`, and `req.body` for every route.

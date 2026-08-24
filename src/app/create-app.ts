@@ -6,6 +6,7 @@ import { rateLimit } from 'express-rate-limit';
 import { pinoHttp } from 'pino-http';
 import { RedisStore } from 'rate-limit-redis';
 import type { RedisReply, SendCommandFn } from 'rate-limit-redis';
+import type { Queue } from 'bullmq';
 import type { AppRuntime } from '@/app/runtime.js';
 import { createCorsMiddleware } from '@/shared/cors.js';
 import { logger } from '@/shared/logger.js';
@@ -39,7 +40,12 @@ function shouldLogRequest(url: string | undefined): boolean {
     return !UNVERSIONED_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-export function createApp(runtime: AppRuntime) {
+export interface CreateAppOptions {
+    /** Lazily resolved queues to render on Bull Board alongside the preview queue. */
+    bullBoardQueues?: () => Queue[]
+}
+
+export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
     const app = express();
 
     app.disable('x-powered-by');
@@ -74,13 +80,21 @@ export function createApp(runtime: AppRuntime) {
     const rateLimitSendCommand: SendCommandFn = (...args: string[]) =>
         runtime.redis.call(...(args as [string, ...string[]])) as Promise<RedisReply>;
 
-    const rateLimitStore = runtime.config.hasRedisUrl
-        ? new RedisStore({
-            // Dedicated keyspace; commands fail-open via passOnStoreError below.
-            prefix: 'rl:',
-            sendCommand: rateLimitSendCommand,
-        })
-        : undefined;
+    // express-rate-limit forbids sharing one store instance between
+    // limiters (ERR_ERL_STORE_REUSE), and distinct prefixes keep counter
+    // keys from colliding — otherwise the auth limiter and the global
+    // limiter would drain each other's budgets.
+    function createRateLimitStore(prefix: string): RedisStore | undefined {
+        return runtime.config.hasRedisUrl
+            ? new RedisStore({
+                prefix,
+                sendCommand: rateLimitSendCommand,
+            })
+            : undefined;
+    }
+
+    const globalRateLimitStore = createRateLimitStore('rl:');
+    const authRateLimitStore = createRateLimitStore('rl:auth:');
 
     const globalLimiter = rateLimit({
         windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -90,7 +104,7 @@ export function createApp(runtime: AppRuntime) {
         // Availability over strictness: never 500 the whole API because the
         // counters are unreachable.
         passOnStoreError: true,
-        ...(rateLimitStore ? { store: rateLimitStore } : {}),
+        ...(globalRateLimitStore ? { store: globalRateLimitStore } : {}),
         skip: (req) => UNVERSIONED_PATHS.some((prefix) =>
             req.path === prefix || req.path.startsWith(`${prefix}/`)),
     });
@@ -100,7 +114,7 @@ export function createApp(runtime: AppRuntime) {
         standardHeaders: 'draft-8',
         legacyHeaders: false,
         passOnStoreError: true,
-        ...(rateLimitStore ? { store: rateLimitStore } : {}),
+        ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     });
 
     app.use(globalLimiter);
@@ -118,17 +132,21 @@ export function createApp(runtime: AppRuntime) {
 
     if (runtime.config.enableBullBoard) {
         const { bullBoardUsername, bullBoardPassword, nodeEnv } = runtime.config;
+        const queues = () => [
+            runtime.previewJobService.getQueue(),
+            ...(options.bullBoardQueues?.() ?? []),
+        ];
         if (bullBoardPassword) {
             app.use(
                 BULL_BOARD_BASE_PATH,
                 createBasicAuthGate(bullBoardUsername, bullBoardPassword),
-                createBullBoardRouter([runtime.previewJobService.getQueue()]),
+                createBullBoardRouter(queues()),
             );
         } else if (nodeEnv === 'production') {
             logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
         } else {
             logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
-            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter([runtime.previewJobService.getQueue()]));
+            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter(queues()));
         }
     }
     app.use('/debug', createDebugRouter(runtime));

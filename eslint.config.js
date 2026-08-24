@@ -187,7 +187,7 @@ const publicSurfaceBlocks = [
     })),
     {
         name: "backend/module-surface/composition-root",
-        files: ["src/app/**", "src/shared/**", "src/platform/**", "src/index.ts"],
+        files: ["src/app/**", "src/shared/**", "src/platform/**", "src/apps/**"],
         rules: {
             "no-restricted-imports": ["error", { patterns: surfacePatterns(null) }]
         }
@@ -227,7 +227,7 @@ export default [
                 }
             },
             "boundaries/elements": [
-                { type: "app", pattern: ["src/app/**", "src/index.ts"] },
+                { type: "app", pattern: ["src/app/**", "src/apps/**"] },
                 { type: "module", pattern: "src/modules/*/**" },
                 { type: "platform", pattern: "src/platform/**" },
                 { type: "shared", pattern: "src/shared/**" }

@@ -118,9 +118,13 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
             res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' });
 
             const redirectUrl = new URL('/callback', resolveFrontendOrigin(config.corsOrigin));
-            if (config.enableOauthFragmentTokens) {
-                redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
-            }
+            // Tokens ride the redirect fragment on purpose: the API and the
+            // frontend live on different origins, and iOS WebKit (ITP) blocks
+            // cross-site cookies, so the cookies set above never reach the API
+            // from mobile Safari/WebView. The native app consumes location.hash
+            // once on /callback and stores tokens in the Keychain; do not treat
+            // these as long-lived secrets in browser history.
+            redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
             res.redirect(redirectUrl.toString());
         } catch (err) {
             logger.error({ err }, '[Auth] OAuth callback error');

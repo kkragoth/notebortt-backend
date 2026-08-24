@@ -1,4 +1,4 @@
-interface RawElementRow {
+export interface RawElementRow {
   id: string
   type: string
   data: unknown

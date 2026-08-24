@@ -34,6 +34,10 @@ export interface SocketIoRealtimeServerOptions {
   corsOrigin: string
   crdtDebounceMs?: number
   crdtMaxWaitMs?: number
+  /** Throttle for viewer-session/client activity writes (default 3000). */
+  activityWriteThrottleMs?: number
+  /** Random jitter added to the throttle window (default 400). */
+  activityWriteJitterMs?: number
 }
 
 export interface SocketIoRealtimeDependencies {
@@ -44,4 +48,5 @@ export interface SocketIoRealtimeDependencies {
   mutationProcessor: MutationProcessor
   events: AppEventBus
   pubRedis: Redis
+  subRedis: Redis
 }

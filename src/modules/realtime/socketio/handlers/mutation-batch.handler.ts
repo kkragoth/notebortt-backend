@@ -60,9 +60,6 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
                 runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.MUTATION_BROADCAST, { mutation });
             }
 
-            if (result.status === 'applied' && result.change) {
-                await runtime.publishElementsChanged(payload.boardId, snapshot.context.userId, result.change, runtime.socket.id);
-            }
         }
 
         if (runtime.socket.connected && runtime.isSnapshotActive(snapshot)) {

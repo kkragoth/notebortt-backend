@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { createTestUser, purgeFixtures } from './helpers/fixtures.js';
 import type { Mutation } from '@/modules/collaboration/mutations/types.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
@@ -23,8 +24,6 @@ const distributedMutationProcessor = createMutationProcessor(secondBoardStateSer
 let TEST_BOARD_ID: string;
 let TEST_USER_ID: string;
 let TEST_WORKSPACE_ID: string;
-
-const TEST_USER_EMAIL = `test-mut-processor-${Date.now()}@test.com`;
 
 function makeMutationId(): string {
     return crypto.randomUUID();
@@ -98,10 +97,7 @@ function makeMoveMutation(elementId: string, x: number, y: number): Mutation {
 }
 
 beforeAll(async () => {
-    const [user] = await db
-        .insert(users)
-        .values({ email: TEST_USER_EMAIL, name: 'Test User' })
-        .returning();
+    const user = await createTestUser();
     TEST_USER_ID = user.id;
 
     const [workspace] = await db
@@ -125,7 +121,7 @@ afterAll(async () => {
     await db.delete(elements).where(eq(elements.boardId, TEST_BOARD_ID));
     await db.delete(boards).where(eq(boards.id, TEST_BOARD_ID));
     await db.delete(workspaces).where(eq(workspaces.id, TEST_WORKSPACE_ID));
-    await db.delete(users).where(eq(users.id, TEST_USER_ID));
+    await purgeFixtures();
 
     await redis.quit();
     await secondRedis.quit();

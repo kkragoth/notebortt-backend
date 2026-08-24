@@ -5,85 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1774466551818,
-      "tag": "0000_peaceful_shape",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1774524015487,
-      "tag": "0001_aberrant_preak",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1775488225984,
-      "tag": "0002_round_ted_forrester",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1775515800000,
-      "tag": "0003_preview_fields",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1775732400000,
-      "tag": "0004_security_performance_indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1775737200000,
-      "tag": "0005_billing_webhook_tables",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1776069420000,
-      "tag": "0006_iam_boards_workspaces",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1776073200000,
-      "tag": "0007_board_favorites",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1776076800000,
-      "tag": "0008_table_element_kind",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1776180000000,
-      "tag": "0009_range_element_kind",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1777000000000,
-      "tag": "0010_board_dual_link_shares",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1777400000000,
-      "tag": "0011_refresh_token_families",
+      "when": 1787566624559,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

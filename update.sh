@@ -19,8 +19,8 @@ cd "$ROOT_DIR"
 echo "==> Pulling latest changes (fast-forward only)"
 git pull --ff-only
 
-echo "==> Rebuilding and restarting backend service"
-docker compose -f "$COMPOSE_FILE" up -d --build backend
+echo "==> Rebuilding and restarting app services"
+docker compose -f "$COMPOSE_FILE" up -d --build api realtime worker
 
 echo "==> Running database migrations"
 docker compose -f "$COMPOSE_FILE" --profile tools run --rm migrator

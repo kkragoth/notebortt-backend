@@ -19,13 +19,13 @@ interface CrdtRoomState {
 interface CrdtRoomStoreOptions {
   debounceMs?: number
   maxWaitMs?: number
-  onPersistedChange: (boardId: string, userId: string, change: PersistedElementChange) => Promise<void>
+  onPersistedChange?: (boardId: string, userId: string, change: PersistedElementChange) => Promise<void>
 }
 
 export function createCrdtRoomStore(
     boardStateService: BoardStateService,
     mutationProcessor: MutationProcessor,
-    options: CrdtRoomStoreOptions,
+    options: CrdtRoomStoreOptions = {},
 ) {
     const rooms = new Map<string, CrdtRoomState>();
     const debounceMs = options.debounceMs ?? DEFAULT_CRDT_DEBOUNCE_MS;
@@ -106,7 +106,7 @@ export function createCrdtRoomStore(
         const results = await mutationProcessor.processBatch([mutation], room.lastEditorUserId);
         for (const result of results) {
             if (result.status === 'applied' && result.change) {
-                await options.onPersistedChange(boardId, room.lastEditorUserId, result.change);
+                await options.onPersistedChange?.(boardId, room.lastEditorUserId, result.change);
             }
         }
     }

@@ -6,13 +6,16 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
 
+# ARG APP selects the entrypoint: api | realtime | worker
+# Healthchecks and ports are declared per-service in docker-compose.yml
+# because only `api` serves HTTP health endpoints.
 FROM node:22-alpine AS runner
+ARG APP=api
+ENV APP_NAME=${APP}
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY drizzle.config.ts ./
 USER node
-EXPOSE 3000
-HEALTHCHECK --interval=15s --timeout=5s CMD wget -qO- http://localhost:3000/health/live || exit 1
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "exec node dist/apps/${APP_NAME}.main.js"]
