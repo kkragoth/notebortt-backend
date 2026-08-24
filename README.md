@@ -82,9 +82,8 @@ Debug UIs (adminer, redis-commander) live behind `--profile debug`.
 
 ## Migrations
 
-The drizzle snapshot chain is stale, so `drizzle-kit generate` is unusable.
-Write SQL by hand in `drizzle/NNNN_*.sql` and append an entry to
-`drizzle/meta/_journal.json`, then `just db-migrate`.
+Single squashed baseline (`drizzle/0000_init.sql`) with a clean snapshot
+chain — `drizzle-kit generate` / `migrate` work normally.
 
 ## Configuration
 

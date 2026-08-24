@@ -25,9 +25,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "engines": {
-    "node": ">=22"
-  },
+    "engines": {
+        "node": ">=22"
+    },
   "dependencies": {
     "@bull-board/api": "^9.4.0",
     "@bull-board/express": "^9.4.0",

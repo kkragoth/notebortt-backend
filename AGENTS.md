@@ -14,11 +14,11 @@
   what they touch. Don't eagerly construct services in entrypoints.
 
 ## Database migrations
-- The drizzle meta snapshot chain is stale (stops at `0002`), so
-  `drizzle-kit generate` cannot diff cleanly and will demand interactive
-  rename resolution. Author schema changes as hand-written
-  `drizzle/NNNN_*.sql` files and append a matching entry to
-  `drizzle/meta/_journal.json`; then `npm run db:migrate`.
+- History is squashed to a single baseline (`0000_init.sql`); the snapshot
+  chain is clean, so `drizzle-kit generate` works normally.
+- drizzle-kit swallows connection errors from `migrate` (silent exit 1).
+  If a migrate "does nothing", check credentials first — don't debug
+  Postgres versions.
 
 ## API Validation
 - Validate every request input with Zod before business logic.
