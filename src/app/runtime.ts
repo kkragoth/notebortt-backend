@@ -1,4 +1,5 @@
 import type { AppConfig } from '@/shared/config.js';
+import type { MetricsApp } from '@/platform/observability/metrics.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
@@ -22,6 +23,11 @@ import {
     createPreviewJobService,
 } from '@/modules/previews/index.js';
 
+export interface AppRuntimeOptions {
+    /** Selects the per-app metric prefix (api_/realtime_/worker_) for default metrics. */
+    app?: MetricsApp
+}
+
 /**
  * Composition root for all apps.
  *
@@ -31,7 +37,7 @@ import {
  * semantics are identical to eager construction, so call sites and types
  * are unaffected.
  */
-export function createAppRuntime(config: AppConfig) {
+export function createAppRuntime(config: AppConfig, options: AppRuntimeOptions = {}) {
     const cache = new Map<string, unknown>();
 
     function once<T>(key: string, build: () => T): T {
@@ -76,7 +82,7 @@ export function createAppRuntime(config: AppConfig) {
             ));
         },
         get metrics() {
-            return once('metrics', () => createRuntimeMetrics());
+            return once('metrics', () => createRuntimeMetrics({ app: options.app }));
         },
 
         // ── auth & domain services ────────────────────────────────────
@@ -120,7 +126,7 @@ export function createAppRuntime(config: AppConfig) {
             return once('boardPreviewRenderer', () => createBoardPreviewRenderer());
         },
         get previewJobService() {
-            return once('previewJobService', () => createPreviewJobService(this.db, this.jobsRedis, this.boardPreviewRenderer));
+            return once('previewJobService', () => createPreviewJobService(this.db, this.jobsRedis, this.boardPreviewRenderer, this.metrics));
         },
         get mutationProcessor() {
             return once('mutationProcessor', () => createMutationProcessor(this.boardStateService, {

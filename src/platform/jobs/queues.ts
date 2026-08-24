@@ -1,5 +1,6 @@
 import { Queue, Worker } from 'bullmq';
 import type Redis from 'ioredis';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
 import { logger } from '@/shared/logger.js';
 
 export const JOB_QUEUES = {
@@ -59,6 +60,7 @@ export function createRepeatableWorker<TData>(
     jobSchedulerId: string,
     processor: (data: TData) => Promise<unknown>,
     connection: Redis,
+    metrics?: RuntimeMetrics,
 ): JobsWorkerHandle {
     const worker = new Worker<TData>(
         queueName,
@@ -72,6 +74,7 @@ export function createRepeatableWorker<TData>(
     );
 
     worker.on('failed', (job, err) => {
+        metrics?.incrementCounter('bullmq_jobs_failed_total', 1, { queue: queueName });
         logger.error({ err, queue: queueName, jobId: job?.id }, '[Jobs] repeatable job failed');
     });
     worker.on('error', (err) => {

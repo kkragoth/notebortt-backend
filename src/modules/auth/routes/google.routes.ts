@@ -34,6 +34,7 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
         authService,
         userService,
         db,
+        metrics,
     } = deps;
 
     router.get('/google', (req, res) => {
@@ -124,6 +125,7 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
             // from mobile Safari/WebView. The native app consumes location.hash
             // once on /callback and stores tokens in the Keychain; do not treat
             // these as long-lived secrets in browser history.
+            metrics?.incrementCounter('oauth_fragment_tokens_total');
             redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
             res.redirect(redirectUrl.toString());
         } catch (err) {

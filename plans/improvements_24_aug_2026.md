@@ -194,19 +194,19 @@ Tick a box only when verified. Phases in order; P2a+P2b is one release unit.
 
 **Matrix items:** 23, 24, 25, 26, 27, 28, 29, 32, 35, 37, 45, 74, 76, 79, 97, 100
 
-- [ ] **1.1** Replace dynamic metrics / `tagset` folding in `src/platform/observability/metrics.ts`
+- [x] **1.1** Replace dynamic metrics / `tagset` folding in `src/platform/observability/metrics.ts`
   with fixed, pre-registered Prometheus metrics using static labels; `boardId` is never a label;
   quantize board-level aggregates into bounded buckets (top-N by write volume).
-- [ ] **1.2** Prefix all registries per app: `api_`, `realtime_`, `worker_` (isolates default
+- [x] **1.2** Prefix all registries per app: `api_`, `realtime_`, `worker_` (isolates default
   node metrics across processes).
-- [ ] **1.3** Add gauges on all three HTTP surfaces: `board_dirty_backlog`,
+- [x] **1.3** Add gauges on all three HTTP surfaces: `board_dirty_backlog`,
   `board_dirty_age_max_seconds`, `*_queue_depth` / `*_queue_oldest_age` (stubs for the P2a
   queues and the DLQ), `mutation_lock_acquisition_duration_seconds` histogram (wrap
   `mutation-lock-domain.ts`), BullMQ global `failed`-listener counter, worker heap/RSS gauges.
-- [ ] **1.4** Socket.IO RED middleware: per-event rate, error count, handler duration.
-- [ ] **1.5** DB pool stats on `/metrics` (best-effort; postgres-js exposes limited pool
+- [x] **1.4** Socket.IO RED middleware: per-event rate, error count, handler duration.
+- [x] **1.5** DB pool stats on `/metrics` (best-effort; postgres-js exposes limited pool
   introspection — a thin connection-count wrapper is acceptable).
-- [ ] **1.6** `just bench` with committed `bench/BASELINE.md`:
+- [x] **1.6** `just bench` with committed `bench/BASELINE.md`:
   - REST mutation p50/p95/p99 + throughput via autocannon against an **authenticated, seeded
     board fixture** (`scripts/bench-fixture` sets up auth + board).
   - Socket.IO frame throughput.
@@ -217,12 +217,13 @@ Tick a box only when verified. Phases in order; P2a+P2b is one release unit.
   - **Gate:** PRs run bench **informational only**. The hard gate runs on a dedicated `perf`
     runner or nightly job, comparing the current run against the rolling median of
     `bench-history.json`, failing on >10% p95 regression.
-- [ ] **1.7** Legacy-request and fragment-token usage counters (consumed by the P3 gate).
-- [ ] **1.8** Dev logs: pino-pretty in `development`, raw JSON in containers.
-- [ ] **1.9** Governance: global vitest DB cleanup hooks (beforeEach/afterEach); update
+- [x] **1.7** Legacy-request and fragment-token usage counters (consumed by the P3 gate).
+- [x] **1.8** Dev logs: pino-pretty in `development`, raw JSON in containers.
+- [x] **1.9** Governance: global vitest DB cleanup hooks (beforeEach/afterEach); update
   `AGENTS.md` with verification commands and boundary rules.
 - [ ] **1.10** Notify monitoring owners that metric names change (renames are breaking for
   existing scrapers/dashboards) and ship the dashboard/alert migration alongside P1.
+  *(Migration doc shipped: `docs/metrics-migration.md`; owner notification pending — human step.)*
 
 **Acceptance:** `/metrics` bounded-cardinality on all three apps; bench history persists across
 runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.exporter.test.ts`);

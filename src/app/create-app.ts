@@ -93,6 +93,10 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
             : undefined;
     }
 
+    // Bench/load-test escape hatch (RATE_LIMIT_DISABLED): skip both limiters
+    // entirely instead of tuning budgets, so production limits stay honest.
+    const rateLimitingEnabled = !runtime.config.rateLimitDisabled;
+
     const globalRateLimitStore = createRateLimitStore('rl:');
     const authRateLimitStore = createRateLimitStore('rl:auth:');
 
@@ -117,7 +121,9 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
         ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     });
 
-    app.use(globalLimiter);
+    if (rateLimitingEnabled) {
+        app.use(globalLimiter);
+    }
 
     // Stripe webhook must see the raw body, so it stays before express.json().
     // It also stays unversioned: the URL is registered in the Stripe dashboard.
@@ -165,11 +171,12 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
     };
 
     function mountModuleRouters(parent: express.Router) {
-        parent.use('/auth', authLimiter, createAuthRouter(
+        parent.use('/auth', ...(rateLimitingEnabled ? [authLimiter] : []), createAuthRouter(
             runtime.config,
             runtime.authService,
             runtime.userService,
             runtime.db,
+            runtime.metrics,
         ));
         parent.use('/users', createUserRouter(runtime.userService, runtime.authMiddleware));
         parent.use('/', createBillingRouter(runtime.billingService, runtime.authMiddleware));
@@ -183,6 +190,12 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
 
     if (runtime.config.enableLegacyApiRoutes) {
         logger.info('[API] legacy unversioned routes enabled (ENABLE_LEGACY_API_ROUTES=true)');
+        // P3 gate input: measures real production reliance on the unversioned
+        // surface before the default flips to false.
+        app.use((req, res, next) => {
+            runtime.metrics.incrementCounter('legacy_requests_total');
+            next();
+        });
         mountModuleRouters(app);
     }
 

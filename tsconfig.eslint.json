@@ -13,6 +13,7 @@
   "include": [
     "src/**/*",
     "test/**/*",
+    "scripts/**/*.ts",
     "drizzle.config.ts",
     "vitest.config.ts",
     "eslint.config.js"

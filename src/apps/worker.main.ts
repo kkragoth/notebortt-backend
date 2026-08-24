@@ -2,6 +2,10 @@ import 'dotenv/config';
 import http from 'node:http';
 import { loadConfig } from '@/shared/config.js';
 import { createBackgroundJobs } from '@/app/background-jobs.js';
+import {
+    registerBoardDirtyCollectors,
+    registerQueueCollectors,
+} from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { APP_EVENTS } from '@/shared/events.js';
@@ -26,24 +30,32 @@ if (!config.eventBusStreamEnabled) {
     logger.warn('[Worker] EVENT_BUS_MODE != "stream": cross-app preview triggers are inactive');
 }
 
-const runtime = createAppRuntime(config);
+const runtime = createAppRuntime(config, { app: 'worker' });
 
-const metricsServer = http.createServer((req, res) => {
+const backgroundJobs = createBackgroundJobs(runtime);
+
+registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+registerQueueCollectors(runtime.metrics, () => [
+    runtime.previewJobService.getQueue(),
+    ...backgroundJobs.getQueues(),
+]);
+
+const metricsServer = http.createServer(async (req, res) => {
     if (req.url === '/metrics' || req.url === '/healthz') {
-        void runtime.metrics.getPromRegistry().metrics().then((body) => {
-            res.setHeader('Content-Type', runtime.metrics.getPromRegistry().contentType);
+        try {
+            const { contentType, body } = await runtime.metrics.scrape();
+            res.setHeader('Content-Type', contentType);
             res.end(req.url === '/healthz' ? 'ok\n' : body);
-        }, () => {
+        } catch {
             res.statusCode = 500;
             res.end('metrics collection failed');
-        });
+        }
         return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', app: 'worker' }));
 });
 
-const backgroundJobs = createBackgroundJobs(runtime);
 let stopPreviewWorker: (() => Promise<void>) | undefined;
 
 runAppShell({

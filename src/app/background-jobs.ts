@@ -22,7 +22,7 @@ export interface BackgroundJobs {
 export function createBackgroundJobs(
     runtime: Pick<
         AppRuntime,
-        'config' | 'jobsRedis' | 'boardPersistenceService' | 'redisCleanupService'
+        'config' | 'jobsRedis' | 'boardPersistenceService' | 'redisCleanupService' | 'metrics'
     >,
 ): BackgroundJobs {
     const connection: Redis = runtime.jobsRedis;
@@ -44,7 +44,7 @@ export function createBackgroundJobs(
         );
         workers.push(
             createRepeatableWorker(JOB_QUEUES.boardPersistFlush, BOARD_PERSIST_FLUSH_JOB, async () =>
-                runtime.boardPersistenceService.flushDirtyBoards(), connection),
+                runtime.boardPersistenceService.flushDirtyBoards(), connection, runtime.metrics),
         );
 
         const maintenanceQueue = registerQueue(JOB_QUEUES.boardMaintenance);
@@ -60,7 +60,7 @@ export function createBackgroundJobs(
                     runtime.redisCleanupService.cleanupTransientDataByIdleTime(),
                 ]);
                 return { flushed: flushed.length, transientDeleted: transientDeleted.length };
-            }, connection),
+            }, connection, runtime.metrics),
         );
     }
 

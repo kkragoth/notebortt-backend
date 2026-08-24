@@ -81,6 +81,41 @@ test:
     export TEST_DATABASE_URL="$DATABASE_URL"
     npx vitest run
 
+# Performance benchmark against locally running api + realtime apps.
+# Writes bench/results-latest.json, appends bench/bench-history.json (last 10),
+# and (re)generates bench/BASELINE.md when missing or UPDATE_BASELINE=true.
+bench:
+    #!/bin/sh
+    set -eu
+    set -a; . ./.env; set +a
+    docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs
+    npx drizzle-kit migrate
+
+    API_PORT="${BENCH_API_PORT:-3100}"
+    RT_PORT="${BENCH_REALTIME_PORT:-3101}"
+    RATE_LIMIT_DISABLED=true LOG_LEVEL=warn PORT="$API_PORT" npx tsx src/apps/api.main.ts > /tmp/nc-bench-api.log 2>&1 &
+    API_PID=$!
+    RATE_LIMIT_DISABLED=true LOG_LEVEL=warn REALTIME_PORT="$RT_PORT" npx tsx src/apps/realtime.main.ts > /tmp/nc-bench-realtime.log 2>&1 &
+    RT_PID=$!
+    trap 'kill $API_PID $RT_PID 2>/dev/null || true' EXIT INT TERM
+
+    wait_http() {
+        i=0
+        until curl -sf "http://localhost:$1/health/live" > /dev/null; do
+            i=$((i+1))
+            if [ "$i" -gt 60 ]; then echo "timeout waiting for :$1"; exit 1; fi
+            sleep 0.5
+        done
+    }
+    wait_http "$API_PORT"
+    wait_http "$RT_PORT"
+
+    LOG_LEVEL=warn BENCH_API_URL="http://localhost:$API_PORT" \
+        BENCH_REALTIME_URL="http://localhost:$RT_PORT" \
+        npx tsx scripts/bench-fixture.ts
+
+    node scripts/bench/run-bench.mjs "${BENCH_FIXTURE_OUT:-/tmp/bench-fixture.json}"
+
 test-watch:
     npx vitest
 

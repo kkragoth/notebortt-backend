@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { Queue, Worker } from 'bullmq';
 import type Redis from 'ioredis';
 import type { Database } from '@/platform/db/client.js';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
 import type { BoardPreviewRenderer } from './/board-preview.service.js';
 import { logger } from '@/shared/logger.js';
 import { boards, elements } from '@/platform/db/schema.js';
@@ -40,7 +41,12 @@ function flushDedupIdFor(boardId: string): string {
     return `preview-flush-${boardId}`;
 }
 
-export function createPreviewJobService(db: Database, connection: Redis, renderer: BoardPreviewRenderer) {
+export function createPreviewJobService(
+    db: Database,
+    connection: Redis,
+    renderer: BoardPreviewRenderer,
+    metrics?: RuntimeMetrics,
+) {
     let queue: Queue<PreviewJobData> | null = null;
     let worker: Worker<PreviewJobData> | null = null;
 
@@ -207,6 +213,7 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         );
 
         worker.on('failed', (job, err) => {
+            metrics?.incrementCounter('bullmq_jobs_failed_total', 1, { queue: PREVIEW_QUEUE_NAME });
             logger.error({ err, boardId: job?.data.boardId }, '[PreviewJob] job failed');
         });
 

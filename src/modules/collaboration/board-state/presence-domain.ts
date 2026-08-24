@@ -31,7 +31,7 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
             .set(boardClientLeaseKey(boardId, member), '1', 'EX', CLIENT_LEASE_TTL_SECONDS)
             .sadd(ACTIVE_BOARDS_KEY, boardId)
             .exec();
-        metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' });
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'presence', command: 'pipeline.exec' });
 
         const clientCount = await redis.scard(boardClientsKey(boardId));
         await extendCollabModeIfNeeded(boardId, clientCount);
@@ -94,7 +94,7 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
             .set(boardLastActiveKey(boardId), now.toString())
             .sadd(ACTIVE_BOARDS_KEY, boardId)
             .exec();
-        metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' });
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'presence', command: 'pipeline.exec' });
 
         const viewerCount = await redis.zcard(boardViewerSessionsKey(boardId));
         await extendCollabModeIfNeeded(boardId, viewerCount);
@@ -121,7 +121,7 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
             .set(boardLastActiveKey(boardId), now.toString())
             .sadd(ACTIVE_BOARDS_KEY, boardId)
             .exec();
-        metrics.incrementCounter('redis.commands', 1, { category: 'presence', command: 'pipeline.exec' });
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'presence', command: 'pipeline.exec' });
     }
 
     async function getSyncWriteMode(boardId: string): Promise<BoardSyncWriteMode> {

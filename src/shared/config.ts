@@ -27,6 +27,7 @@ const envSchema = z.object({
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
     EVENT_BUS_MODE: z.enum(['local', 'stream']).default('local'),
+    RATE_LIMIT_DISABLED: z.coerce.boolean().default(false),
     BOARD_PERSIST_INTERVAL_MS: z.coerce.number().int().min(1_000).default(30_000),
     REDIS_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(120_000),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
@@ -67,6 +68,7 @@ export interface AppConfig {
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
   eventBusStreamEnabled: boolean
+  rateLimitDisabled: boolean
   boardPersistIntervalMs: number
   redisCleanupIntervalMs: number
   enableBullBoard: boolean
@@ -113,6 +115,9 @@ export function loadConfig(): AppConfig {
         presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
         enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
         eventBusStreamEnabled: parsed.EVENT_BUS_MODE === 'stream',
+        // Load tests / benches from one IP would exhaust the 300/min global
+        // budget in under a second; benchmarks must opt out explicitly.
+        rateLimitDisabled: parsed.RATE_LIMIT_DISABLED,
         boardPersistIntervalMs: parsed.BOARD_PERSIST_INTERVAL_MS,
         redisCleanupIntervalMs: parsed.REDIS_CLEANUP_INTERVAL_MS,
         // Bull Board exposes internal job data; default on outside production.

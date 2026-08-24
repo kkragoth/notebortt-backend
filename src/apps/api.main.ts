@@ -4,6 +4,11 @@ import type Redis from 'ioredis';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { createApp } from '@/app/create-app.js';
+import {
+    registerBoardDirtyCollectors,
+    registerDbPoolCollectors,
+    registerQueueCollectors,
+} from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
@@ -16,7 +21,7 @@ import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
 const config = loadConfig();
-const runtime = createAppRuntime(config);
+const runtime = createAppRuntime(config, { app: 'api' });
 
 // Read-only Bull Board views over the worker-owned queues. Kept by handle so
 // shutdown can close them (they wrap jobsRedis).
@@ -24,6 +29,10 @@ const displayQueues = [
     createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardPersistFlush),
     createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardMaintenance),
 ];
+
+registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+registerQueueCollectors(runtime.metrics, () => displayQueues);
+registerDbPoolCollectors(runtime.metrics, runtime.db, config.dbPoolMax);
 
 const app = createApp(runtime, {
     bullBoardQueues: () => displayQueues,

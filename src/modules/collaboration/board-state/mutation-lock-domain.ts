@@ -6,8 +6,13 @@ import {
     sleep,
 } from '../board-state/keys.js';
 import type Redis from 'ioredis';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
 
-export function createBoardMutationLockDomain(redis: Redis) {
+export function createBoardMutationLockDomain(
+    redis: Redis,
+    deps: { metrics?: RuntimeMetrics } = {},
+) {
+    const { metrics } = deps;
     const localLocks = new Map<string, Promise<void>>();
 
     async function withLocalLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
@@ -31,21 +36,28 @@ export function createBoardMutationLockDomain(redis: Redis) {
     }
 
     async function acquireMutationLock(boardId: string): Promise<string> {
-        while (true) {
-            const token = randomUUID();
-            const acquired = await redis.set(
-                boardMutationLockKey(boardId),
-                token,
-                'PX',
-                BOARD_MUTATION_LOCK_TTL_MS,
-                'NX',
-            );
+        const startedAt = Date.now();
+        try {
+            while (true) {
+                const token = randomUUID();
+                const acquired = await redis.set(
+                    boardMutationLockKey(boardId),
+                    token,
+                    'PX',
+                    BOARD_MUTATION_LOCK_TTL_MS,
+                    'NX',
+                );
 
-            if (acquired === 'OK') {
-                return token;
+                if (acquired === 'OK') {
+                    return token;
+                }
+
+                await sleep(BOARD_MUTATION_LOCK_POLL_MS);
             }
-
-            await sleep(BOARD_MUTATION_LOCK_POLL_MS);
+        } finally {
+            // Covers local-queue wait plus Redis SET NX polling; the P3
+            // acquisition timeout will show up here as a distinct slow tail.
+            metrics?.observeDuration('mutation_lock_acquisition_duration_seconds', (Date.now() - startedAt) / 1000);
         }
     }
 

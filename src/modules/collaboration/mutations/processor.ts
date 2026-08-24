@@ -383,7 +383,7 @@ export function createMutationProcessor(
             });
         }
 
-        metrics.observeTiming('mutation.process_batch_ms', Date.now() - startedAt);
+        metrics.observeTiming('mutation_process_batch_duration_ms', Date.now() - startedAt);
         metrics.logStructured('mutation.batch', {
             batchSize: mutations.length,
             boardCount: byBoard.size,

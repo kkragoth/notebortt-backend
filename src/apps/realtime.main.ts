@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
+import { registerBoardDirtyCollectors } from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 
@@ -18,17 +19,20 @@ const KEEP_ALIVE_GRACE_MS = 2_000;
 
 const config = loadConfig();
 const realtimePort = Number(process.env.REALTIME_PORT ?? REALTIME_DEFAULT_PORT);
-const runtime = createAppRuntime(config);
+const runtime = createAppRuntime(config, { app: 'realtime' });
 
-const server = http.createServer((req, res) => {
+registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+
+const server = http.createServer(async (req, res) => {
     if (req.url === '/metrics') {
-        void runtime.metrics.getPromRegistry().metrics().then((body) => {
-            res.setHeader('Content-Type', runtime.metrics.getPromRegistry().contentType);
+        try {
+            const { contentType, body } = await runtime.metrics.scrape();
+            res.setHeader('Content-Type', contentType);
             res.end(body);
-        }, () => {
+        } catch {
             res.statusCode = 500;
             res.end('metrics collection failed');
-        });
+        }
         return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });

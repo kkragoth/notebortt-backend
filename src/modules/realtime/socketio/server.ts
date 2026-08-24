@@ -16,6 +16,7 @@ import { createRealtimeTickHandler } from '../socketio/handlers/realtime-tick.ha
 import { createDisconnectHandler } from '../socketio/handlers/disconnect.handler.js';
 import {
     decrementOpenSocketIoConnections,
+    getOpenSocketIoConnections,
     incrementOpenSocketIoConnections,
 } from '../socketio/stats.js';
 import type { ContextSnapshot, SocketIoHandlerRuntime } from '../socketio/handlers/runtime.js';
@@ -76,8 +77,10 @@ export function createSocketIoRealtimeServer(
 
     io.on(SOCKET_RESERVED_EVENTS.CONNECTION, (socket) => {
         incrementOpenSocketIoConnections();
+        deps.metrics?.setGauge('socketio_connected_sockets', getOpenSocketIoConnections());
         socket.once(SOCKET_RESERVED_EVENTS.DISCONNECT, () => {
             decrementOpenSocketIoConnections();
+            deps.metrics?.setGauge('socketio_connected_sockets', getOpenSocketIoConnections());
         });
 
         let boardContext: SocketBoardContext | null = null;
@@ -271,10 +274,13 @@ export function createSocketIoRealtimeServer(
 
         function registerHandler(event: SocketServerEvent, handler: (payload: unknown) => Promise<void>): void {
             socket.on(event, (payload: unknown) => {
+                deps.metrics?.incrementCounter('socketio_client_events_total', 1, { event });
+                const startedAt = process.hrtime.bigint();
                 void (async () => {
                     try {
                         await handler(payload);
                     } catch (error) {
+                        deps.metrics?.incrementCounter('socketio_handler_errors_total', 1, { event });
                         logger.error({
                             err: error,
                             event,
@@ -283,6 +289,12 @@ export function createSocketIoRealtimeServer(
                         if (socket.connected) {
                             socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Internal realtime server error' });
                         }
+                    } finally {
+                        deps.metrics?.observeDuration(
+                            'socketio_handler_duration_seconds',
+                            Number(process.hrtime.bigint() - startedAt) / 1e9,
+                            { event },
+                        );
                     }
                 })();
             });

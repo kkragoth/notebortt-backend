@@ -4,6 +4,7 @@ import type { AuthService } from '@/modules/auth/index.js';
 import type { BoardService } from '@/modules/boards/index.js';
 import type { UserService } from '@/modules/users/index.js';
 import type { AppEventBus } from '@/shared/events.js';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
 
 export interface SocketIdentity {
   authUserId: string | undefined
@@ -49,4 +50,6 @@ export interface SocketIoRealtimeDependencies {
   events: AppEventBus
   pubRedis: Redis
   subRedis: Redis
+  /** Optional; enables Socket.IO RED metrics when provided. */
+  metrics?: RuntimeMetrics
 }
