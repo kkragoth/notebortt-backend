@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { ExpressAdapter } from '@bull-board/express';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import type { Handler, Router } from 'express';
+import type { Express, Handler, Router } from 'express';
 import type { Queue } from 'bullmq';
+import type { AppConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 
 export const BULL_BOARD_BASE_PATH = '/admin/queues';
@@ -54,4 +55,30 @@ export function createBullBoardRouter(queues: Queue[]): Router {
     });
     serverAdapter.setBasePath(BULL_BOARD_BASE_PATH);
     return serverAdapter.getRouter();
+}
+
+/**
+ * Mounts the dashboard with the same auth posture everywhere it is exposed:
+ * password → basic-auth gate; production without a password refuses to mount.
+ * Only the worker app calls this — queue handles must not leak into api.
+ */
+export function mountBullBoard(
+    app: Express,
+    queues: Queue[],
+    config: Pick<AppConfig, 'bullBoardUsername' | 'bullBoardPassword' | 'nodeEnv'>,
+): void {
+    if (config.bullBoardPassword) {
+        app.use(
+            BULL_BOARD_BASE_PATH,
+            createBasicAuthGate(config.bullBoardUsername, config.bullBoardPassword),
+            createBullBoardRouter(queues),
+        );
+        return;
+    }
+    if (config.nodeEnv === 'production') {
+        logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
+        return;
+    }
+    logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
+    app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter(queues));
 }

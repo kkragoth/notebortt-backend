@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import http from 'node:http';
+import express from 'express';
 import { loadConfig } from '@/shared/config.js';
 import { createBackgroundJobs } from '@/app/background-jobs.js';
 import {
@@ -7,6 +8,7 @@ import {
     registerDlqDepthCollector,
     registerQueueCollectors,
 } from '@/app/metrics-collectors.js';
+import { mountBullBoard } from '@/app/bull-board.routes.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { APP_EVENTS } from '@/shared/events.js';
@@ -16,13 +18,15 @@ import { logger } from '@/shared/logger.js';
  * Worker app. Owns all BullMQ processing (repeatable board persistence +
  * cleanup schedules, preview rendering) and consumes the cross-app domain
  * event queues so preview enqueues react to mutations emitted by
- * api/realtime.
+ * api/realtime. The Bull Board dashboard lives here too — this is the only
+ * app allowed to open handles to worker-owned queues.
  *
  * Requires EVENT_BUS_TRANSPORT=bullmq: the runtime's event bus then emits
  * and consumes over dedicated queues instead of in-process callbacks.
  *
  * Serves a metrics-only HTTP surface (METRICS_PORT, default 3002) so
- * Prometheus can scrape it and compose has a healthcheck target.
+ * Prometheus can scrape it and compose has a healthcheck target; Bull Board
+ * rides the same surface at /admin/queues when enabled.
  */
 const WORKER_METRICS_DEFAULT_PORT = 3002;
 const KEEP_ALIVE_GRACE_MS = 2_000;
@@ -44,21 +48,23 @@ registerQueueCollectors(runtime.metrics, () => [
 ]);
 registerDlqDepthCollector(runtime.metrics, () => runtime.eventQueues?.dlq);
 
-const metricsServer = http.createServer(async (req, res) => {
-    if (req.url === '/metrics' || req.url === '/healthz') {
-        try {
-            const { contentType, body } = await runtime.metrics.scrape();
-            res.setHeader('Content-Type', contentType);
-            res.end(req.url === '/healthz' ? 'ok\n' : body);
-        } catch {
-            res.statusCode = 500;
-            res.end('metrics collection failed');
-        }
-        return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', app: 'worker' }));
+const metricsApp = express();
+metricsApp.disable('x-powered-by');
+metricsApp.get('/healthz', (_req, res) => {
+    res.type('text/plain').send('ok\n');
 });
+metricsApp.get('/metrics', async (_req, res) => {
+    try {
+        const { contentType, body } = await runtime.metrics.scrape();
+        res.setHeader('Content-Type', contentType);
+        res.send(body);
+    } catch {
+        res.statusCode = 500;
+        res.send('metrics collection failed');
+    }
+});
+
+const metricsServer = http.createServer(metricsApp);
 
 let stopPreviewWorker: (() => Promise<void>) | undefined;
 
@@ -78,6 +84,16 @@ runAppShell({
 
         stopPreviewWorker = runtime.previewJobService.startWorker();
         await backgroundJobs.start();
+
+        // Mounted after the queues exist; express accepts late routes until
+        // the server starts listening below.
+        if (config.enableBullBoard) {
+            mountBullBoard(metricsApp, [
+                runtime.previewJobService.getQueue(),
+                ...backgroundJobs.getQueues(),
+                ...Object.values(runtime.eventQueues ?? {}),
+            ], config);
+        }
 
         const metricsPort = Number(process.env.METRICS_PORT ?? WORKER_METRICS_DEFAULT_PORT);
         await new Promise<void>((resolve) => {

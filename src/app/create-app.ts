@@ -6,7 +6,6 @@ import { rateLimit } from 'express-rate-limit';
 import { pinoHttp } from 'pino-http';
 import { RedisStore } from 'rate-limit-redis';
 import type { RedisReply, SendCommandFn } from 'rate-limit-redis';
-import type { Queue } from 'bullmq';
 import type { AppRuntime } from '@/app/runtime.js';
 import { createCorsMiddleware } from '@/shared/cors.js';
 import { logger } from '@/shared/logger.js';
@@ -18,7 +17,6 @@ import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billi
 import { createDebugRouter } from '@/app/debug.routes.js';
 import { healthRoute, livenessRoute } from '@/app/health.routes.js';
 import { createMetricsRoute } from '@/app/metrics.routes.js';
-import { BULL_BOARD_BASE_PATH, createBasicAuthGate, createBullBoardRouter } from '@/app/bull-board.routes.js';
 import { createOpenApiRouter } from '@/app/openapi.routes.js';
 import { createSwaggerRouter } from '@/app/swagger.routes.js';
 import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
@@ -40,12 +38,7 @@ function shouldLogRequest(url: string | undefined): boolean {
     return !UNVERSIONED_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-export interface CreateAppOptions {
-    /** Lazily resolved queues to render on Bull Board alongside the preview queue. */
-    bullBoardQueues?: () => Queue[]
-}
-
-export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
+export function createApp(runtime: AppRuntime) {
     const app = express();
 
     app.disable('x-powered-by');
@@ -136,25 +129,6 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
     app.get('/health', healthRoute(runtime.db, runtime.redis));
     app.get('/metrics', createMetricsRoute(runtime.metrics));
 
-    if (runtime.config.enableBullBoard) {
-        const { bullBoardUsername, bullBoardPassword, nodeEnv } = runtime.config;
-        const queues = () => [
-            runtime.previewJobService.getQueue(),
-            ...(options.bullBoardQueues?.() ?? []),
-        ];
-        if (bullBoardPassword) {
-            app.use(
-                BULL_BOARD_BASE_PATH,
-                createBasicAuthGate(bullBoardUsername, bullBoardPassword),
-                createBullBoardRouter(queues()),
-            );
-        } else if (nodeEnv === 'production') {
-            logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
-        } else {
-            logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
-            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter(queues()));
-        }
-    }
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));

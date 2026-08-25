@@ -17,8 +17,9 @@ no direct service-to-service calls.
      ┌──────────────┐  ┌───────────────┐  ┌─────────────────┐
      │ api          │  │ realtime      │  │ worker          │
      │ Express REST │  │ Socket.IO     │  │ BullMQ workers  │
-     │ bull-board   │  │ CRDT/presence │  │ preview render  │
-     └──────┬───────┘  └──────┬────────┘  └──────┬──────────┘
+     │              │  │ CRDT/presence │  │ preview render  │
+     └──────┬───────┘  └──────┬────────┘  │ bull-board      │
+            │                 │           └────────┬────────┘
             │                 │                  │
             │   BullMQ domain-event queues       │
             │  (BOARD_MUTATED, BOARD_EDITORS_LEFT)
@@ -30,15 +31,16 @@ no direct service-to-service calls.
 ```
 
 - **api** (`src/apps/api.main.ts`) — REST under `/api/v1`, auth (Google OAuth +
-  JWT refresh rotation), billing (Stripe), health/metrics, Bull Board dashboard.
+  JWT refresh rotation), billing (Stripe), health/metrics.
 - **realtime** (`src/apps/realtime.main.ts`) —
   Socket.IO server: CRDT sessions (Yjs), mutation batches, presence. Scales
   horizontally via the socket.io redis adapter + a redis-backed participants
   store; needs sticky sessions when running >1 replica.
 - **worker** (`src/apps/worker.main.ts`) — owns all background processing:
   repeatable board-persistence flush (30s) and cleanup schedules via BullMQ
-  job schedulers, preview rendering, and consumption of the domain-event
-  queues.
+  job schedulers, preview rendering, consumption of the domain-event
+  queues, and the Bull Board dashboard (`/admin/queues` on its metrics
+  surface).
 
 **Event bus** — `AppEventBus` (`src/shared/events.ts`). `EVENT_BUS_TRANSPORT=bullmq`
 emits/consumes over dedicated BullMQ queues (`board-mutations`,

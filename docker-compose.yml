@@ -16,8 +16,9 @@ services:
 
   redis-realtime:
     image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # noeviction protects durable-ish volatile state (dirty sets, presence,
+    # locks) from silent eviction under memory pressure (P2b.1).
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_realtime_data:/data
     ports:

@@ -285,11 +285,11 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
 
 **Matrix items:** 20, 21 (part 1), 65
 
-- [ ] **2b.1** `maxmemory-policy noeviction` on `redis-realtime` volatile keys (protects
+- [x] **2b.1** `maxmemory-policy noeviction` on `redis-realtime` volatile keys (protects
   `boards:dirty`).
-- [ ] **2b.2** Queue crash-recovery test: terminate the worker subprocess mid-processing; assert
+- [x] **2b.2** Queue crash-recovery test: terminate the worker subprocess mid-processing; assert
   BullMQ redelivery (at-least-once) and DLQ dead-letter routing (item 21, part 1).
-- [ ] **2b.3** Isolate Bull Board to the **worker** process; remove worker-queue handles from
+- [x] **2b.3** Isolate Bull Board to the **worker** process; remove worker-queue handles from
   `api.main.ts:23-26` (item 65).
 
 **Acceptance:** policy live in compose; crash-redelivery test green; Bull Board only in worker's
