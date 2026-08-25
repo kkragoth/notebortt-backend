@@ -77,6 +77,7 @@ export const elements = pgTable('elements', {
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (table) => [
     index('idx_elements_board').on(table.boardId),
+    index('idx_elements_board_updated_at').on(table.boardId, table.updatedAt),
     check('valid_element_type', sql`${table.type} IN ('NOTE','TEXT','ARROW','DRAWING','SHAPE','COLUMN','TABLE','IMAGE','LINK_PREVIEW','META_COLUMN','RANGE')`),
 ]);
 

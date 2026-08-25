@@ -409,21 +409,21 @@ verified by test; `just test` green.
 
 **Matrix items:** 13, 18, 21 (part 2), 66, 67, 68, 69, 73, 90, 98, 99
 
-- [ ] **6.1** Redis: explicit `appendfsync everysec` + `save` snapshots in `docker-compose.yml`
+- [x] **6.1** Redis: explicit `appendfsync everysec` + `save` snapshots in `docker-compose.yml`
   (`maxmemory-policy noeviction` already applied in P2b). **Document honestly in `DEPLOY.md`**:
   ≤1s AOF loss on process crash; snapshot-bound recovery on full node/volume loss. Best-effort
   recovery with a minimized loss window — never an SLA (items 13/18).
-- [ ] **6.2** Backup/restore: `scripts/pg-backup.sh`, `scripts/redis-backup.sh` + `backup`
+- [x] **6.2** Backup/restore: `scripts/pg-backup.sh`, `scripts/redis-backup.sh` + `backup`
   compose profile; CI validates a restore (dump into throwaway DB, assert row counts) (item 66).
-- [ ] **6.3** Epoch-boundary crash test (item 21, part 2): kill the Node runner mid-flush; verify
+- [x] **6.3** Epoch-boundary crash test (item 21, part 2): kill the Node runner mid-flush; verify
   Postgres epoch boundaries — no partial flush, no lost epoch guard.
-- [ ] **6.4** Compose/ops: uniform HEALTHCHECKs via `curl`/healthz on all three apps (item 68);
+- [x] **6.4** Compose/ops: uniform HEALTHCHECKs via `curl`/healthz on all three apps (item 68);
   migrations stay in the standalone `migrator`/CI step (item 69); `--max-old-space-size=512` in
   Docker CMD (item 73).
-- [ ] **6.5** Composite index `board_elements(board_id, updated_at)` via **`CREATE INDEX
+- [x] **6.5** Composite index `board_elements(board_id, updated_at)` via **`CREATE INDEX
   CONCURRENTLY`** (hot table — avoid locks; item 90); down-migration policy per Drizzle change
   (item 98); exhaustive `.env.example` (item 99).
-- [ ] **6.6** Multi-stage Dockerfile packaging only the target app's entrypoint (item 67).
+- [x] **6.6** Multi-stage Dockerfile packaging only the target app's entrypoint (item 67).
 
 **Acceptance:** recovery mechanism + loss window documented; backup/restore scripts + CI restore
 validation exist; epoch-boundary crash test green; healthchecks uniform; index migration applied;

@@ -5,3 +5,5 @@ dist/
 .DS_Store
 bench/results-latest.json
 bench/bench-history.json
+
+backups/

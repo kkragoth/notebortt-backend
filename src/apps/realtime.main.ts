@@ -27,6 +27,11 @@ registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
 registerQueueCollectors(runtime.metrics, () => [...Object.values(runtime.eventQueues ?? {})]);
 
 const server = http.createServer(async (req, res) => {
+    if (req.url === '/healthz') {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('ok\n');
+        return;
+    }
     if (req.url === '/metrics') {
         try {
             const { contentType, body } = await runtime.metrics.scrape();

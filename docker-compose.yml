@@ -17,19 +17,22 @@ services:
   redis-realtime:
     image: redis:7-alpine
     # noeviction protects durable-ish volatile state (dirty sets, presence,
-    # locks) from silent eviction under memory pressure (P2b.1).
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    # locks) from silent eviction under memory pressure (P2b.1). AOF everysec
+    # + periodic RDB snapshots bound the recovery window (P6.1).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "900 1", "--save", "300 10", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_realtime_data:/data
+      - ./backups:/backups
     ports:
       - "6379:6379"
 
   redis-jobs:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "900 1", "--save", "300 10"]
     volumes:
       - redis_jobs_data:/data
+      - ./backups:/backups
     ports:
       - "6380:6379"
 
@@ -156,7 +159,7 @@ services:
     expose:
       - "3001"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/healthz"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -182,7 +185,13 @@ services:
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
       EVENT_BUS_TRANSPORT: bullmq
-    # No HTTP surface: no healthcheck, nothing to expose.
+    expose:
+      - "3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -236,6 +245,21 @@ services:
     volumes:
       - certbot_www:/var/www/certbot
       - letsencrypt:/etc/letsencrypt
+
+  pg-backup:
+    image: postgres:16-alpine
+    profiles: ["backup"]
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: postgres
+    volumes:
+      - ./scripts/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
+      - ./backups:/backups
+    entrypoint: ["sh", "/usr/local/bin/pg-backup.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

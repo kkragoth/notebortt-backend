@@ -35,6 +35,15 @@ Restart nginx (it auto-detects cert files at startup):
 
 The migrator installs devDependencies explicitly so `drizzle-kit` is available even though the main app runs with production env.
 
+Before migrating a database that already has production traffic, apply the
+hot-table index build first (avoids an exclusive lock on `elements`; the
+tracked migration becomes a fast no-op afterwards):
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -f - < scripts/0001_elements_board_updated_at_idx.concurrently.sql
+```
+
 ```bash
 just run-deploy
 ```
@@ -58,6 +67,32 @@ docker compose run --rm api npx tsx scripts/maintenance/delete-orphaned-event-st
 
 If several deployments share one jobs Redis, set a distinct
 `QUEUE_REDIS_PREFIX` per deployment — it must match across all three apps.
+
+## 6b) Backups & the honest recovery window
+
+**Redis is best-effort hot state, not an SLA-backed system of record.**
+Postgres is the only durable store. The redis-realtime instance runs AOF
+(`appendfsync everysec`) plus RDB snapshots (`save 900 1`, `300 10`), which
+bounds loss on a crashed process to **≤1 second of acknowledged writes**; a
+full node/volume loss recovers from the last snapshot/AOF fsync and may still
+lose up to that same window. Collab-mode edits sitting only in redis at
+failure time are re-derivable: clients reconnect and reconcile via board
+snapshots, and previews self-heal on the next mutation.
+
+Backups (compose `backup` profile, or run the scripts from a host with the
+docker CLI):
+
+```bash
+docker compose --profile backup run --rm pg-backup     # ./backups/pg-*.dump
+./scripts/redis-backup.sh                              # ./backups/redis-*-*.rdb
+```
+
+Restore validation runs nightly in CI (`backup-restore.yml`): dump → restore
+into a throwaway DB → assert row counts.
+
+Down-migrations: every forward migration in `drizzle/` carries an explicit
+reverse under `drizzle/down/`. drizzle-kit does not execute them — apply
+manually with psql when rolling back a schema change.
 
 ## 7) Verify
 

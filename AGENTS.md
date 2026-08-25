@@ -16,6 +16,9 @@
 ## Database migrations
 - History is squashed to a single baseline (`0000_init.sql`); the snapshot
   chain is clean, so `drizzle-kit generate` works normally.
+- Every forward migration carries an explicit reverse in `drizzle/down/`
+  (`NNNN_name.down.sql`); drizzle-kit won't run them — apply via psql on
+  rollback. Hot tables get indexes via `CREATE INDEX CONCURRENTLY`.
 - drizzle-kit swallows connection errors from `migrate` (silent exit 1).
   If a migrate "does nothing", check credentials first — don't debug
   Postgres versions.

@@ -18,4 +18,5 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY drizzle.config.ts ./
 USER node
-CMD ["sh", "-c", "exec node dist/apps/${APP_NAME}.main.js"]
+# Bounded heap: containers fail fast on leaks instead of OOM-killing the host.
+CMD ["sh", "-c", "exec node --max-old-space-size=512 dist/apps/${APP_NAME}.main.js"]
