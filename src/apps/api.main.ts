@@ -31,7 +31,10 @@ const displayQueues = [
 ];
 
 registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
-registerQueueCollectors(runtime.metrics, () => displayQueues);
+registerQueueCollectors(runtime.metrics, () => [
+    ...displayQueues,
+    ...Object.values(runtime.eventQueues ?? {}),
+]);
 registerDbPoolCollectors(runtime.metrics, runtime.db, config.dbPoolMax);
 
 const app = createApp(runtime, {
@@ -63,6 +66,7 @@ runAppShell({
         });
 
         await Promise.all(displayQueues.map((queue) => queue.close()));
+        await runtime.events.close();
         await shutdownInfra(runtime);
     },
 });

@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
-import { registerBoardDirtyCollectors } from '@/app/metrics-collectors.js';
+import { registerBoardDirtyCollectors, registerQueueCollectors } from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 
@@ -22,6 +22,7 @@ const realtimePort = Number(process.env.REALTIME_PORT ?? REALTIME_DEFAULT_PORT);
 const runtime = createAppRuntime(config, { app: 'realtime' });
 
 registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+registerQueueCollectors(runtime.metrics, () => [...Object.values(runtime.eventQueues ?? {})]);
 
 const server = http.createServer(async (req, res) => {
     if (req.url === '/metrics') {
@@ -73,6 +74,7 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
+        await runtime.events.close();
         await shutdownInfra(runtime);
     },
 });

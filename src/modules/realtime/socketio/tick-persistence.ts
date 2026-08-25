@@ -63,7 +63,7 @@ export function createTickPersistenceManager(
             operation: { type: MutationType.MOVE_ELEMENTS, moves },
         };
         const results = await deps.mutationProcessor.processBatch([mutation], userId);
-        deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
+        await deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
         for (const result of results) {
             if (result.status === 'applied' && result.change) {
                 await options.onPersistedChange?.(boardId, userId, result.change, `tick:${boardId}`);

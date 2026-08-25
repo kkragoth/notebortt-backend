@@ -39,7 +39,7 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         if (!runtime.isSnapshotActive(snapshot)) {
             return;
         }
-        runtime.deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: snapshot.context.boardId });
+        await runtime.deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: snapshot.context.boardId });
 
         const acknowledgedIds: string[] = [];
         let latestSequence: number | undefined;

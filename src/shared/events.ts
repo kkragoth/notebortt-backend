@@ -1,5 +1,7 @@
-import { EventEmitter } from 'node:events';
+import { Worker } from 'bullmq';
+import { z } from 'zod';
 import { logger } from './logger.js';
+import type { Job, Queue } from 'bullmq';
 import type Redis from 'ioredis';
 
 /**
@@ -7,10 +9,11 @@ import type Redis from 'ioredis';
  * subscribers are wired in the composition roots (src/apps/*).
  *
  * Two transports behind one interface:
- *   - in-process EventEmitter (default; tests, single-process dev)
- *   - Redis Stream (`redis` option) for cross-process delivery between the
- *     api / realtime / worker apps. At-least-once: handlers must be idempotent
- *     (preview enqueues already dedup by board id).
+ *   - in-process handlers (`local`; tests, single-process dev)
+ *   - BullMQ queues (`bullmq`) for cross-process delivery between the
+ *     api/realtime producers and the worker consumer. Delivery is
+ *     at-least-once with retry/backoff; permanently undecodable payloads
+ *     are parked on a dead-letter queue instead of being retried forever.
  */
 export const APP_EVENTS = {
     /** Board state changed (REST mutation or realtime CRDT tick). */
@@ -19,13 +22,7 @@ export const APP_EVENTS = {
     BOARD_EDITORS_LEFT: 'board.editorsLeft',
 } as const;
 
-export const APP_EVENTS_STREAM_KEY = 'events:app';
-/**
- * Approximate cap: under sustained burst older events are trimmed, so a
- * worker offline longer than ~MAXLEN events loses those triggers. Preview
- * generation self-heals on the next mutation; flush-on-editors-left does not.
- */
-export const APP_EVENTS_STREAM_MAXLEN = 10_000;
+export const APP_EVENT_SCHEMA_VERSION = 1;
 
 export interface AppEventMap {
     [APP_EVENTS.BOARD_MUTATED]: { boardId: string }
@@ -36,316 +33,407 @@ export type AppEventName = keyof AppEventMap;
 export type AppEventHandler<TEvent extends AppEventName> = (payload: AppEventMap[TEvent]) => void | Promise<void>;
 
 export interface AppEventBus {
-    emit: <TEvent extends AppEventName>(event: TEvent, payload: AppEventMap[TEvent]) => void
+    /**
+     * Resolves once the transport has durably accepted the event. Never
+     * rejects: the triggering operation (mutation, tick, disconnect) is
+     * already applied when emit runs, so an enqueue failure must degrade
+     * delivery, not fail the primary result.
+     */
+    emit: <TEvent extends AppEventName>(event: TEvent, payload: AppEventMap[TEvent]) => Promise<void>
     on: <TEvent extends AppEventName>(event: TEvent, handler: AppEventHandler<TEvent>) => () => void
+    /** Stops consumers (no-op on the local transport); idempotent. */
+    close: () => Promise<void>
 }
 
-export interface AppEventBusOptions {
-    /** Enables the Redis Stream transport when provided. */
-    redis?: Redis
-    /** Consumer group name; processes sharing a group split deliveries. */
-    consumerGroup?: string
-    /** Min idle time before a pending entry is reclaimed from a dead consumer. */
-    reclaimMinIdleMs?: number
-    /** How often the reclaim sweep runs. */
-    reclaimIntervalMs?: number
-    /** Overrides the stream key (tests / multi-tenant isolation). */
-    streamKey?: string
-    /** Consumers idle longer than this (with empty PEL) are deregistered. */
-    consumerIdleTtlMs?: number
+// ── envelope ─────────────────────────────────────────────────────────────
+
+const appEventEnvelopeSchema = z.object({
+    schemaVersion: z.number().int().min(1),
+    producerId: z.string().min(1),
+    timestamp: z.number().int().positive(),
+    data: z.unknown(),
+});
+
+type AppEventEnvelope = z.infer<typeof appEventEnvelopeSchema>;
+
+const boardRefPayloadSchema = z.object({ boardId: z.string().min(1) });
+
+const payloadSchemas: Record<AppEventName, z.ZodType<AppEventMap[AppEventName]>> = {
+    [APP_EVENTS.BOARD_MUTATED]: boardRefPayloadSchema,
+    [APP_EVENTS.BOARD_EDITORS_LEFT]: boardRefPayloadSchema,
+};
+
+/** Body of a job on the domain-event transport queues. */
+export interface DomainEventJobData {
+    event: string
+    envelope: unknown
 }
 
-function serializeEvent<TEvent extends AppEventName>(event: TEvent, payload: AppEventMap[TEvent]): string[] {
-    return [
-        'event', event,
-        'data', JSON.stringify(payload),
-    ];
+export const DOMAIN_EVENTS_DLQ_JOB_NAME = 'dead-letter';
+
+export const DOMAIN_EVENT_DLQ_REASONS = {
+    invalidEnvelope: 'invalid_envelope',
+    unknownSchemaVersion: 'unknown_schema_version',
+    unknownEvent: 'unknown_event',
+    invalidPayload: 'invalid_payload',
+} as const;
+
+export type DeadLetterReason = (typeof DOMAIN_EVENT_DLQ_REASONS)[keyof typeof DOMAIN_EVENT_DLQ_REASONS];
+
+/** Parked on the dead-letter queue; never re-processed. */
+export interface DeadLetterRecord {
+    originalQueue: string | undefined
+    originalJobId: string | undefined
+    event: string
+    reason: DeadLetterReason
+    error: string | null
+    envelope: unknown
 }
 
-const RECLAIM_MAX_ATTEMPTS = 5;
-
-interface StreamBusRuntimeOptions {
-    streamKey: string
-    consumerGroup: string
-    reclaimMinIdleMs: number
-    reclaimIntervalMs: number
-    consumerIdleTtlMs: number
+export interface DomainEventQueueSet {
+    mutations: Queue<DomainEventJobData>
+    controlEvents: Queue<DomainEventJobData>
+    dlq: Queue<DeadLetterRecord>
 }
 
-function createStreamAppEventBus(redis: Redis, runtimeOpts: StreamBusRuntimeOptions): AppEventBus {
-    const { consumerGroup, reclaimMinIdleMs, reclaimIntervalMs } = runtimeOpts;
-    // One consumer per process, fanning out internally: separate consumers
-    // within a group SPLIT deliveries, which would silently drop events
-    // whose handler lives on another subscription of the same bus.
-    const consumerName = `${consumerGroup}:${process.pid}:${Math.random().toString(36).slice(2, 8)}`;
+/** Consumer/producer view; the DLQ is only required on consumer processes. */
+export interface AppEventBusQueues {
+    mutations: Queue<DomainEventJobData>
+    controlEvents: Queue<DomainEventJobData>
+    dlq?: Queue<DeadLetterRecord>
+}
+
+// BullMQ forbids ":" inside deduplication ids; hyphens/dots are fine.
+function deduplicationId(event: AppEventName, payload: { boardId?: string }): string {
+    return `${event}-${payload.boardId ?? 'all'}`.replaceAll(':', '-');
+}
+
+function isAppEventName(value: unknown): value is AppEventName {
+    return typeof value === 'string' && Object.values(APP_EVENTS).includes(value as AppEventName);
+}
+
+function formatIssues(error: z.ZodError): string {
+    return error.issues.map((issue) => issue.message).join('; ');
+}
+
+// ── local transport (in-process handlers) ────────────────────────────────
+
+function createInProcessAppEventBus(): AppEventBus {
     const handlersByEvent = new Map<string, Set<(payload: unknown) => void | Promise<void>>>();
-    // entryId -> failed processing attempts; poison entries are dropped
-    // (XDEL + ack) after RECLAIM_MAX_ATTEMPTS so the PEL cannot clog forever.
-    const failedAttemptsByEntry = new Map<string, number>();
-    let running = false;
-    let loopStarted = false;
-
-    // Blocking reads (XREADGROUP BLOCK / slow reclaims) must never share a
-    // connection with publishes: Redis executes commands per-connection in
-    // order, so a BLOCK would stall every emit behind it for its full
-    // timeout. The reader owns its own connection.
-    const reader = redis.duplicate();
-    reader.on('error', (err) => {
-        logger.error({ err }, '[EventBus] reader connection error');
-    });
-
-    async function ensureGroup(): Promise<void> {
-        try {
-            // '$' = only entries added AFTER group creation are consumed.
-            // Fresh deploys must not replay up to MAXLEN historical events.
-            await redis.xgroup('CREATE', runtimeOpts.streamKey, consumerGroup, '$', 'MKSTREAM');
-        } catch (error) {
-            // BUSYGROUP means another replica already created it — expected.
-            if (!(error as Error).message.includes('BUSYGROUP')) {
-                throw error;
-            }
-        }
-    }
-
-    async function dispatch(entryId: string, fields: string[]): Promise<boolean> {
-        let event: string | null = null;
-        let rawData: string | null = null;
-        for (let i = 0; i < fields.length; i += 2) {
-            if (fields[i] === 'event') {
-                event = fields[i + 1] ?? null;
-            } else if (fields[i] === 'data') {
-                rawData = fields[i + 1] ?? null;
-            }
-        }
-
-        if (!event || !rawData) {
-            return true;
-        }
-
-        const handlers = handlersByEvent.get(event);
-        if (!handlers || handlers.size === 0) {
-            return true;
-        }
-
-        let payload: unknown;
-        try {
-            payload = JSON.parse(rawData);
-        } catch (parseError) {
-            logger.error({ err: parseError, event }, '[EventBus] stream payload parse failed');
-            return true;
-        }
-
-        const results = await Promise.allSettled(
-            [...handlers].map((handler) => Promise.resolve(handler(payload))),
-        );
-        for (const result of results) {
-            if (result.status === 'rejected') {
-                logger.error({ err: result.reason, event }, '[EventBus] stream handler failed');
-                return false;
-            }
-        }
-        return true;
-    }
-
-    async function processEntry(entryId: string, fields: string[]): Promise<void> {
-        // Await handlers before acking so transient downstream failures
-        // (e.g. jobs-redis blip during a preview enqueue) keep the entry in
-        // the pending list for redelivery instead of being lost.
-        const ok = await dispatch(entryId, fields);
-        if (ok) {
-            failedAttemptsByEntry.delete(entryId);
-            await redis.xack(runtimeOpts.streamKey, consumerGroup, entryId);
-            return;
-        }
-
-        const attempts = (failedAttemptsByEntry.get(entryId) ?? 0) + 1;
-        failedAttemptsByEntry.set(entryId, attempts);
-        if (attempts >= RECLAIM_MAX_ATTEMPTS) {
-            logger.error({ event: 'eventbus.poison_dropped', entryId, attempts }, '[EventBus] dropping poison entry');
-            failedAttemptsByEntry.delete(entryId);
-            await redis.xdel(runtimeOpts.streamKey, entryId);
-            await redis.xack(runtimeOpts.streamKey, consumerGroup, entryId);
-        }
-    }
-
-    // Dead processes leave their named consumers behind forever; drop any
-    // that have been idle beyond the TTL with nothing pending. Our own
-    // consumer is exempt (its idle resets on every BLOCK wake-up anyway).
-    async function pruneStaleConsumers(): Promise<void> {
-        const consumers = await redis.xinfo(
-            'CONSUMERS', runtimeOpts.streamKey, consumerGroup,
-        ) as Array<Array<string | number>>;
-        for (const entry of consumers ?? []) {
-            const fields: Record<string, string | number> = {};
-            for (let i = 0; i < (entry?.length ?? 0); i += 2) {
-                fields[String(entry[i])] = entry[i + 1];
-            }
-            const pending = Number(fields.pending ?? 0);
-            const idle = Number(fields.idle ?? 0);
-            const name = String(fields.name ?? '');
-            if (name && name !== consumerName && pending === 0 && idle >= runtimeOpts.consumerIdleTtlMs) {
-                await redis.xgroup('DELCONSUMER', runtimeOpts.streamKey, consumerGroup, name);
-                logger.info({ consumer: name, idleMs: idle }, '[EventBus] pruned stale stream consumer');
-            }
-        }
-    }
-
-    async function reclaimPending(): Promise<void> {
-        try {
-            // Best-effort housekeeping; the key/group may not exist yet.
-            try {
-                await pruneStaleConsumers();
-            } catch {
-                /* ignore */
-            }
-
-            // Reclaims run on the main connection: they must not queue
-            // behind the reader's blocking XREADGROUP.
-            const result = await redis.xautoclaim(
-                runtimeOpts.streamKey,
-                consumerGroup,
-                consumerName,
-                reclaimMinIdleMs,
-                '0',
-                'COUNT',
-                16,
-            ) as unknown;
-            // Reply shape: [nextStartId, [[entryId, [f, v, ...]], ...], [deletedIds?]]
-            const entries = Array.isArray(result) && Array.isArray(result[1])
-                ? result[1] as Array<[string, string[]]>
-                : [];
-            for (const [entryId, fields] of entries) {
-                await processEntry(entryId, fields);
-            }
-        } catch (reclaimError) {
-            // NOGROUP before first group creation is expected on fresh keys.
-            if (!(reclaimError as Error).message.includes('NOGROUP')) {
-                logger.error({ err: reclaimError }, '[EventBus] reclaim sweep failed');
-            }
-        }
-    }
-
-    async function readLoop(): Promise<void> {
-        if (loopStarted) {
-            return;
-        }
-        loopStarted = true;
-        running = true;
-
-        // A previous full-unsubscribe cycle disconnected the reader.
-        if (reader.status === 'end') {
-            reader.connect();
-        }
-
-        void setInterval(() => {
-            if (running) {
-                void reclaimPending();
-            }
-        }, reclaimIntervalMs).unref();
-
-        while (running) {
-            try {
-                // Retried every iteration: a transient redis error at startup
-                // must not escape and crash the process (unhandled rejection).
-                await ensureGroup();
-
-                const responses = await reader.xreadgroup(
-                    'GROUP', consumerGroup, consumerName,
-                    'COUNT', '16',
-                    'BLOCK', '5000',
-                    'STREAMS', runtimeOpts.streamKey, '>',
-                ) as Array<[string, Array<[string, string[]]>]> | null;
-
-                for (const streamResponse of responses ?? []) {
-                    for (const [entryId, fields] of streamResponse[1]) {
-                        await processEntry(entryId, fields);
-                    }
-                }
-            } catch (readError) {
-                logger.error({ err: readError }, '[EventBus] stream read failed');
-                await new Promise((resolve) => setTimeout(resolve, 1_000));
-            }
-        }
-    }
+    const warnedNoListeners = new Set<string>();
 
     return {
-        emit(event, payload) {
-            void redis.xadd(
-                runtimeOpts.streamKey,
-                'MAXLEN', '~', APP_EVENTS_STREAM_MAXLEN.toString(),
-                '*',
-                ...serializeEvent(event, payload),
-            ).catch((error) => {
-                logger.error({ err: error, event }, '[EventBus] stream publish failed');
-            });
+        async emit(event, payload) {
+            const handlers = handlersByEvent.get(event);
+            if (!handlers || handlers.size === 0) {
+                if (!warnedNoListeners.has(event)) {
+                    warnedNoListeners.add(event);
+                    logger.warn({ event }, '[EventBus] emitted with no listeners');
+                }
+                return;
+            }
+            const results = await Promise.allSettled(
+                [...handlers].map((handler) => Promise.resolve().then(() => handler(payload))),
+            );
+            for (const result of results) {
+                if (result.status === 'rejected') {
+                    logger.error({ err: result.reason, event }, '[EventBus] handler failed');
+                }
+            }
         },
-        on<TEvent extends AppEventName>(event: TEvent, handler: AppEventHandler<TEvent>) {
+        on(event, handler) {
             let handlers = handlersByEvent.get(event);
             if (!handlers) {
                 handlers = new Set();
                 handlersByEvent.set(event, handlers);
             }
             handlers.add(handler as (payload: unknown) => void | Promise<void>);
-            void readLoop();
-
             return () => {
-                handlers?.delete(handler as (payload: unknown) => void | Promise<void>);
-                let remaining = 0;
-                for (const set of handlersByEvent.values()) {
-                    remaining += set.size;
-                }
-                if (remaining === 0) {
-                    running = false;
-                    // Allow a future on() to restart the read loop cleanly.
-                    loopStarted = false;
-                    // Give an in-flight BLOCK up to one cycle to drain before
-                    // tearing the reader connection down.
-                    setTimeout(() => {
-                        if (!running && handlersByEvent.size === 0) {
-                            reader.disconnect();
-                        }
-                    }, 6_000).unref();
-                }
+                handlers.delete(handler as (payload: unknown) => void | Promise<void>);
             };
+        },
+        async close() {
+            warnedNoListeners.clear();
         },
     };
 }
 
-function createInProcessAppEventBus(): AppEventBus {
-    const emitter = new EventEmitter();
-    emitter.setMaxListeners(50);
+// ── bullmq transport (cross-process queues) ──────────────────────────────
 
-    return {
-        emit(event, payload) {
-            if (emitter.listenerCount(event) === 0) {
-                logger.warn({ event }, '[EventBus] emitted with no listeners');
+const DEFAULT_CONSUMER_CONCURRENCY = 5;
+const DEFAULT_DLQ_SUMMARY_INTERVAL_MS = 60_000;
+
+/**
+ * Fixed-window coalescing keyed on event+boardId: bursts collapse into one
+ * queued trigger per window. Handlers read latest board state when they run
+ * (preview renders debounce further), so collapsed duplicates carry no lost
+ * information.
+ */
+const DEDUP_TTL_MS = {
+    [APP_EVENTS.BOARD_MUTATED]: 2_000,
+    [APP_EVENTS.BOARD_EDITORS_LEFT]: 1_000,
+} as const satisfies Record<AppEventName, number>;
+
+export interface AppEventEmitFailureInfo {
+    event: AppEventName
+    producerId: string
+}
+
+export interface AppEventJobFailureInfo {
+    queue: string
+    jobId: string | undefined
+    event: string | undefined
+    boardId: string | undefined
+    error: Error
+}
+
+export type AppEventBusOptions = {
+    transport?: 'local'
+} | {
+    transport: 'bullmq'
+    connection: Redis
+    /** Must match the prefix the queues were created with. */
+    prefix?: string
+    queues: AppEventBusQueues
+    producerId: string
+    /** Per-queue worker concurrency; pools stay isolated per queue. */
+    consumerConcurrency?: number
+    onEnqueueFailed?: (error: Error, info: AppEventEmitFailureInfo) => void
+    onJobFailed?: (info: AppEventJobFailureInfo) => void
+    dlqSummaryIntervalMs?: number
+};
+
+function boardIdOfEnvelope(envelope: unknown): string | undefined {
+    const data = (envelope as { data?: { boardId?: unknown } } | null)?.data;
+    return typeof data?.boardId === 'string' ? data.boardId : undefined;
+}
+
+function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transport: 'bullmq' }>): AppEventBus {
+    const { connection, prefix, producerId, queues } = options;
+    const concurrency = options.consumerConcurrency ?? DEFAULT_CONSUMER_CONCURRENCY;
+    const dlqSummaryIntervalMs = options.dlqSummaryIntervalMs ?? DEFAULT_DLQ_SUMMARY_INTERVAL_MS;
+
+    const handlersByEvent = new Map<string, Set<(payload: unknown) => void | Promise<void>>>();
+    const workers: Array<Worker<DomainEventJobData> | Worker<DeadLetterRecord>> = [];
+    let consumersStarted = false;
+
+    const dlqWindow = { total: 0, byReason: new Map<string, number>(), sinceBoot: 0 };
+    let dlqSummaryTimer: NodeJS.Timeout | undefined;
+
+    function scheduleDlqSummary(): void {
+        if (dlqSummaryTimer) {
+            return;
+        }
+        dlqSummaryTimer = setTimeout(() => {
+            dlqSummaryTimer = undefined;
+            if (dlqWindow.total === 0) {
                 return;
             }
-            emitter.emit(event, payload);
+            logger.warn({
+                event: 'domain_events.dlq_summary',
+                windowMs: dlqSummaryIntervalMs,
+                total: dlqWindow.total,
+                sinceBoot: dlqWindow.sinceBoot,
+                byReason: Object.fromEntries(dlqWindow.byReason),
+            }, '[EventBus] dead-letter summary');
+            dlqWindow.total = 0;
+            dlqWindow.byReason.clear();
+        }, dlqSummaryIntervalMs);
+        dlqSummaryTimer.unref();
+    }
+
+    function flushDlqSummary(): void {
+        if (dlqSummaryTimer) {
+            clearTimeout(dlqSummaryTimer);
+            dlqSummaryTimer = undefined;
+        }
+        if (dlqWindow.total === 0) {
+            return;
+        }
+        logger.warn({
+            event: 'domain_events.dlq_summary',
+            windowMs: null,
+            total: dlqWindow.total,
+            sinceBoot: dlqWindow.sinceBoot,
+            byReason: Object.fromEntries(dlqWindow.byReason),
+        }, '[EventBus] dead-letter summary');
+        dlqWindow.total = 0;
+        dlqWindow.byReason.clear();
+    }
+
+    async function parkDeadLetter(job: Job<DomainEventJobData>, reason: DeadLetterReason, error: string | null): Promise<void> {
+        const record: DeadLetterRecord = {
+            originalQueue: job.queueName,
+            originalJobId: job.id,
+            event: typeof job.data?.event === 'string' ? job.data.event : 'unknown',
+            reason,
+            error,
+            envelope: job.data?.envelope ?? null,
+        };
+        dlqWindow.total += 1;
+        dlqWindow.sinceBoot += 1;
+        dlqWindow.byReason.set(reason, (dlqWindow.byReason.get(reason) ?? 0) + 1);
+        scheduleDlqSummary();
+        logger.error({
+            event: 'domain_events.dead_letter',
+            queue: record.originalQueue,
+            jobId: record.originalJobId,
+            domainEvent: record.event,
+            reason,
+            error,
+            producerId: (record.envelope as AppEventEnvelope | null)?.producerId,
+            schemaVersion: (record.envelope as AppEventEnvelope | null)?.schemaVersion,
+        }, '[EventBus] domain event dead-lettered');
+
+        const dlq = queues.dlq;
+        if (!dlq) {
+            logger.error({ reason }, '[EventBus] no DLQ queue wired; record not persisted');
+            return;
+        }
+        await dlq.add(DOMAIN_EVENTS_DLQ_JOB_NAME, record, { attempts: 1 });
+    }
+
+    async function dispatch(event: AppEventName, payload: unknown): Promise<void> {
+        const handlers = handlersByEvent.get(event);
+        if (!handlers || handlers.size === 0) {
+            return;
+        }
+        const results = await Promise.allSettled(
+            [...handlers].map((handler) => Promise.resolve(handler(payload))),
+        );
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                logger.error({ err: result.reason, event }, '[EventBus] handler failed');
+                // Throw after fanning out to every handler so one failing
+                // subscriber cannot starve the others; redelivery relies on
+                // idempotent handlers (same contract as the previous bus).
+                throw result.reason;
+            }
+        }
+    }
+
+    async function handleDomainEventJob(job: Job<DomainEventJobData>): Promise<void> {
+        const parsedEnvelope = appEventEnvelopeSchema.safeParse(job.data?.envelope);
+        if (!parsedEnvelope.success) {
+            await parkDeadLetter(job, DOMAIN_EVENT_DLQ_REASONS.invalidEnvelope, formatIssues(parsedEnvelope.error));
+            return;
+        }
+        const envelope = parsedEnvelope.data;
+        if (envelope.schemaVersion !== APP_EVENT_SCHEMA_VERSION) {
+            await parkDeadLetter(job, DOMAIN_EVENT_DLQ_REASONS.unknownSchemaVersion, `unsupported schemaVersion ${envelope.schemaVersion}`);
+            return;
+        }
+        const event = job.data?.event;
+        if (!isAppEventName(event)) {
+            await parkDeadLetter(job, DOMAIN_EVENT_DLQ_REASONS.unknownEvent, `unknown event ${String(event)}`);
+            return;
+        }
+        const payload = payloadSchemas[event].safeParse(envelope.data);
+        if (!payload.success) {
+            await parkDeadLetter(job, DOMAIN_EVENT_DLQ_REASONS.invalidPayload, formatIssues(payload.error));
+            return;
+        }
+        await dispatch(event, payload.data);
+    }
+
+    function reportJobFailure(queueName: string, job: Job<DomainEventJobData> | Job<DeadLetterRecord> | undefined, err: Error): void {
+        const info: AppEventJobFailureInfo = {
+            queue: queueName,
+            jobId: job?.id,
+            event: typeof (job?.data)?.event === 'string'
+                ? (job?.data as DomainEventJobData).event
+                : undefined,
+            boardId: boardIdOfEnvelope((job as Job<DomainEventJobData> | undefined)?.data?.envelope),
+            error: err,
+        };
+        if (options.onJobFailed) {
+            options.onJobFailed(info);
+            return;
+        }
+        logger.error({ err: info.error, queue: info.queue, jobId: info.jobId, boardId: info.boardId }, '[EventBus] domain event job failed');
+    }
+
+    function startConsumers(): void {
+        if (consumersStarted) {
+            return;
+        }
+        consumersStarted = true;
+
+        const workerOptions = { connection, ...(prefix ? { prefix } : {}), concurrency };
+        for (const queue of [queues.mutations, queues.controlEvents]) {
+            const worker = new Worker<DomainEventJobData>(
+                queue.name,
+                (job) => handleDomainEventJob(job),
+                workerOptions,
+            );
+            worker.on('failed', (job, err) => reportJobFailure(queue.name, job, err));
+            worker.on('error', (err) => logger.error({ err, queue: queue.name }, '[EventBus] consumer error'));
+            workers.push(worker);
+        }
+
+        // Recorder-only worker: transitions parked records to completed so
+        // the queue's removeOnComplete age is what bounds DLQ retention.
+        const dlq = queues.dlq;
+        if (dlq) {
+            const recorder = new Worker<DeadLetterRecord>(
+                dlq.name,
+                async () => undefined,
+                { connection, ...(prefix ? { prefix } : {}), concurrency: 1 },
+            );
+            recorder.on('failed', (job, err) => {
+                logger.error({ err, queue: dlq.name, jobId: job?.id }, '[EventBus] DLQ recorder failed');
+            });
+            recorder.on('error', (err) => logger.error({ err, queue: dlq.name }, '[EventBus] DLQ recorder error'));
+            workers.push(recorder);
+        }
+    }
+
+    return {
+        async emit(event, payload) {
+            const queue = event === APP_EVENTS.BOARD_EDITORS_LEFT ? queues.controlEvents : queues.mutations;
+            const envelope = {
+                schemaVersion: APP_EVENT_SCHEMA_VERSION,
+                producerId,
+                timestamp: Date.now(),
+                data: payload,
+            };
+            try {
+                await queue.add(event, { event, envelope } satisfies DomainEventJobData, {
+                    deduplication: {
+                        id: deduplicationId(event, payload),
+                        ttl: DEDUP_TTL_MS[event],
+                    },
+                });
+            } catch (error) {
+                const err = error instanceof Error ? error : new Error(String(error));
+                logger.error({ err, event, producerId, queue: queue.name }, '[EventBus] enqueue failed (delivery degraded)');
+                options.onEnqueueFailed?.(err, { event, producerId });
+            }
         },
         on(event, handler) {
-            const wrapped = (payload: AppEventMap[typeof event]) => {
-                try {
-                    handler(payload);
-                } catch (err) {
-                    logger.error({ err, event }, '[EventBus] sync handler failed');
-                }
+            let handlers = handlersByEvent.get(event);
+            if (!handlers) {
+                handlers = new Set();
+                handlersByEvent.set(event, handlers);
+            }
+            handlers.add(handler as (payload: unknown) => void | Promise<void>);
+            startConsumers();
+
+            return () => {
+                handlers.delete(handler as (payload: unknown) => void | Promise<void>);
             };
-            emitter.on(event, wrapped);
-            return () => emitter.off(event, wrapped);
+        },
+        async close() {
+            flushDlqSummary();
+            const closing = workers.splice(0).map((worker) => worker.close());
+            await Promise.all(closing);
         },
     };
 }
 
 export function createAppEventBus(options: AppEventBusOptions = {}): AppEventBus {
-    if (options.redis) {
-        return createStreamAppEventBus(options.redis, {
-            streamKey: options.streamKey ?? APP_EVENTS_STREAM_KEY,
-            consumerGroup: options.consumerGroup ?? 'app-events',
-            reclaimMinIdleMs: options.reclaimMinIdleMs ?? 30_000,
-            reclaimIntervalMs: options.reclaimIntervalMs ?? 60_000,
-            consumerIdleTtlMs: options.consumerIdleTtlMs ?? 10 * 60_000,
-        });
+    if (options.transport === 'bullmq') {
+        return createBullMqAppEventBus(options);
     }
     return createInProcessAppEventBus();
 }

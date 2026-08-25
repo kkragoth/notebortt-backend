@@ -66,7 +66,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
-      EVENT_BUS_MODE: stream
+      EVENT_BUS_TRANSPORT: bullmq
       PORT: "8080"
       REALTIME_PORT: "8081"
       NODE_ENV: development
@@ -119,7 +119,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
-      EVENT_BUS_MODE: stream
+      EVENT_BUS_TRANSPORT: bullmq
       PORT: "3000"
     expose:
       - "3000"
@@ -149,7 +149,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
-      EVENT_BUS_MODE: stream
+      EVENT_BUS_TRANSPORT: bullmq
       PORT: "3001"
       REALTIME_PORT: "3001"
     expose:
@@ -180,7 +180,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
-      EVENT_BUS_MODE: stream
+      EVENT_BUS_TRANSPORT: bullmq
     # No HTTP surface: no healthcheck, nothing to expose.
     depends_on:
       postgres:

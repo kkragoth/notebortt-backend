@@ -5,9 +5,9 @@
   `src/apps/realtime.main.ts` (Socket.IO), `src/apps/worker.main.ts`
   (all BullMQ workers + preview reactions). Compose builds them from one
   Dockerfile via `--build-arg APP=...`.
-- Cross-process domain events ride a Redis Stream bus behind
-  `AppEventBus` (`src/shared/events.ts`); set `EVENT_BUS_MODE=stream`
-  for any multi-app deployment, `local` for single-process.
+- Cross-process domain events ride BullMQ queues behind `AppEventBus`
+  (`src/shared/events.ts`); set `EVENT_BUS_TRANSPORT=bullmq` for any
+  multi-app deployment, `local` for single-process.
 - Background schedules are BullMQ repeatable jobs registered in
   `src/app/background-jobs.ts` — never add `setInterval` loops to services.
 - `createAppRuntime` members are lazy memoized getters; apps only pay for

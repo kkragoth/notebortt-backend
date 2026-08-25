@@ -46,6 +46,7 @@ export function createPreviewJobService(
     connection: Redis,
     renderer: BoardPreviewRenderer,
     metrics?: RuntimeMetrics,
+    options: { prefix?: string } = {},
 ) {
     let queue: Queue<PreviewJobData> | null = null;
     let worker: Worker<PreviewJobData> | null = null;
@@ -54,6 +55,7 @@ export function createPreviewJobService(
         if (!queue) {
             queue = new Queue<PreviewJobData>(PREVIEW_QUEUE_NAME, {
                 connection,
+                ...(options.prefix ? { prefix: options.prefix } : {}),
                 defaultJobOptions: {
                     attempts: PREVIEW_JOB_ATTEMPTS,
                     backoff: {
@@ -209,7 +211,7 @@ export function createPreviewJobService(
                 }
                 return result;
             },
-            { connection, concurrency },
+            { connection, ...(options.prefix ? { prefix: options.prefix } : {}), concurrency },
         );
 
         worker.on('failed', (job, err) => {

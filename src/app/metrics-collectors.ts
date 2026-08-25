@@ -49,6 +49,23 @@ export function registerQueueCollectors(metrics: RuntimeMetrics, getQueues: () =
     });
 }
 
+/**
+ * DLQ entries are completed on arrival (retention-bounded), so depth is the
+ * number of dead letters still inside the retention window — alerting should
+ * threshold on this series, tolerating transient spikes during rolling
+ * deploys.
+ */
+export function registerDlqDepthCollector(metrics: RuntimeMetrics, getDlqQueue: () => Queue | undefined): void {
+    metrics.registerCollector(async () => {
+        const queue = getDlqQueue();
+        if (!queue) {
+            return;
+        }
+        const counts = await queue.getJobCounts('waiting', 'completed');
+        metrics.setGauge('dlq_depth', (counts.waiting ?? 0) + (counts.completed ?? 0));
+    });
+}
+
 export function registerDbPoolCollectors(metrics: RuntimeMetrics, db: Database, poolMax: number): void {
     metrics.setGauge('db_pool_max_connections', poolMax);
     metrics.registerCollector(async () => {

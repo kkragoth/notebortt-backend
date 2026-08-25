@@ -17,8 +17,9 @@ export function createDisconnectHandler(
 
         if (context.permission === 'edit') {
             // Tab close / navigation also lands here (socket dies), so no
-            // client-side beforeunload call is needed.
-            runtime.deps.events.emit(APP_EVENTS.BOARD_EDITORS_LEFT, { boardId: context.boardId });
+            // client-side beforeunload call is needed. Awaited emit never
+            // rejects; a failed flush enqueue is logged by the bus.
+            await runtime.deps.events.emit(APP_EVENTS.BOARD_EDITORS_LEFT, { boardId: context.boardId });
         }
 
         cleanupConnectionState();

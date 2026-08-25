@@ -26,7 +26,8 @@ const envSchema = z.object({
     PRESENCE_WRITE_THROTTLE_MS: z.coerce.number().int().min(0).default(3000),
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
     ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
-    EVENT_BUS_MODE: z.enum(['local', 'stream']).default('local'),
+    EVENT_BUS_TRANSPORT: z.enum(['local', 'bullmq']).default('local'),
+    QUEUE_REDIS_PREFIX: z.string().min(1).optional(),
     RATE_LIMIT_DISABLED: z.coerce.boolean().default(false),
     BOARD_PERSIST_INTERVAL_MS: z.coerce.number().int().min(1_000).default(30_000),
     REDIS_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(120_000),
@@ -67,7 +68,8 @@ export interface AppConfig {
   presenceWriteThrottleMs: number
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
-  eventBusStreamEnabled: boolean
+  eventBusTransport: 'local' | 'bullmq'
+  queueRedisPrefix: string | null
   rateLimitDisabled: boolean
   boardPersistIntervalMs: number
   redisCleanupIntervalMs: number
@@ -114,7 +116,8 @@ export function loadConfig(): AppConfig {
         presenceWriteThrottleMs: parsed.PRESENCE_WRITE_THROTTLE_MS,
         presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
         enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
-        eventBusStreamEnabled: parsed.EVENT_BUS_MODE === 'stream',
+        eventBusTransport: parsed.EVENT_BUS_TRANSPORT,
+        queueRedisPrefix: parsed.QUEUE_REDIS_PREFIX ?? null,
         // Load tests / benches from one IP would exhaust the 300/min global
         // budget in under a second; benchmarks must opt out explicitly.
         rateLimitDisabled: parsed.RATE_LIMIT_DISABLED,

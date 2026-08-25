@@ -4,6 +4,7 @@ import { loadConfig } from '@/shared/config.js';
 import { createBackgroundJobs } from '@/app/background-jobs.js';
 import {
     registerBoardDirtyCollectors,
+    registerDlqDepthCollector,
     registerQueueCollectors,
 } from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
@@ -13,11 +14,12 @@ import { logger } from '@/shared/logger.js';
 
 /**
  * Worker app. Owns all BullMQ processing (repeatable board persistence +
- * cleanup schedules, preview rendering) and consumes cross-process domain
- * events so preview enqueues react to mutations emitted by api/realtime.
+ * cleanup schedules, preview rendering) and consumes the cross-app domain
+ * event queues so preview enqueues react to mutations emitted by
+ * api/realtime.
  *
- * Requires EVENT_BUS_MODE=stream: the runtime's event bus then publishes and
- * consumes over a Redis Stream instead of in-process callbacks.
+ * Requires EVENT_BUS_TRANSPORT=bullmq: the runtime's event bus then emits
+ * and consumes over dedicated queues instead of in-process callbacks.
  *
  * Serves a metrics-only HTTP surface (METRICS_PORT, default 3002) so
  * Prometheus can scrape it and compose has a healthcheck target.
@@ -26,8 +28,8 @@ const WORKER_METRICS_DEFAULT_PORT = 3002;
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
 const config = loadConfig();
-if (!config.eventBusStreamEnabled) {
-    logger.warn('[Worker] EVENT_BUS_MODE != "stream": cross-app preview triggers are inactive');
+if (config.eventBusTransport !== 'bullmq') {
+    logger.warn('[Worker] EVENT_BUS_TRANSPORT != "bullmq": cross-app preview triggers are inactive');
 }
 
 const runtime = createAppRuntime(config, { app: 'worker' });
@@ -38,7 +40,9 @@ registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
 registerQueueCollectors(runtime.metrics, () => [
     runtime.previewJobService.getQueue(),
     ...backgroundJobs.getQueues(),
+    ...Object.values(runtime.eventQueues ?? {}),
 ]);
+registerDlqDepthCollector(runtime.metrics, () => runtime.eventQueues?.dlq);
 
 const metricsServer = http.createServer(async (req, res) => {
     if (req.url === '/metrics' || req.url === '/healthz') {
@@ -87,6 +91,7 @@ runAppShell({
     async shutdown() {
         await backgroundJobs.stop();
         await stopPreviewWorker?.();
+        await runtime.events.close();
 
         await new Promise<void>((resolve) => {
             metricsServer.close(() => resolve());

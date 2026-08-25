@@ -235,11 +235,11 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
 
 **Matrix items:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 34, 75, 78, 84
 
-- [ ] **2a.1** Add `domainEvents: 'board-mutations'` and `domainControlEvents:
+- [x] **2a.1** Add `domainEvents: 'board-mutations'` and `domainControlEvents:
   'board-control-events'` to `src/platform/jobs/queues.ts`; set `removeOnComplete`/`removeOnFail`
   retention explicitly. Two queues guarantee a `BOARD_MUTATED` burst cannot delay the 3s
   `BOARD_EDITORS_LEFT` flush enqueue; dedup coalescing bounds depth by distinct boards.
-- [ ] **2a.2** Rewrite `src/shared/events.ts`:
+- [x] **2a.2** Rewrite `src/shared/events.ts`:
   - `emit` returns `Promise<void>` and **awaits** `queue.add(...)` with deterministic dedup IDs
     keyed on event+boardId.
   - **Envelope:** `{ schemaVersion: 1, producerId: <app>:<pid>, timestamp, data }`, Zod-parsed
@@ -251,26 +251,26 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
   - Keep the in-process `EventEmitter` for `local` mode. **Delete the stream implementation
     entirely** (reader, groups, reclaim, poison, pruning, `MAXLEN`). No fallback flag.
   - Isolated consumer concurrency pools per queue; per-deployable Redis key namespace.
-- [ ] **2a.3** **Awaited-emit error semantics (v6):** update the 4 emit sites
+- [x] **2a.3** **Awaited-emit error semantics (v6):** update the 4 emit sites
   (`mutations.routes.ts:38,61`, `mutation-batch.handler.ts:42`, `tick-persistence.ts:66`,
   `disconnect.handler.ts:21`) to `await` the emit; an enqueue failure is **non-fatal to the
   primary result** (the mutation is already applied/durable) — log + increment
   `domain_events_enqueue_failed`, keep the HTTP/socket response unchanged.
-- [ ] **2a.4** Worker: structured pino logs on job failure with `jobId`/`boardId` (item 34);
+- [x] **2a.4** Worker: structured pino logs on job failure with `jobId`/`boardId` (item 34);
   re-audit service-level timers now that the bus sweep is gone (item 84).
-- [ ] **2a.5** **Config/docs/deply rename (v6):** replace `EVENT_BUS_MODE` with
+- [x] **2a.5** **Config/docs/deply rename (v6):** replace `EVENT_BUS_MODE` with
   `EVENT_BUS_TRANSPORT=local|bullmq` in: `config.ts`, `.env.example`, all three compose
   services (`docker-compose.yml`), the worker warning (`worker.main.ts:25-27`), `README.md:42-45`,
   `AGENTS.md:6-10`, `DEPLOY.md`. On rollout, delete the orphaned `events:app` stream key and its
   consumer groups (one-time maintenance script).
-- [ ] **2a.6** **Deploy ordering (v6):** document producer-before-consumer rollout (api/realtime
+- [x] **2a.6** **Deploy ordering (v6):** document producer-before-consumer rollout (api/realtime
   first, then worker) so a newer producer never sends to an older consumer; DLQ alert thresholds
   must tolerate rolling-deploy transient spikes.
-- [ ] **2a.7** Tests: `test/events.bullmq.test.ts` (delivery, fan-out, retry-on-failure,
+- [x] **2a.7** Tests: `test/events.bullmq.test.ts` (delivery, fan-out, retry-on-failure,
   control-event-not-blocked-behind-mutations, DLQ-on-bad-envelope, DLQ-on-unknown-schemaVersion);
   worker retry/backoff suite (item 78); cross-app e2e `test/app.cross-app.test.ts` (REST
   mutation → `board-preview` job with correct boardId).
-- [ ] **2a.8** Re-run `just bench`; the added enqueue round-trip must stay within baseline
+- [x] **2a.8** Re-run `just bench`; the added enqueue round-trip must stay within baseline
   tolerance.
 
 **Acceptance:** no `xreadgroup`/`xautoclaim`/`streamKey`/`APP_EVENTS_STREAM` references remain in

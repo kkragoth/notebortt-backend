@@ -1,9 +1,16 @@
 import type { AppConfig } from '@/shared/config.js';
 import type { MetricsApp } from '@/platform/observability/metrics.js';
+import type { DomainEventQueueSet } from '@/platform/jobs/queues.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';
+import {
+    JOB_QUEUES,
+    createDomainEventsDlqQueue,
+    createJobsQueue,
+} from '@/platform/jobs/queues.js';
 import { createAppEventBus } from '@/shared/events.js';
+import { logger } from '@/shared/logger.js';
 import {
     createAuthMiddleware,
     createAuthService,
@@ -74,12 +81,42 @@ export function createAppRuntime(config: AppConfig, options: AppRuntimeOptions =
         get jobsRedis() {
             return once('jobsRedis', () => createRedisClient(config.redisJobsUrl, { maxRetriesPerRequest: null }));
         },
+        /** Domain-event transport queues; null when the bus runs in-process. */
+        get eventQueues(): DomainEventQueueSet | null {
+            return once('eventQueues', () => {
+                if (config.eventBusTransport !== 'bullmq') {
+                    return null;
+                }
+                const prefix = config.queueRedisPrefix ?? undefined;
+                return {
+                    mutations: createJobsQueue(this.jobsRedis, JOB_QUEUES.domainEvents, { prefix }),
+                    controlEvents: createJobsQueue(this.jobsRedis, JOB_QUEUES.domainControlEvents, { prefix }),
+                    dlq: createDomainEventsDlqQueue(this.jobsRedis, { prefix }),
+                };
+            });
+        },
         get events() {
-            // In-process EventEmitter locally; Redis Stream transport when
-            // the apps run as separate processes (EVENT_BUS_MODE=stream).
-            return once('events', () => createAppEventBus(
-                config.eventBusStreamEnabled ? { redis: this.redis } : {},
-            ));
+            // In-process handlers locally; BullMQ queues carry cross-app
+            // events when the apps run as separate processes
+            // (EVENT_BUS_TRANSPORT=bullmq).
+            return once('events', () => {
+                const queues = this.eventQueues;
+                if (!queues) {
+                    return createAppEventBus();
+                }
+                return createAppEventBus({
+                    transport: 'bullmq',
+                    connection: this.jobsRedis,
+                    prefix: config.queueRedisPrefix ?? undefined,
+                    queues,
+                    producerId: `${options.app ?? 'app'}-${process.pid}`,
+                    onEnqueueFailed: () => this.metrics.incrementCounter('domain_events_enqueue_failed_total'),
+                    onJobFailed: ({ queue, jobId, error }) => {
+                        this.metrics.incrementCounter('bullmq_jobs_failed_total', 1, { queue });
+                        logger.error({ err: error, queue, jobId }, '[EventBus] domain event job failed');
+                    },
+                });
+            });
         },
         get metrics() {
             return once('metrics', () => createRuntimeMetrics({ app: options.app }));
@@ -126,7 +163,13 @@ export function createAppRuntime(config: AppConfig, options: AppRuntimeOptions =
             return once('boardPreviewRenderer', () => createBoardPreviewRenderer());
         },
         get previewJobService() {
-            return once('previewJobService', () => createPreviewJobService(this.db, this.jobsRedis, this.boardPreviewRenderer, this.metrics));
+            return once('previewJobService', () => createPreviewJobService(
+                this.db,
+                this.jobsRedis,
+                this.boardPreviewRenderer,
+                this.metrics,
+                { prefix: config.queueRedisPrefix ?? undefined },
+            ));
         },
         get mutationProcessor() {
             return once('mutationProcessor', () => createMutationProcessor(this.boardStateService, {

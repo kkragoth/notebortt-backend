@@ -39,20 +39,40 @@ The migrator installs devDependencies explicitly so `drizzle-kit` is available e
 just run-deploy
 ```
 
-## 6) Verify
+## 6) Event transport rollout order
+
+Domain events ride BullMQ queues (`board-mutations`, `board-control-events`).
+When upgrading across the bus rewrite (or changing envelope code), deploy
+**producers first** (`api`, `realtime`) and the **consumer** (`worker`) last,
+so a newer producer never hands an envelope an older consumer cannot parse.
+Undecodable payloads land on `domain-events-dlq` (7-day retention) instead of
+retrying forever; size alerts on the `dlq_depth` gauge with thresholds that
+tolerate transient spikes during rolling deploys.
+
+One-time cleanup after every app is on `EVENT_BUS_TRANSPORT=bullmq`: remove
+the stream keys orphaned by the old bus:
+
+```bash
+docker compose run --rm api npx tsx scripts/maintenance/delete-orphaned-event-stream.ts
+```
+
+If several deployments share one jobs Redis, set a distinct
+`QUEUE_REDIS_PREFIX` per deployment — it must match across all three apps.
+
+## 7) Verify
 
 ```bash
 source .env
 curl -i "https://$API_DOMAIN/health"
 ```
 
-## 7) Renew cert (cron)
+## 8) Renew cert (cron)
 
 ```cron
 0 3 * * * cd /opt/note-canva-backend && /usr/bin/docker compose -f docker-compose.yml run --rm certbot renew --webroot -w /var/www/certbot && /usr/bin/docker compose -f docker-compose.yml restart nginx
 ```
 
-## 8) Retiring the worker tier
+## 9) Retiring the worker tier
 
 Repeatable BullMQ schedules (`flush-dirty-boards`, `cleanup-inactive-boards`)
 live in Redis and survive restarts by design. If you permanently retire or
@@ -64,8 +84,9 @@ docker compose run --rm worker node --input-type=module -e "
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 const conn = new Redis(process.env.REDIS_JOBS_URL);
+const prefix = process.env.QUEUE_REDIS_PREFIX || undefined;
 for (const name of ['board-persist-flush', 'board-maintenance']) {
-  const q = new Queue(name, { connection: conn });
+  const q = new Queue(name, { connection: conn, ...(prefix ? { prefix } : {}) });
   for (const s of await q.getJobSchedulers()) await q.removeJobScheduler(s.id);
   await q.close();
 }

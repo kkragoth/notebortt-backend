@@ -20,7 +20,7 @@ no direct service-to-service calls.
      │ bull-board   │  │ CRDT/presence │  │ preview render  │
      └──────┬───────┘  └──────┬────────┘  └──────┬──────────┘
             │                 │                  │
-            │        Redis Stream event bus      │
+            │   BullMQ domain-event queues       │
             │  (BOARD_MUTATED, BOARD_EDITORS_LEFT)
             ▼                 ▼                  ▼
      ┌──────────────┐  ┌───────────────┐  ┌──────────────┐
@@ -37,12 +37,14 @@ no direct service-to-service calls.
   store; needs sticky sessions when running >1 replica.
 - **worker** (`src/apps/worker.main.ts`) — owns all background processing:
   repeatable board-persistence flush (30s) and cleanup schedules via BullMQ
-  job schedulers, preview rendering, and consumption of the event stream.
+  job schedulers, preview rendering, and consumption of the domain-event
+  queues.
 
-**Event bus** — `AppEventBus` (`src/shared/events.ts`). `EVENT_BUS_MODE=stream`
-publishes/subscribes over a Redis Stream with consumer groups (at-least-once,
-XAUTOCLAIM reclaim, poison-entry cap); `local` falls back to in-process
-EventEmitter for single-process runs and tests.
+**Event bus** — `AppEventBus` (`src/shared/events.ts`). `EVENT_BUS_TRANSPORT=bullmq`
+emits/consumes over dedicated BullMQ queues (`board-mutations`,
+`board-control-events`) with a versioned envelope, retry/backoff, and a
+dead-letter queue for undecodable payloads; `local` uses in-process handlers
+for single-process runs and tests.
 
 **Board state model** — hot state lives in redis-realtime (elements hash,
 sequence, dirty tracking, presence); a repeatable job flushes dirty boards to
@@ -88,4 +90,4 @@ chain — `drizzle-kit generate` / `migrate` work normally.
 ## Configuration
 
 All configuration is environment-driven — see `.env.example` for every variable
-(`DATABASE_URL`, `REDIS_*`, `EVENT_BUS_MODE`, Stripe, ports, intervals).
+(`DATABASE_URL`, `REDIS_*`, `EVENT_BUS_TRANSPORT`, Stripe, ports, intervals).
