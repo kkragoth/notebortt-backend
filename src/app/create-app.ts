@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { pinoHttp } from 'pino-http';
 import { RedisStore } from 'rate-limit-redis';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import type { RedisReply, SendCommandFn } from 'rate-limit-redis';
 import type { AppRuntime } from '@/app/runtime.js';
 import { createCorsMiddleware, parseAllowedOrigins } from '@/shared/cors.js';
@@ -75,6 +76,17 @@ export function createApp(runtime: AppRuntime) {
     app.use(helmet());
     app.use(createCorsMiddleware(runtime.config.corsOrigin));
     app.use(cookieParser());
+
+    // Correlate the pino request id onto the active trace span (5.4) so
+    // logs and traces line up even when no traceparent was inbound.
+    app.use((req, res, next) => {
+        const span = trace.getSpan(otelContext.active());
+        const requestId = res.getHeader('x-request-id');
+        if (span && typeof requestId === 'string') {
+            span.setAttribute('x-request-id', requestId);
+        }
+        next();
+    });
 
     const rateLimitSendCommand: SendCommandFn = (...args: string[]) =>
         runtime.redis.call(...(args as [string, ...string[]])) as Promise<RedisReply>;

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { logger } from './logger.js';
 import type { Job, Queue } from 'bullmq';
 import type Redis from 'ioredis';
+import { injectTraceparent, withJobTraceparent } from '@/shared/trace-context.js';
 
 /**
  * Cross-module domain events. Emitters must not know which module reacts;
@@ -67,6 +68,8 @@ const payloadSchemas: Record<AppEventName, z.ZodType<AppEventMap[AppEventName]>>
 export interface DomainEventJobData {
     event: string
     envelope: unknown
+    /** W3C traceparent captured by the producer (5.4 context propagation). */
+    traceparent?: string
 }
 
 export const DOMAIN_EVENTS_DLQ_JOB_NAME = 'dead-letter';
@@ -333,7 +336,9 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
             await parkDeadLetter(job, DOMAIN_EVENT_DLQ_REASONS.invalidPayload, formatIssues(payload.error));
             return;
         }
-        await dispatch(event, payload.data);
+        await withJobTraceparent(typeof job.data?.traceparent === 'string' ? job.data.traceparent : undefined, async () => {
+            await dispatch(event, payload.data);
+        });
     }
 
     function reportJobFailure(queueName: string, job: Job<DomainEventJobData> | Job<DeadLetterRecord> | undefined, err: Error): void {
@@ -398,7 +403,7 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
                 data: payload,
             };
             try {
-                await queue.add(event, { event, envelope } satisfies DomainEventJobData, {
+                await queue.add(event, { event, envelope, traceparent: injectTraceparent() } satisfies DomainEventJobData, {
                     deduplication: {
                         id: deduplicationId(event, payload),
                         ttl: DEDUP_TTL_MS[event],

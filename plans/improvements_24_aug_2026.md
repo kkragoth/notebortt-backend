@@ -384,17 +384,17 @@ renders the full surface; `just test` green.
 
 **Matrix items:** 30, 31, 33
 
-- [ ] **5.1** `@opentelemetry/sdk-node` + instrumentations (`http`, `express`, `pg`, `ioredis`,
+- [x] **5.1** `@opentelemetry/sdk-node` + instrumentations (`http`, `express`, `pg`, `ioredis`,
   `bullmq`), initialized before the runtime in the app entrypoints; OTLP export only when
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set (zero cost until enabled).
-- [ ] **5.2** **Sampling (v6 spec):** root sampler =
+- [x] **5.2** **Sampling (v6 spec):** root sampler =
   `ParentBased(Composite(rotationSampler ∥ TraceIdRatioBased(0.1)))` where `rotationSampler`
   force-samples `hash(boardId + YYYY-WW) % 100 < 5` with `YYYY-WW` computed in a **fixed
   timezone** (documented in config). Worker spans inherit the parent's decision via propagated
   `traceparent` — no mid-chain fragmentation for a sampled board.
-- [ ] **5.3** Explicitly suppress auto-instrumentation on socket ticks and mutation-lock polling
+- [x] **5.3** Explicitly suppress auto-instrumentation on socket ticks and mutation-lock polling
   (item 31).
-- [ ] **5.4** Propagate `traceparent` through BullMQ job metadata and restore it in the worker
+- [x] **5.4** Propagate `traceparent` through BullMQ job metadata and restore it in the worker
   (item 33); map `x-request-id` → `traceparent`.
 
 **Acceptance:** with OTLP set, a collector receives complete spans for a sampled board's

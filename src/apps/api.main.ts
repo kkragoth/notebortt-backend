@@ -2,6 +2,7 @@ import 'dotenv/config';
 import type { Server } from 'node:http';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
+import { setupTracing } from '@/platform/observability/tracing.js';
 import { createApp } from '@/app/create-app.js';
 import {
     registerBoardDirtyCollectors,
@@ -18,6 +19,7 @@ import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
  */
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+const tracing = await setupTracing('api');
 const config = loadConfig();
 const runtime = createAppRuntime(config, { app: 'api' });
 
@@ -52,6 +54,7 @@ runAppShell({
         });
 
         await runtime.events.close();
+        await tracing.shutdown();
         await shutdownInfra(runtime);
     },
 });

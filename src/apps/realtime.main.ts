@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { Request, Response } from 'express';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
+import { setupTracing } from '@/platform/observability/tracing.js';
 import { createSocketIoRealtimeServer } from '@/modules/realtime/index.js';
 import { registerBoardDirtyCollectors, registerQueueCollectors } from '@/app/metrics-collectors.js';
 import { createAppRuntime } from '@/app/runtime.js';
@@ -17,6 +18,7 @@ import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 const REALTIME_DEFAULT_PORT = 3001;
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+const tracing = await setupTracing('realtime');
 const config = loadConfig();
 const realtimePort = Number(process.env.REALTIME_PORT ?? REALTIME_DEFAULT_PORT);
 const runtime = createAppRuntime(config, { app: 'realtime' });
@@ -75,6 +77,7 @@ runAppShell({
         });
 
         await runtime.events.close();
+        await tracing.shutdown();
         await shutdownInfra(runtime);
     },
 });

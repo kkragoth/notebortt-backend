@@ -2,6 +2,8 @@ import 'dotenv/config';
 import http from 'node:http';
 import express from 'express';
 import { loadConfig } from '@/shared/config.js';
+import { logger } from '@/shared/logger.js';
+import { setupTracing } from '@/platform/observability/tracing.js';
 import { createBackgroundJobs } from '@/app/background-jobs.js';
 import {
     registerBoardDirtyCollectors,
@@ -12,7 +14,6 @@ import { mountBullBoard } from '@/app/bull-board.routes.js';
 import { createAppRuntime } from '@/app/runtime.js';
 import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 import { APP_EVENTS } from '@/shared/events.js';
-import { logger } from '@/shared/logger.js';
 
 /**
  * Worker app. Owns all BullMQ processing (repeatable board persistence +
@@ -31,6 +32,7 @@ import { logger } from '@/shared/logger.js';
 const WORKER_METRICS_DEFAULT_PORT = 3002;
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+const tracing = await setupTracing('worker');
 const config = loadConfig();
 if (config.eventBusTransport !== 'bullmq') {
     logger.warn('[Worker] EVENT_BUS_TRANSPORT != "bullmq": cross-app preview triggers are inactive');
@@ -117,5 +119,6 @@ runAppShell({
         });
 
         await shutdownInfra(runtime);
+        await tracing.shutdown();
     },
 });
