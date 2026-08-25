@@ -20,6 +20,20 @@ dev:
     @echo "Adminer: http://localhost:8081"
     @echo "Redis Commander: http://localhost:8082"
 
+# Recreates the dev database from the squashed migration baseline. Use when
+# drizzle-kit migrate exits 1 with only NOTICEs: that means the database's
+# __drizzle_migrations journal predates the squash and no longer matches the
+# shipped chain (see AGENTS.md > Database migrations).
+db-reset:
+    #!/bin/sh
+    set -eu
+    set -a; . ./.env; set +a
+    docker compose -f docker-compose.yml up -d postgres
+    until docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do sleep 1; done
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $POSTGRES_DB WITH (FORCE);" -c "CREATE DATABASE $POSTGRES_DB;"
+    DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/$POSTGRES_DB" npx drizzle-kit migrate
+    just db-seed
+
 dev-docker:
     docker compose -f docker-compose.yml --profile debug up -d --build --remove-orphans
     docker compose -f docker-compose.yml --profile tools run --rm migrator
