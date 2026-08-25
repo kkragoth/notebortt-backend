@@ -115,7 +115,8 @@ function isMutation(value: unknown): value is Mutation {
 
 const mutationSchema = z.custom<Mutation>((value) => isMutation(value), {
     message: 'Invalid mutation payload',
-});
+// Metadata lets zod-openapi serialize the custom validator in the document.
+}).meta({ description: 'Single board mutation (create/update/delete/move/reorder/month-range reconcile)' });
 
 export const mutationsBodySchema = z.object({
     mutations: z.array(mutationSchema).min(1).max(100),

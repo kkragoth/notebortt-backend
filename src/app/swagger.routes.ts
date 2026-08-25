@@ -2,7 +2,7 @@ import { Router } from 'express';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import type { AppConfig } from '@/shared/config.js';
-import { createOpenApiDocument } from '@/shared/openapi/document.js';
+import { createOpenApiDocument } from '@/app/openapi/document.js';
 
 export function createSwaggerRouter(config: Pick<AppConfig, 'nodeEnv'>) {
     const router = Router();

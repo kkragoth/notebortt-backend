@@ -358,18 +358,20 @@ config rollback.
 
 **Matrix items:** 38, 39, 40, 41, 42, 43, 77, 82
 
-- [ ] **4.1** `test/openapi.contract.test.ts`: boot `createApp`, walk the Express router stack,
+- [x] **4.1** `test/openapi.contract.test.ts`: boot `createApp`, walk the Express router stack,
   assert every mounted product route appears in the OpenAPI document and vice versa (handle
   parameterized paths correctly); CI fails on drift. Fix current drift (document missing
   endpoints or mark `x-internal`).
-- [ ] **4.2** `z.object().strict()` on query schemas — **breaking change: gate like the P3 flips
+- [x] **4.2** `z.object().strict()` on query schemas — **breaking change: gate like the P3 flips
   (v6)** or document the removal window (item 42); Zod boundary/fuzz tests on body schemas
   (item 82).
-- [ ] **4.3** Response validation: assert integration-test responses conform to OpenAPI schemas
+  *(Shipped: hostile-input fuzz suite over the shared body/query schemas; the strict-query flip itself stays gated until announced to clients.)*
+- [x] **4.3** Response validation: assert integration-test responses conform to OpenAPI schemas
   (item 43).
-- [ ] **4.4** Opportunistically single-source route schemas into a `zod-to-openapi` registry as
+- [x] **4.4** Opportunistically single-source route schemas into a `zod-to-openapi` registry as
   new work lands (item 40); convert the hand-written doc incrementally.
-- [ ] **4.5** Billing webhook signature test suite (item 77).
+  *(Shipped opportunistically: the document is zod-openapi generated and imports live route schemas from their owning modules; full registry migration stays incremental.)*
+- [x] **4.5** Billing webhook signature test suite (item 77).
 
 **Acceptance:** contract test passes and gates CI; fuzz/response-validation tests run; swagger
 renders the full surface; `just test` green.
