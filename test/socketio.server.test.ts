@@ -126,10 +126,11 @@ async function createHarness(): Promise<Harness> {
     };
 }
 
-async function connectSocket(harness: Harness): Promise<Socket> {
+async function connectSocket(harness: Harness, auth: Record<string, unknown> = { token: 'test-token' }): Promise<Socket> {
     const socket = ioClient(harness.origin, {
         transports: ['websocket'],
         extraHeaders: { origin: 'http://localhost:3000' },
+        auth,
     });
     harness.sockets.push(socket);
     await once(socket, SOCKET_RESERVED_EVENTS.CONNECT);

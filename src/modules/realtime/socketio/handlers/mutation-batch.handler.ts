@@ -18,15 +18,15 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
         const payload = parseMutationBatchPayload(rawPayload);
         const snapshot = payload ? runtime.takeContextSnapshot(payload.boardId) : null;
         if (!payload || !snapshot) {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid mutation batch payload' });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid mutation batch payload' });
             return;
         }
         if (!hasConsistentBatchBoardId(payload.boardId, payload.mutations)) {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Mutation board mismatch' });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Mutation board mismatch' });
             return;
         }
         if (snapshot.context.permission !== 'edit') {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No edit access to this board' });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No edit access to this board' });
             return;
         }
 
@@ -57,13 +57,13 @@ export function createMutationBatchHandler(runtime: SocketIoHandlerRuntime) {
             }
 
             if (result.status !== 'already_applied') {
-                runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.MUTATION_BROADCAST, { mutation });
+                runtime.safeEmitToBoard(payload.boardId, SOCKET_SERVER_EVENTS.MUTATION_BROADCAST, { mutation });
             }
 
         }
 
         if (runtime.socket.connected && runtime.isSnapshotActive(snapshot)) {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.MUTATION_ACK, { mutationIds: acknowledgedIds, sequence: latestSequence });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.MUTATION_ACK, { mutationIds: acknowledgedIds, sequence: latestSequence });
         }
     };
 }

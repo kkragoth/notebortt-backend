@@ -22,6 +22,32 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
         }
     }
 
+    /**
+     * Re-arms the collab cooldown only when the board is ALREADY in collab
+     * mode (live marker or ≥2 participants). Called post-apply from the
+     * mutation processor so TTL jitter cannot downgrade an active collab
+     * board mid-edit — while a solo board's mutations never flip it to
+     * deferred persistence.
+     */
+    async function rearmCollabModeIfActive(boardId: string): Promise<void> {
+        const collabUntilRaw = await redis.get(boardCollabModeUntilKey(boardId));
+        if (collabUntilRaw) {
+            const collabUntil = parseInt(collabUntilRaw, 10);
+            if (Number.isFinite(collabUntil) && collabUntil > Date.now()) {
+                await extendCollabMode(boardId);
+                return;
+            }
+        }
+
+        const [clientCount, viewerCount] = await Promise.all([
+            getClientCount(boardId),
+            getActiveViewerCount(boardId),
+        ]);
+        if (clientCount >= 2 || viewerCount >= 2) {
+            await extendCollabMode(boardId);
+        }
+    }
+
     async function trackClient(boardId: string, userId: string, connectionId: string): Promise<void> {
         await waitForBoardLoad(boardId);
         const member = clientMember(userId, connectionId);
@@ -157,6 +183,7 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
         getActiveViewerCount,
         touchLastActive,
         getSyncWriteMode,
+        rearmCollabModeIfActive,
     };
 }
 

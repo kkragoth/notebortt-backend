@@ -1,10 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { OAUTH_COOKIE_MAX_AGE_MS } from '../routes/constants.js';
+import { ACCESS_TOKEN_COOKIE_NAME, OAUTH_COOKIE_MAX_AGE_MS } from '../routes/constants.js';
 import type { AppConfig } from '@/shared/config.js';
 import { parseAllowedOrigins } from '@/shared/cors.js';
 
 export function isProduction(config: Pick<AppConfig, 'nodeEnv'>): boolean {
     return config.nodeEnv === 'production';
+}
+
+/**
+ * `__Host-` cookies require Secure, Path=/ and no Domain — satisfied by the
+ * access-token cookie options in production. Dev keeps the plain name so
+ * http:// origins keep working.
+ */
+export function accessTokenCookieName(config: Pick<AppConfig, 'nodeEnv'>): string {
+    return isProduction(config) ? `__Host-${ACCESS_TOKEN_COOKIE_NAME}` : ACCESS_TOKEN_COOKIE_NAME;
 }
 
 export function buildCookieSecurityOptions(config: Pick<AppConfig, 'nodeEnv'>) {

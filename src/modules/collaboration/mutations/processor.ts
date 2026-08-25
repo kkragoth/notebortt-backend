@@ -337,6 +337,10 @@ export function createMutationProcessor(
             const writeMode = await boardStateService.getSyncWriteMode(mutation.boardId);
             const { result, appliedCanonicalChange } = await processMutationWithContext(mutation, userId, context, writeMode);
             applyPersistedChangeToContext(context, result);
+            // Post-apply grace re-arm: keeps an active collab board in
+            // deferred persistence despite TTL jitter; solo boards are never
+            // flipped by their own mutations (conditional inside).
+            await boardStateService.rearmCollabModeIfActive(mutation.boardId);
             if (writeMode === 'solo' && appliedCanonicalChange) {
                 await boardStateService.persistBoard(mutation.boardId);
             }
@@ -380,6 +384,7 @@ export function createMutationProcessor(
                 if (writeMode === 'solo' && shouldPersistSolo) {
                     await boardStateService.persistBoard(boardId);
                 }
+                await boardStateService.rearmCollabModeIfActive(boardId);
             });
         }
 

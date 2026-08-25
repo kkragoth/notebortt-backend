@@ -7,7 +7,7 @@ import { pinoHttp } from 'pino-http';
 import { RedisStore } from 'rate-limit-redis';
 import type { RedisReply, SendCommandFn } from 'rate-limit-redis';
 import type { AppRuntime } from '@/app/runtime.js';
-import { createCorsMiddleware } from '@/shared/cors.js';
+import { createCorsMiddleware, parseAllowedOrigins } from '@/shared/cors.js';
 import { logger } from '@/shared/logger.js';
 import { createAuthRouter } from '@/modules/auth/index.js';
 import { createUserRouter } from '@/modules/users/index.js';
@@ -25,12 +25,18 @@ const GLOBAL_RATE_LIMIT_MAX = 300;
 const GLOBAL_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+// Generous on purpose: orchestrator probes (15s HEALTHCHECK cadence) must
+// never be throttled, while abusive loops stay bounded.
+const PROBE_RATE_LIMIT_MAX = 240;
+const PROBE_RATE_LIMIT_WINDOW_MS = 60_000;
 const JSON_BODY_LIMIT = '1mb';
 
 export const API_V1_PREFIX = '/api/v1';
 
 // Ops/infra surfaces stay unversioned; only the product API is versioned.
 const UNVERSIONED_PATHS = ['/health', '/metrics', '/debug', '/openapi', '/swagger'];
+
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function shouldLogRequest(url: string | undefined): boolean {
     if (!url) return false;
@@ -92,6 +98,7 @@ export function createApp(runtime: AppRuntime) {
 
     const globalRateLimitStore = createRateLimitStore('rl:');
     const authRateLimitStore = createRateLimitStore('rl:auth:');
+    const probeRateLimitStore = createRateLimitStore('rl:probe:');
 
     const globalLimiter = rateLimit({
         windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -113,6 +120,31 @@ export function createApp(runtime: AppRuntime) {
         passOnStoreError: true,
         ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     });
+    const probeLimiter = rateLimit({
+        windowMs: PROBE_RATE_LIMIT_WINDOW_MS,
+        limit: PROBE_RATE_LIMIT_MAX,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+        passOnStoreError: true,
+        ...(probeRateLimitStore ? { store: probeRateLimitStore } : {}),
+    });
+
+    // CSRF defense-in-depth for cookie-authenticated state changes: browsers
+    // always attach Origin on cross-site POST/PUT/PATCH/DELETE, so a forged
+    // request from a foreign origin is rejected even if cookies ride along.
+    // Non-browser clients (curl, probes) send no Origin and pass through.
+    const originCheck = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        const origin = req.headers.origin;
+        if (origin !== undefined && STATE_CHANGING_METHODS.has(req.method)) {
+            const allowedOrigins = parseAllowedOrigins(runtime.config.corsOrigin);
+            if (!allowedOrigins.includes(origin)) {
+                res.status(403).json({ error: 'Untrusted origin' });
+                return;
+            }
+        }
+        next();
+    };
+    app.use(originCheck);
 
     if (rateLimitingEnabled) {
         app.use(globalLimiter);
@@ -123,11 +155,12 @@ export function createApp(runtime: AppRuntime) {
     app.use('/', createBillingWebhookRouter(runtime.billingService));
     app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-    app.get('/health/live', livenessRoute);
-    app.get('/health/ready', healthRoute(runtime.db, runtime.redis));
+    const probeGuards = rateLimitingEnabled ? [probeLimiter] : [];
+    app.get('/health/live', ...probeGuards, livenessRoute);
+    app.get('/health/ready', ...probeGuards, healthRoute(runtime.db, runtime.redis));
     // Back-compat alias used by Docker HEALTHCHECK and existing probes.
-    app.get('/health', healthRoute(runtime.db, runtime.redis));
-    app.get('/metrics', createMetricsRoute(runtime.metrics));
+    app.get('/health', ...probeGuards, healthRoute(runtime.db, runtime.redis));
+    app.get('/metrics', ...probeGuards, createMetricsRoute(runtime.metrics));
 
     app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));

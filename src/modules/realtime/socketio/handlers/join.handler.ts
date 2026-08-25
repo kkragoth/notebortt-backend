@@ -2,6 +2,7 @@ import { getUserColor } from '../../socketio/user-color.js';
 import { resolveSocketIdentity } from '../../socketio/identity.js';
 import { parseBoardJoinPayload } from '../../socketio/payloads.js';
 import { SOCKET_SERVER_EVENTS } from '../../socketio/constants.js';
+import { SOCKET_ROOM_CONNECTION_CAP } from '../../socketio/limits.js';
 import type { SocketIoHandlerRuntime } from '../../socketio/handlers/runtime.js';
 
 export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
@@ -33,6 +34,15 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
         }
         if (!access.hasAccess) {
             runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No access to board' });
+            return;
+        }
+
+        const currentRoomSize = await runtime.participantsStore.getRoomSize(payload.boardId);
+        if (!runtime.isJoinActive(joinAttempt)) {
+            return;
+        }
+        if (currentRoomSize >= SOCKET_ROOM_CONNECTION_CAP) {
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Board room is full' });
             return;
         }
 

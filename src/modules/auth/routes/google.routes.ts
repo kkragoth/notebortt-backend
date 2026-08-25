@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import {
-    ACCESS_TOKEN_COOKIE_NAME,
     GOOGLE_OAUTH_SCOPES,
     OAUTH_PKCE_COOKIE_NAME,
     OAUTH_STATE_COOKIE_NAME,
     REFRESH_TOKEN_COOKIE_NAME,
 } from '../routes/constants.js';
 import {
+    accessTokenCookieName,
     buildAccessTokenCookieOptions,
     buildOAuthCookieOptions,
     buildRefreshTokenCookieOptions,
@@ -113,20 +113,23 @@ export function registerGoogleAuthRoutes(router: Router, deps: AuthRouterDeps) {
 
             const accessCookieOptions = buildAccessTokenCookieOptions(config);
             const refreshCookieOptions = buildRefreshTokenCookieOptions(config);
-            res.cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, accessCookieOptions);
+            res.cookie(accessTokenCookieName(config), accessToken, accessCookieOptions);
             res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, refreshCookieOptions);
             res.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/auth' });
             res.clearCookie(OAUTH_PKCE_COOKIE_NAME, { path: '/auth' });
 
             const redirectUrl = new URL('/callback', resolveFrontendOrigin(config.corsOrigin));
-            // Tokens ride the redirect fragment on purpose: the API and the
-            // frontend live on different origins, and iOS WebKit (ITP) blocks
-            // cross-site cookies, so the cookies set above never reach the API
-            // from mobile Safari/WebView. The native app consumes location.hash
-            // once on /callback and stores tokens in the Keychain; do not treat
-            // these as long-lived secrets in browser history.
-            metrics?.incrementCounter('oauth_fragment_tokens_total');
-            redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
+            if (config.enableOauthFragmentTokens) {
+                // Tokens ride the redirect fragment on purpose: the API and the
+                // frontend live on different origins, and iOS WebKit (ITP) blocks
+                // cross-site cookies, so the cookies set above never reach the API
+                // from mobile Safari/WebView. The native app consumes location.hash
+                // once on /callback and stores tokens in the Keychain; do not treat
+                // these as long-lived secrets in browser history. Opt-in only —
+                // fragments leak tokens to history and intermediaries.
+                metrics?.incrementCounter('oauth_fragment_tokens_total');
+                redirectUrl.hash = `access_token=${accessToken}&refresh_token=${refreshToken}`;
+            }
             res.redirect(redirectUrl.toString());
         } catch (err) {
             logger.error({ err }, '[Auth] OAuth callback error');

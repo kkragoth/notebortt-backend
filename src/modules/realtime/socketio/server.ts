@@ -4,9 +4,9 @@ import { createCrdtRoomStore } from '../socketio/crdt-room.js';
 import { createParticipantsStore } from '../socketio/participants.js';
 import { createTickPersistenceManager } from '../socketio/tick-persistence.js';
 import {
+    ACCESS_TOKEN_COOKIE_NAME,
     SOCKET_CLIENT_EVENTS,
-    SOCKET_RESERVED_EVENTS,
-    SOCKET_SERVER_EVENTS,
+    SOCKET_RESERVED_EVENTS, SOCKET_SERVER_EVENTS 
 } from '../socketio/constants.js';
 import { createBoardJoinHandler } from '../socketio/handlers/join.handler.js';
 import { createMutationBatchHandler } from '../socketio/handlers/mutation-batch.handler.js';
@@ -19,6 +19,15 @@ import {
     getOpenSocketIoConnections,
     incrementOpenSocketIoConnections,
 } from '../socketio/stats.js';
+import { parseCookieHeader } from '../socketio/identity.js';
+import {
+    SOCKET_EVENT_BUCKET_CAPACITY,
+    SOCKET_EVENT_BYTE_CAPS,
+    SOCKET_EVENT_REFILL_PER_SECOND,
+    SOCKET_MAX_HTTP_BUFFER_BYTES,
+    SOCKET_PING_INTERVAL_MS,
+    SOCKET_PING_TIMEOUT_MS,
+} from '../socketio/limits.js';
 import type { ContextSnapshot, SocketIoHandlerRuntime } from '../socketio/handlers/runtime.js';
 import type {
     RoomParticipant,
@@ -28,6 +37,7 @@ import type {
     SocketIoRealtimeServerOptions,
 } from '../socketio/types.js';
 import type { Server as HttpServer } from 'node:http';
+
 import { logger } from '@/shared/logger.js';
 import { parseAllowedOrigins } from '@/shared/cors.js';
 
@@ -50,11 +60,59 @@ export function createSocketIoRealtimeServer(
             origin: parseAllowedOrigins(options.corsOrigin),
             credentials: true,
         },
+        pingTimeout: SOCKET_PING_TIMEOUT_MS,
+        pingInterval: SOCKET_PING_INTERVAL_MS,
+        maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_BYTES,
     });
 
     // Cross-replica broadcasting (rooms, USER_JOINED/LEFT, element changes)
     // requires the redis adapter once more than one realtime replica runs.
     io.adapter(createAdapter(deps.pubRedis, deps.subRedis));
+
+    // Handshake auth gate: a socket must present a valid JWT (auth payload,
+    // Authorization header, or access-token cookie) or an explicit anonymous
+    // opt-in via shareToken. Per-board access is still re-verified on every
+    // join — this gate only fails fast on credential-less connections.
+    io.use(async (socket, next) => {
+        try {
+            const headers = socket.request?.headers ?? {};
+            const cookies = parseCookieHeader(headers.cookie);
+            const authToken = (socket.handshake?.auth as { token?: string } | undefined)?.token;
+            const bearerToken = typeof headers.authorization === 'string' && headers.authorization.startsWith('Bearer ')
+                ? headers.authorization.slice(7)
+                : undefined;
+            const candidates = [
+                authToken,
+                bearerToken,
+                cookies[`__Host-${ACCESS_TOKEN_COOKIE_NAME}`],
+                cookies[ACCESS_TOKEN_COOKIE_NAME],
+            ].filter((token): token is string => typeof token === 'string' && token.length > 0);
+
+            for (const token of candidates) {
+                try {
+                    deps.authService.verifyAccessToken(token);
+                    next();
+                    return;
+                } catch {
+                    continue;
+                }
+            }
+
+            const shareToken = typeof socket.handshake.query.shareToken === 'string'
+                ? socket.handshake.query.shareToken
+                : (socket.handshake.auth as { shareToken?: unknown } | undefined)?.shareToken;
+            if (typeof shareToken === 'string' && shareToken.trim().length > 0) {
+                next();
+                return;
+            }
+
+            logger.warn({ socketId: socket.id }, '[socketio] rejected credential-less handshake');
+            next(new Error('unauthorized'));
+        } catch (error) {
+            logger.error({ err: error }, '[socketio] handshake auth failed');
+            next(new Error('unauthorized'));
+        }
+    });
 
     const participantsStore = createParticipantsStore(deps.pubRedis);
     // Persisted-change diffs are not re-broadcast: clients already applied
@@ -88,6 +146,36 @@ export function createSocketIoRealtimeServer(
         let identity: SocketIdentity | null = null;
         let lastTickId = -1;
         let latestJoinAttempt = 0;
+
+        // Per-socket token bucket: sustained event floods beyond the refill
+        // rate are dropped instead of consuming downstream locks/redis.
+        let bucketTokens = SOCKET_EVENT_BUCKET_CAPACITY;
+        let bucketUpdatedAt = Date.now();
+        function consumeEventToken(): boolean {
+            const now = Date.now();
+            bucketTokens = Math.min(
+                SOCKET_EVENT_BUCKET_CAPACITY,
+                bucketTokens + ((now - bucketUpdatedAt) / 1000) * SOCKET_EVENT_REFILL_PER_SECOND,
+            );
+            bucketUpdatedAt = now;
+            if (bucketTokens < 1) {
+                return false;
+            }
+            bucketTokens -= 1;
+            return true;
+        }
+
+        function payloadExceedsCap(event: SocketServerEvent, payload: unknown): boolean {
+            const cap = (SOCKET_EVENT_BYTE_CAPS as Record<string, number | undefined>)[event];
+            if (cap === undefined) {
+                return false;
+            }
+            try {
+                return Buffer.byteLength(JSON.stringify(payload ?? null)) > cap;
+            } catch {
+                return true;
+            }
+        }
         const lastActivityWriteAtBySocketId = new Map<string, number>();
         const activityJitterBySocketId = new Map<string, number>();
         // Keeps the redis participant entry alive even for idle-but-connected
@@ -267,14 +355,59 @@ export function createSocketIoRealtimeServer(
             setLastTickId,
             refreshSocketActivity,
             detachFromBoard,
+            safeEmitToSelf,
+            safeEmitToBoard,
         };
 
         type SocketServerEvent = (typeof SOCKET_CLIENT_EVENTS)[keyof typeof SOCKET_CLIENT_EVENTS]
             | typeof SOCKET_RESERVED_EVENTS.DISCONNECT;
 
+        /** Error-bounded emits: one failing broadcast must not kill the handler loop. */
+        function safeEmitToSelf(event: string, payload: unknown): void {
+            try {
+                socket.emit(event, payload);
+            } catch (error) {
+                logger.warn({ err: error, event, socketId: socket.id }, '[socketio] emit failed');
+            }
+        }
+
+        function safeEmitToBoard(boardId: string, event: string, payload: unknown): void {
+            try {
+                socket.to(boardId).emit(event, payload);
+            } catch (error) {
+                logger.warn({ err: error, event, boardId }, '[socketio] board emit failed');
+            }
+        }
+
         function registerHandler(event: SocketServerEvent, handler: (payload: unknown) => Promise<void>): void {
+            if (event === SOCKET_RESERVED_EVENTS.DISCONNECT) {
+                socket.on(event, (payload: unknown) => {
+                    void (async () => {
+                        try {
+                            await handler(payload);
+                        } catch (error) {
+                            logger.error({ err: error, event, socketId: socket.id }, '[socketio] unhandled disconnect-handler error');
+                        }
+                    })();
+                });
+                return;
+            }
+
             socket.on(event, (payload: unknown) => {
                 deps.metrics?.incrementCounter('socketio_client_events_total', 1, { event });
+
+                if (!consumeEventToken()) {
+                    deps.metrics?.incrementCounter('socketio_throttled_events_total', 1, { event });
+                    safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Too many realtime events' });
+                    return;
+                }
+
+                if (payloadExceedsCap(event, payload)) {
+                    deps.metrics?.incrementCounter('socketio_throttled_events_total', 1, { event });
+                    safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Realtime payload too large' });
+                    return;
+                }
+
                 const startedAt = process.hrtime.bigint();
                 void (async () => {
                     try {
@@ -287,7 +420,7 @@ export function createSocketIoRealtimeServer(
                             socketId: socket.id,
                         }, '[socketio] unhandled handler error');
                         if (socket.connected) {
-                            socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Internal realtime server error' });
+                            safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Internal realtime server error' });
                         }
                     } finally {
                         deps.metrics?.observeDuration(

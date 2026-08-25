@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+    BOARD_MUTATION_LOCK_ACQUIRE_TIMEOUT_MS,
     BOARD_MUTATION_LOCK_POLL_MS,
     BOARD_MUTATION_LOCK_TTL_MS,
     boardMutationLockKey,
@@ -7,6 +8,7 @@ import {
 } from '../board-state/keys.js';
 import type Redis from 'ioredis';
 import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
+import { AppError } from '@/shared/errors.js';
 
 export function createBoardMutationLockDomain(
     redis: Redis,
@@ -37,6 +39,7 @@ export function createBoardMutationLockDomain(
 
     async function acquireMutationLock(boardId: string): Promise<string> {
         const startedAt = Date.now();
+        const deadline = startedAt + BOARD_MUTATION_LOCK_ACQUIRE_TIMEOUT_MS;
         try {
             while (true) {
                 const token = randomUUID();
@@ -52,11 +55,13 @@ export function createBoardMutationLockDomain(
                     return token;
                 }
 
+                if (Date.now() >= deadline) {
+                    throw new AppError(503, 'Board is busy, try again shortly');
+                }
+
                 await sleep(BOARD_MUTATION_LOCK_POLL_MS);
             }
         } finally {
-            // Covers local-queue wait plus Redis SET NX polling; the P3
-            // acquisition timeout will show up here as a distinct slow tail.
             metrics?.observeDuration('mutation_lock_acquisition_duration_seconds', (Date.now() - startedAt) / 1000);
         }
     }

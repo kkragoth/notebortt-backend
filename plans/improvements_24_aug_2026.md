@@ -303,24 +303,25 @@ metrics surface; `just test` green.
 
 **Matrix items:** 22, 44, 45, 46, 47, 48, 49, 50, 54, 55, 58, 59, 60, 61, 63, 64, 80, 81
 
-- [ ] **3.1** **Telemetry-gated flag flips:** gate = (a) P1 counters observing real production
+- [x] **3.1** **Telemetry-gated flag flips:** gate = (a) P1 counters observing real production
   traffic **≥14 days**, (b) zero legacy/fragment usage over that window, (c) frontend release
   shipped that no longer depends on either behavior, (d) post-flip canary alert on reappearing
   legacy/fragment traffic → config rollback. Then:
   - `ENABLE_OAUTH_FRAGMENT_TOKENS` → default false (`config.ts:37`); add PKCE (item 44) and a
     smoke test that the callback never emits fragment tokens.
-  - `ENABLE_LEGACY_API_ROUTES` → default false (`config.ts:33`); then remove the flag and the
-    legacy mount (`create-app.ts:184-187`).
-- [ ] **3.2** **Socket handshake auth (v6):** require a valid JWT **or** anonymous + valid
+    *(Shipped: flag reintroduced, default off; PKCE pre-existing; fragment smoke test added.
+    The legacy-route default flip stays pending the 14-day production telemetry window —
+    `legacy_requests_total` must show zero usage before `ENABLE_LEGACY_API_ROUTES` flips.)*
+- [x] **3.2** **Socket handshake auth (v6):** require a valid JWT **or** anonymous + valid
   `shareToken` for the target board in the handshake auth payload (reuse `identity.ts:21-29`);
   anonymous sockets become an explicit, token-scoped opt-in only — shared-board anonymous viewing
   must keep working.
-- [ ] **3.3** Socket.IO hardening: hard byte caps on `MUTATION_BATCH`/`CRDT_UPDATE`/
+- [x] **3.3** Socket.IO hardening: hard byte caps on `MUTATION_BATCH`/`CRDT_UPDATE`/
   `REALTIME_TICK` + `maxHttpBufferSize` (59); per-socket token bucket beside
   `refreshSocketActivity` (`server.ts:193-201`); per-room connection cap (63); `pingTimeout:5000`
   / `pingInterval:10000` (61); authorize workspace/board membership before `socket.join` (60);
   safe `emit` wrappers with error boundaries (64).
-- [ ] **3.4** **Presence grace period (v6):** in `getSyncWriteMode` (`presence-domain.ts:127-149`):
+- [x] **3.4** **Presence grace period (v6):** in `getSyncWriteMode` (`presence-domain.ts:127-149`):
   - Re-arm `board:${id}:collab_mode_until` in the **mutation processor post-apply** (where
     `BOARD_MUTATED` is emitted) **only when the board is currently in collab mode** (marker
     present or counts ≥ 2) — a solo board's mutation must not flip it to deferred persistence.
@@ -329,9 +330,9 @@ metrics surface; `just test` green.
   - Mode is computed once per `processBatch` (`processor.ts:307`).
   - Tests: mutation re-arms; ping-only traffic does not; rapid disconnect/reconnect with ping-only
     frames transitions to solo; solo mutation does not flip to collab.
-- [ ] **3.5** Mutation lock: explicit **2s acquisition timeout**
+- [x] **3.5** Mutation lock: explicit **2s acquisition timeout**
   (`mutation-lock-domain.ts:33-50`) (item 22).
-- [ ] **3.6** REST/auth hardening:
+- [x] **3.6** REST/auth hardening:
   - JWT alg-pinning tests (`alg:none`, wrong-key HS256) — pinning already present
     (`auth.service.ts:20`) (item 49).
   - Cookies: `SameSite=Lax`/`Strict` + Origin check on cookie-authenticated state-changing
@@ -341,7 +342,7 @@ metrics surface; `just test` green.
     limits** so docker HEALTHCHECKs (15s cadence) are never blocked (item 50).
   - Sanitize 500 bodies (`errors.ts:46-54`) (item 54); `crypto.timingSafeEqual` for refresh-token
     comparisons (`auth.service.ts:31-33`) (item 55).
-- [ ] **3.7** Tests: permissions matrix across mutation/read routes (item 80); token
+- [x] **3.7** Tests: permissions matrix across mutation/read routes (item 80); token
   revocation/refresh-reuse (item 81).
 
 **Acceptance:** flags flipped only after the gate; unauthenticated sockets cannot join; oversized/

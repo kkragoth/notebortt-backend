@@ -2,7 +2,10 @@ import { ACCESS_TOKEN_COOKIE_NAME } from '../socketio/constants.js';
 import type { Socket } from 'socket.io';
 import type { SocketIdentity, SocketIoRealtimeDependencies } from '../socketio/types.js';
 
-function parseCookieHeader(raw: string | undefined): Record<string, string> {
+// Production sets the access token under a __Host- prefixed cookie.
+const ACCESS_TOKEN_COOKIE_NAMES = [`__Host-${ACCESS_TOKEN_COOKIE_NAME}`, ACCESS_TOKEN_COOKIE_NAME];
+
+export function parseCookieHeader(raw: string | undefined): Record<string, string> {
     if (!raw) {
         return {};
     }
@@ -18,10 +21,20 @@ function parseCookieHeader(raw: string | undefined): Record<string, string> {
     return cookies;
 }
 
+function readCookieToken(cookies: Record<string, string>): string | undefined {
+    for (const name of ACCESS_TOKEN_COOKIE_NAMES) {
+        const token = cookies[name];
+        if (token) {
+            return token;
+        }
+    }
+    return undefined;
+}
+
 export async function resolveSocketIdentity(socket: Socket, deps: SocketIoRealtimeDependencies): Promise<SocketIdentity> {
     const headers = socket.request?.headers ?? {};
     const cookies = parseCookieHeader(headers.cookie);
-    const cookieToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+    const cookieToken = readCookieToken(cookies);
     const authHeader = typeof headers.authorization === 'string' ? headers.authorization : '';
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     const authToken = (socket.handshake?.auth as { token?: string } | undefined)?.token;

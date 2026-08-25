@@ -69,6 +69,7 @@ export function createBoardStateService(redis: Redis, db: Database, options: Boa
         getBoardMetrics: persistenceDomain.getBoardMetrics,
         getSnapshot: stateDomain.getSnapshot,
         getSyncWriteMode: presenceDomain.getSyncWriteMode,
+        rearmCollabModeIfActive: presenceDomain.rearmCollabModeIfActive,
         flushBoard: persistenceDomain.flushBoard,
         metrics,
     };

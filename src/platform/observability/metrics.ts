@@ -76,6 +76,11 @@ export const METRIC_CATALOG = {
         help: 'Socket.IO handler executions that threw',
         labelNames: ['event'],
     },
+    socketio_throttled_events_total: {
+        type: 'counter',
+        help: 'Client events dropped by per-socket rate limiting or byte caps',
+        labelNames: ['event'],
+    },
 
     mutation_apply_change_set_duration_ms: {
         type: 'summary',

@@ -12,6 +12,9 @@ export const BOARD_EVICTION_LOCK_TTL_MS = 30_000;
 export const BOARD_EVICTION_LOCK_POLL_MS = 25;
 export const BOARD_MUTATION_LOCK_TTL_MS = 30_000;
 export const BOARD_MUTATION_LOCK_POLL_MS = 25;
+// Bounded wait: a partitioned/held lock fails fast (503) instead of piling
+// up unbounded request queues.
+export const BOARD_MUTATION_LOCK_ACQUIRE_TIMEOUT_MS = 2_000;
 
 export function boardSeqKey(boardId: string): string {
     return `board:${boardId}:seq`;
