@@ -185,6 +185,9 @@ services:
       REDIS_REALTIME_URL: redis://redis-realtime:6379
       REDIS_JOBS_URL: redis://redis-jobs:6379
       EVENT_BUS_TRANSPORT: bullmq
+      # Pinned to match the healthcheck below; METRICS_PORT in .env must not
+      # silently move the listen port away from the probe target.
+      METRICS_PORT: "3002"
     expose:
       - "3002"
     healthcheck:
@@ -253,6 +256,9 @@ services:
       - ./.env
     environment:
       POSTGRES_HOST: postgres
+      # Pin the mount target: the script's ./backups default only resolves
+      # onto /backups inside this container by image WORKDIR accident.
+      BACKUP_DIR: /backups
     volumes:
       - ./scripts/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
       - ./backups:/backups

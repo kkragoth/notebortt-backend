@@ -1,3 +1,4 @@
+import { SamplingDecision } from '@opentelemetry/api';
 import type { Attributes, Sampler, SamplingResult } from '@opentelemetry/api';
 import type { BatchSpanProcessor as BatchSpanProcessorType, ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 
@@ -27,7 +28,8 @@ export const SUPPRESSED_URL_PATTERNS: RegExp[] = [
     /^\/socket\.io\//,
     /^\/metrics/,
     /^\/healthz/,
-    /^\/health\/live/,
+    // /health plus its /live and /ready aliases (orchestrator probes).
+    /^\/health(\/|$)/,
 ];
 
 /** Redis key fragments whose per-command spans are never recorded (5.3):
@@ -52,15 +54,27 @@ function fnv1a(input: string): number {
  * ISO week key ("2026-W34") computed on the wall clock of the fixed tracing
  * timezone, so week boundaries never disagree between replicas.
  */
+// Formatter construction is expensive and the timezone is fixed — build one
+// per timezone and reuse it (this sits on the span-sampling hot path).
+const isoWeekFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+    let formatter = isoWeekFormatters.get(timeZone);
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        });
+        isoWeekFormatters.set(timeZone, formatter);
+    }
+    return formatter;
+}
+
 export function isoWeekKey(date = new Date(), timeZone = TRACING_FIXED_TIMEZONE): string {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-    });
     const parts = Object.fromEntries(
-        formatter.formatToParts(date).map((part) => [part.type, part.value]),
+        formatterFor(timeZone).formatToParts(date).map((part) => [part.type, part.value]),
     );
     const wallClock = Date.UTC(
         Number(parts.year),
@@ -108,7 +122,7 @@ class BoardRotationRatioSampler {
         const [context, traceId, spanName, spanKind, attributes, links] = args;
         const boardId = boardIdFromAttributes(attributes);
         if (boardId && rotationDecisionForBoard(boardId)) {
-            return { decision: 2 }; // RECORD_AND_SAMPLE
+            return { decision: SamplingDecision.RECORD_AND_SAMPLED };
         }
         return this.fallback.shouldSample(context, traceId, spanName, spanKind, attributes, links);
     }
@@ -123,7 +137,17 @@ class KeyPatternSuppressingSpanProcessor implements SpanProcessor {
     }
 
     private suppressed(span: ReadableSpan): boolean {
-        const haystack = `${span.name} ${JSON.stringify(span.attributes)}`;
+        // Scan only the span name and string attribute values — serializing
+        // the full attribute bag per ended span is too costly on the hot
+        // export path (every ioredis command ends a span).
+        let haystack = span.name;
+        const attributes = span.attributes;
+        for (const key of Object.keys(attributes)) {
+            const value = attributes[key];
+            if (typeof value === 'string') {
+                haystack += ` ${key}=${value}`;
+            }
+        }
         return SUPPRESSED_SPAN_KEY_PATTERNS.some((pattern) => haystack.includes(pattern));
     }
 
@@ -176,7 +200,13 @@ export async function setupTracing(app: string): Promise<TracingHandle> {
 
         const sdk = new NodeSDK({
             serviceName: `note-canva-${app}`,
-            sampler: new BoardRotationRatioSampler(new sdkBase.TraceIdRatioBasedSampler(TRACING_SAMPLE_RATIO)),
+            // ParentBased: children inherit the root's sampling decision.
+            // Without the wrapper every span re-rolls the dice independently,
+            // fragmenting traces mid-chain (holes under sampled parents,
+            // orphan partials above unsampled ones).
+            sampler: new sdkBase.ParentBasedSampler({
+                root: new BoardRotationRatioSampler(new sdkBase.TraceIdRatioBasedSampler(TRACING_SAMPLE_RATIO)),
+            }),
             spanProcessors: [suppressor],
             instrumentations: [
                 new httpMod.HttpInstrumentation({

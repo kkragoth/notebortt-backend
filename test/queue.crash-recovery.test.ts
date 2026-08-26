@@ -30,6 +30,11 @@ function makeConnection(): Redis {
     return connection;
 }
 
+/** Signal keys share the run prefix so the cleanup sweep removes them. */
+function crashKey(kind: string, jobId: string | undefined): string {
+    return `${PREFIX}:crash:${kind}:${jobId}`;
+}
+
 function makeQueue(): Queue<CrashJobData> {
     const queue = new Queue<CrashJobData>(QUEUE_NAME, {
         connection: makeConnection(),
@@ -50,9 +55,9 @@ function makeWorker(): Worker<CrashJobData> {
     const worker = new Worker<CrashJobData>(
         QUEUE_NAME,
         async (job) => {
-            await signal.set(`crash:started:${job.id}`, String(process.pid));
-            const behavior = await signal.get(`crash:behavior:${job.id}`);
-            await signal.incr(`crash:attempts:${job.id}`);
+            await signal.set(crashKey('started', job.id), String(process.pid));
+            const behavior = await signal.get(crashKey('behavior', job.id));
+            await signal.incr(crashKey('attempts', job.id));
             if (behavior === 'fail') {
                 throw new Error('permanent failure');
             }
@@ -130,9 +135,9 @@ describe('queue crash recovery', () => {
 
         // The child picked the job up and is hanging inside the handler.
         await waitFor(async () =>
-            Boolean(await signal.get(`crash:started:${crashJobId}`)), 20_000);
+            Boolean(await signal.get(crashKey('started', crashJobId))), 20_000);
         await waitFor(async () =>
-            Number(await signal.get(`crash:attempts:${crashJobId}`)) >= 1, 10_000);
+            Number(await signal.get(crashKey('attempts', crashJobId))) >= 1, 10_000);
 
         // Kill the worker mid-processing: the job stays "active" for a dead
         // process until a survivor's stall checker redelivers it.
@@ -140,7 +145,7 @@ describe('queue crash recovery', () => {
         crashedChildPid = undefined;
 
         // Survivor takes over; first redelivery completes normally.
-        await signal.set(`crash:behavior:${crashJobId}`, 'complete');
+        await signal.set(crashKey('behavior', crashJobId), 'complete');
         const survivor = makeWorker();
         void survivor;
 
@@ -149,12 +154,12 @@ describe('queue crash recovery', () => {
             return job ? await job.isCompleted() : false;
         }, 30_000);
 
-        const attempts = Number(await signal.get(`crash:attempts:${crashJobId}`));
+        const attempts = Number(await signal.get(crashKey('attempts', crashJobId)));
         expect(attempts).toBeGreaterThanOrEqual(2);
 
         // Permanent failure lands in the failed set (bounded by removeOnFail).
         const deadJobId = 'dead-letter-me';
-        await signal.set(`crash:behavior:${deadJobId}`, 'fail');
+        await signal.set(crashKey('behavior', deadJobId), 'fail');
         await queue.add('render', { boardId: 'b-dead' }, { jobId: deadJobId, attempts: 1 });
 
         await waitFor(async () => {

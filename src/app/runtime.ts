@@ -1,6 +1,6 @@
 import type { AppConfig } from '@/shared/config.js';
 import type { MetricsApp } from '@/platform/observability/metrics.js';
-import type { DomainEventQueueSet } from '@/platform/jobs/queues.js';
+import type { DomainEventQueueSet } from '@/shared/events.js';
 import { createDb } from '@/platform/db/client.js';
 import { createRedisClient } from '@/platform/redis/client.js';
 import { createRuntimeMetrics } from '@/platform/observability/metrics.js';

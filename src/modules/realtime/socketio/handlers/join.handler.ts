@@ -9,7 +9,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
     return async (rawPayload: unknown): Promise<void> => {
         const payload = parseBoardJoinPayload(rawPayload);
         if (!payload) {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid board join payload' });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Invalid board join payload' });
             return;
         }
 
@@ -33,15 +33,20 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             return;
         }
         if (!access.hasAccess) {
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No access to board' });
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'No access to board' });
             return;
         }
 
-        const currentRoomSize = await runtime.participantsStore.getRoomSize(payload.boardId);
+        // Fast rejection path: a full room that this socket has not joined yet.
+        // (The authoritative cap check happens atomically at admission below.)
+        // One prune + one pipeline answers both questions instead of two
+        // independently-pruning reads.
+        const { isMember: isAlreadyParticipant, size: currentRoomSize } =
+            await runtime.participantsStore.getAdmissionState(payload.boardId, runtime.socket.id);
         if (!runtime.isJoinActive(joinAttempt)) {
             return;
         }
-        if (currentRoomSize >= SOCKET_ROOM_CONNECTION_CAP) {
+        if (!isAlreadyParticipant && currentRoomSize >= SOCKET_ROOM_CONNECTION_CAP) {
             runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Board room is full' });
             return;
         }
@@ -83,18 +88,37 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             if (existingParticipant.sessionId === payload.sessionId) {
                 continue;
             }
-            runtime.socket.emit(SOCKET_SERVER_EVENTS.USER_JOINED, existingParticipant);
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.USER_JOINED, existingParticipant);
         }
 
-        await runtime.participantsStore.setParticipant(payload.boardId, runtime.socket.id, {
-            sessionId: payload.sessionId,
-            userId: identity.runtimeUserId,
-            userName,
-            avatarUrl: identity.avatarUrl,
-            color,
-        });
+        // Atomic admission: enforces the room cap even under concurrent joins
+        // and doubles as the participant write. A socket that already holds a
+        // slot (session refresh / permission re-join) always re-admits.
+        const admitted = await runtime.participantsStore.admitParticipant(
+            payload.boardId,
+            runtime.socket.id,
+            {
+                sessionId: payload.sessionId,
+                userId: identity.runtimeUserId,
+                userName,
+                avatarUrl: identity.avatarUrl,
+                color,
+            },
+            SOCKET_ROOM_CONNECTION_CAP,
+        );
+        if (!admitted) {
+            runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Board room is full' });
+            const context = runtime.getBoardContext();
+            if (context && context.boardId === payload.boardId) {
+                await runtime.detachFromBoard(context, false);
+            }
+            return;
+        }
+        if (!runtime.isJoinActive(joinAttempt)) {
+            return;
+        }
 
-        runtime.socket.to(payload.boardId).emit(SOCKET_SERVER_EVENTS.USER_JOINED, {
+        runtime.safeEmitToBoard(payload.boardId, SOCKET_SERVER_EVENTS.USER_JOINED, {
             sessionId: payload.sessionId,
             userId: identity.runtimeUserId,
             userName,
@@ -108,7 +132,7 @@ export function createBoardJoinHandler(runtime: SocketIoHandlerRuntime) {
             return;
         }
 
-        runtime.socket.emit(SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT, {
+        runtime.safeEmitToSelf(SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT, {
             elements: snapshot.elements,
             lastSequence: snapshot.sequence,
         });

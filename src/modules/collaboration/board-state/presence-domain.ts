@@ -184,6 +184,7 @@ export function createBoardPresenceDomain(redis: Redis, deps: PresenceDomainDeps
         touchLastActive,
         getSyncWriteMode,
         rearmCollabModeIfActive,
+        extendCollabMode,
     };
 }
 

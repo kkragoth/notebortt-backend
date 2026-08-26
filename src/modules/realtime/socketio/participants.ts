@@ -129,12 +129,74 @@ export function createParticipantsStore(redis: Redis, options: ParticipantsStore
         return redis.hlen(participantsHashKey(boardId));
     }
 
+    async function hasParticipant(boardId: string, socketId: string): Promise<boolean> {
+        await pruneExpired(boardId);
+        return (await redis.hexists(participantsHashKey(boardId), socketId)) === 1;
+    }
+
+    /** Prunes once, then answers both join-gate questions in one round trip. */
+    async function getAdmissionState(boardId: string, socketId: string): Promise<{ isMember: boolean; size: number }> {
+        await pruneExpired(boardId);
+        const results = await redis.pipeline()
+            .hexists(participantsHashKey(boardId), socketId)
+            .hlen(participantsHashKey(boardId))
+            .exec();
+        const [isMemberResult, sizeResult] = results ?? [];
+        return {
+            isMember: Number(isMemberResult?.[1] ?? 0) === 1,
+            size: Number(sizeResult?.[1] ?? 0),
+        };
+    }
+
+    /**
+     * Atomic join: writes the participant only when the socket already holds
+     * a slot or the room is below cap. Checking hlen and writing hset in one
+     * Lua script closes the TOCTOU where N concurrent joins all observe
+     * "size < cap" and all admit themselves.
+     */
+    async function admitParticipant(
+        boardId: string,
+        socketId: string,
+        participant: RoomParticipant,
+        roomCap: number,
+    ): Promise<boolean> {
+        const stored: StoredParticipant = { ...participant, socketId };
+        const result = await redis.eval(
+            `
+      if redis.call('hexists', KEYS[1], ARGV[1]) == 1 then
+        redis.call('hset', KEYS[1], ARGV[1], ARGV[2])
+        redis.call('zadd', KEYS[2], ARGV[3], ARGV[1])
+        return 1
+      end
+
+      if redis.call('hlen', KEYS[1]) >= tonumber(ARGV[4]) then
+        return 0
+      end
+
+      redis.call('hset', KEYS[1], ARGV[1], ARGV[2])
+      redis.call('zadd', KEYS[2], ARGV[3], ARGV[1])
+      return 1
+    `,
+            2,
+            participantsHashKey(boardId),
+            participantsExpiryKey(boardId),
+            socketId,
+            JSON.stringify(stored),
+            String(Date.now() + ttlMs),
+            String(roomCap),
+        );
+        return result === 1;
+    }
+
     return {
         setParticipant,
         touchParticipant,
         removeParticipant,
         getRoomParticipants,
         getRoomSize,
+        hasParticipant,
+        getAdmissionState,
+        admitParticipant,
     };
 }
 

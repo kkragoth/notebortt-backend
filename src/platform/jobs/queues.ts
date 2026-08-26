@@ -11,6 +11,8 @@ export const JOB_QUEUES = {
     domainEvents: 'board-mutations',
     /** Time-sensitive BOARD_EDITORS_LEFT triggers (flush enqueue). */
     domainControlEvents: 'board-control-events',
+    /** Preview render jobs (debounced per board). */
+    boardPreview: 'board-preview',
     /** Parking lot for undecodable domain events; entries are never retried. */
     domainEventsDlq: 'domain-events-dlq',
 } as const;
@@ -24,6 +26,9 @@ const DEFAULT_JOB_ATTEMPTS = 3;
 const DEFAULT_BACKOFF_DELAY_MS = 5_000;
 const REMOVE_ON_COMPLETE_AGE_SECONDS = 24 * 60 * 60;
 const REMOVE_ON_FAIL_AGE_SECONDS = 7 * 24 * 60 * 60;
+// Age-only retention is unbounded in count; the DLQ grows fastest during a
+// poison-message storm, so its completed records also cap by count.
+const DLQ_REMOVE_ON_COMPLETE_COUNT = 10_000;
 
 /** DLQ records must never re-enter processing. */
 const DLQ_JOB_ATTEMPTS = 1;
@@ -70,16 +75,10 @@ export function createDomainEventsDlqQueue(
         ...queueConnectionOptions(options.prefix),
         defaultJobOptions: {
             attempts: DLQ_JOB_ATTEMPTS,
-            removeOnComplete: { age: REMOVE_ON_FAIL_AGE_SECONDS },
+            removeOnComplete: { age: REMOVE_ON_FAIL_AGE_SECONDS, count: DLQ_REMOVE_ON_COMPLETE_COUNT },
             removeOnFail: { age: REMOVE_ON_FAIL_AGE_SECONDS },
         },
     });
-}
-
-export interface DomainEventQueueSet {
-    mutations: Queue<DomainEventJobData>
-    controlEvents: Queue<DomainEventJobData>
-    dlq: Queue<DeadLetterRecord>
 }
 
 /**

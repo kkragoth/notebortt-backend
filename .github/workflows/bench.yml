@@ -7,6 +7,10 @@ on:
     # Nightly perf gate on the default branch.
     - cron: '0 4 * * *'
 
+# Read-only token + bounded runtime for an unattended scheduled workflow.
+permissions:
+  contents: read
+
 concurrency:
   group: bench-${{ github.ref }}
   cancel-in-progress: true
@@ -17,6 +21,7 @@ jobs:
     # against the rolling median, but never gate the build.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -66,14 +71,13 @@ jobs:
         run: npm ci
 
       - name: Restore bench history
-        # actions/cache entries are immutable — a static key would freeze the
-        # first run forever. Every run saves under a unique key and restores
-        # the newest previous entry via the prefix.
+        # History is segregated per event family: shared-runner PR hardware
+        # would otherwise pollute the nightly gate's rolling median.
         uses: actions/cache/restore@v4
         with:
           path: bench/bench-history.json
-          key: bench-history-${{ github.run_id }}
-          restore-keys: bench-history-
+          key: bench-history-pr-${{ github.run_id }}
+          restore-keys: bench-history-pr-
 
       - name: Run benchmark (informational)
         run: ./scripts/ci-bench.sh informational
@@ -85,7 +89,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: bench/bench-history.json
-          key: bench-history-${{ github.run_id }}
+          key: bench-history-pr-${{ github.run_id }}
 
       - name: Upload bench results
         if: always()
@@ -99,9 +103,10 @@ jobs:
 
   bench-gate:
     # Nightly hard gate: fails on >10% p95 regression vs the rolling median
-    # of the last runs. Move to a dedicated `perf` runner by changing runs-on.
+    # of the last nightly runs. Move to a dedicated `perf` runner by changing runs-on.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -154,8 +159,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: bench/bench-history.json
-          key: bench-history-${{ github.run_id }}
-          restore-keys: bench-history-
+          key: bench-history-nightly-${{ github.run_id }}
+          restore-keys: bench-history-nightly-
 
       - name: Run benchmark (hard gate)
         run: ./scripts/ci-bench.sh gate
@@ -164,7 +169,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: bench/bench-history.json
-          key: bench-history-${{ github.run_id }}
+          key: bench-history-nightly-${{ github.run_id }}
 
       - name: Upload bench results
         if: always()

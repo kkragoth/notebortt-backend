@@ -21,13 +21,17 @@ export async function runSocketBench({ url, accessToken, boardId, elementIds, du
     socket.onAny(countInbound);
 
     await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('socket connect timeout')), 10_000);
+        const timer = setTimeout(() => {
+            socket.disconnect();
+            reject(new Error('socket connect timeout'));
+        }, 10_000);
         socket.on('connect', () => {
             clearTimeout(timer);
             resolve();
         });
         socket.on('connect_error', (err) => {
             clearTimeout(timer);
+            socket.disconnect();
             reject(err);
         });
     });
@@ -51,13 +55,19 @@ export async function runSocketBench({ url, accessToken, boardId, elementIds, du
         auth: { token: accessToken },
     });
     await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('observer connect timeout')), 10_000);
+        const timer = setTimeout(() => {
+            observer.disconnect();
+            socket.disconnect();
+            reject(new Error('observer connect timeout'));
+        }, 10_000);
         observer.on('connect', () => {
             clearTimeout(timer);
             resolve();
         });
         observer.on('connect_error', (err) => {
             clearTimeout(timer);
+            observer.disconnect();
+            socket.disconnect();
             reject(err);
         });
     });

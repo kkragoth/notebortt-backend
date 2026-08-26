@@ -2,6 +2,7 @@ import Redis from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoardPresenceDomain } from '@/modules/collaboration/board-state/presence-domain.js';
 import {
+    ACTIVE_BOARDS_KEY,
     COLLAB_MODE_COOLDOWN_MS,
     boardClientLeaseKey,
     boardClientsKey,
@@ -20,7 +21,6 @@ const metricsStub = {
     logStructured: () => undefined,
     registerCollector: () => undefined,
     scrape: async () => ({ contentType: 'text/plain', body: '' }),
-    getPromRegistry: () => ({} as never),
 };
 
 let redis: Redis;
@@ -44,6 +44,9 @@ afterAll(async () => {
             boardLastActiveKey(boardId),
             ...members.map((member) => boardClientLeaseKey(boardId, member)),
         );
+        // trackClient/touchViewerSession add the board to the global active
+        // index; leaving phantom ids behind would leak state across runs.
+        await redis.srem(ACTIVE_BOARDS_KEY, boardId);
     }
     await redis.quit();
 });

@@ -339,8 +339,15 @@ export function createMutationProcessor(
             applyPersistedChangeToContext(context, result);
             // Post-apply grace re-arm: keeps an active collab board in
             // deferred persistence despite TTL jitter; solo boards are never
-            // flipped by their own mutations (conditional inside).
-            await boardStateService.rearmCollabModeIfActive(mutation.boardId);
+            // flipped by their own mutations (conditional inside). When the
+            // mode was just probed as collab there is nothing to re-count —
+            // extend the marker directly instead of re-probing (this runs on
+            // the per-tick hot path while holding the distributed lock).
+            if (writeMode === 'collab') {
+                await boardStateService.extendCollabMode(mutation.boardId);
+            } else {
+                await boardStateService.rearmCollabModeIfActive(mutation.boardId);
+            }
             if (writeMode === 'solo' && appliedCanonicalChange) {
                 await boardStateService.persistBoard(mutation.boardId);
             }
@@ -384,7 +391,14 @@ export function createMutationProcessor(
                 if (writeMode === 'solo' && shouldPersistSolo) {
                     await boardStateService.persistBoard(boardId);
                 }
-                await boardStateService.rearmCollabModeIfActive(boardId);
+                // Same fast-path as processMutation: a known-collab batch
+                // extends the marker instead of re-running the full probe
+                // inside the distributed lock.
+                if (writeMode === 'collab') {
+                    await boardStateService.extendCollabMode(boardId);
+                } else {
+                    await boardStateService.rearmCollabModeIfActive(boardId);
+                }
             });
         }
 

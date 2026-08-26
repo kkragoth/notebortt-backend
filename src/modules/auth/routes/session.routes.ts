@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
     REFRESH_TOKEN_COOKIE_NAME,
@@ -19,7 +19,12 @@ import { devLoginBodySchema } from '@/shared/openapi/schemas.js';
 import { logger } from '@/shared/logger.js';
 import { refreshTokens } from '@/platform/db/schema.js';
 
-const emptyBodySchema = z.object({}).passthrough();
+// Body-transported refresh tokens (native/mobile clients without cookies)
+// must be strings before they reach the hash function; a non-string used to
+// escape validation entirely and surface as a 500.
+const refreshTokenBodySchema = z.object({
+    refreshToken: z.string().min(1).max(4096).optional(),
+});
 
 export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     const {
@@ -30,7 +35,7 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     } = deps;
 
     router.post('/refresh', async (req, res) => {
-        const validated = validateRequestInput(req, res, { body: emptyBodySchema });
+        const validated = validateRequestInput(req, res, { body: refreshTokenBodySchema });
         if (!validated) {
             return;
         }
@@ -40,9 +45,10 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
             return;
         }
 
+        const bodyToken = validated.body as z.infer<typeof refreshTokenBodySchema>;
         let refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined;
         if (!refreshToken) {
-            refreshToken = req.body.refreshToken as string | undefined;
+            refreshToken = bodyToken.refreshToken;
             if (!refreshToken) {
                 res.status(401).json({ error: 'Missing refresh token' });
                 return;
@@ -159,7 +165,7 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
     });
 
     router.post('/logout', async (req, res) => {
-        const validated = validateRequestInput(req, res, { body: emptyBodySchema });
+        const validated = validateRequestInput(req, res, { body: refreshTokenBodySchema });
         if (!validated) {
             return;
         }
@@ -169,9 +175,10 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
             return;
         }
 
+        const bodyToken = validated.body as z.infer<typeof refreshTokenBodySchema>;
         let refreshToken = req.cookies[REFRESH_TOKEN_COOKIE_NAME] as string | undefined;
         if (!refreshToken) {
-            refreshToken = req.body.refreshToken as string | undefined;
+            refreshToken = bodyToken.refreshToken;
         }
         if (refreshToken) {
             // Revoke instead of delete: the row must survive so that a later
@@ -190,5 +197,3 @@ export function registerSessionRoutes(router: Router, deps: AuthRouterDeps) {
         res.sendStatus(200);
     });
 }
-
-

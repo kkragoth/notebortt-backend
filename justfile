@@ -82,6 +82,8 @@ test:
     npx vitest run
 
 # Performance benchmark against locally running api + realtime apps.
+# Runs against a dedicated notecanva_bench database (never the DATABASE_URL
+# target) so `just bench` cannot mutate a shared/prod database via .env.
 # Writes bench/results-latest.json, appends bench/bench-history.json (last 10),
 # and (re)generates bench/BASELINE.md when missing or UPDATE_BASELINE=true.
 bench:
@@ -89,13 +91,21 @@ bench:
     set -eu
     set -a; . ./.env; set +a
     docker compose -f docker-compose.yml up -d postgres redis-realtime redis-jobs
-    npx drizzle-kit migrate
+    i=0; until docker compose -f docker-compose.yml exec -T postgres pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 30 ] && exit 1; sleep 1; done
+    docker compose -f docker-compose.yml exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+        -c "DROP DATABASE IF EXISTS notecanva_bench WITH (FORCE);" >/dev/null 2>&1 || true
+    docker compose -f docker-compose.yml exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+        -c "CREATE DATABASE notecanva_bench;" >/dev/null 2>&1 || true
+
+    BENCH_DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/notecanva_bench"
+    # Apply the schema to the isolated bench database.
+    DATABASE_URL="$BENCH_DATABASE_URL" npx drizzle-kit migrate
 
     API_PORT="${BENCH_API_PORT:-3100}"
     RT_PORT="${BENCH_REALTIME_PORT:-3101}"
-    RATE_LIMIT_DISABLED=true LOG_LEVEL=warn PORT="$API_PORT" npx tsx src/apps/api.main.ts > /tmp/nc-bench-api.log 2>&1 &
+    DATABASE_URL="$BENCH_DATABASE_URL" RATE_LIMIT_DISABLED=true LOG_LEVEL=warn PORT="$API_PORT" npx tsx src/apps/api.main.ts > /tmp/nc-bench-api.log 2>&1 &
     API_PID=$!
-    RATE_LIMIT_DISABLED=true LOG_LEVEL=warn REALTIME_PORT="$RT_PORT" npx tsx src/apps/realtime.main.ts > /tmp/nc-bench-realtime.log 2>&1 &
+    DATABASE_URL="$BENCH_DATABASE_URL" RATE_LIMIT_DISABLED=true LOG_LEVEL=warn REALTIME_PORT="$RT_PORT" npx tsx src/apps/realtime.main.ts > /tmp/nc-bench-realtime.log 2>&1 &
     RT_PID=$!
     trap 'kill $API_PID $RT_PID 2>/dev/null || true' EXIT INT TERM
 
@@ -110,7 +120,8 @@ bench:
     wait_http "$API_PORT"
     wait_http "$RT_PORT"
 
-    LOG_LEVEL=warn BENCH_API_URL="http://localhost:$API_PORT" \
+    LOG_LEVEL=warn DATABASE_URL="$BENCH_DATABASE_URL" \
+        BENCH_API_URL="http://localhost:$API_PORT" \
         BENCH_REALTIME_URL="http://localhost:$RT_PORT" \
         npx tsx scripts/bench-fixture.ts
 

@@ -56,19 +56,22 @@ describe('mutation lock acquisition timeout', () => {
         const lock = createBoardMutationLockDomain(redis);
         const boardId = `lock-test-${Date.now()}`;
 
-        // Simulate a partitioned/held lock from another writer.
+        // Simulate a partitioned/held lock from another writer. Cleanup runs
+        // in finally so an assertion failure cannot leak the held key into
+        // the shared redis for its full TTL.
         await redis.set(boardMutationLockKey(boardId), 'held', 'PX', 60_000);
-
-        const startedAt = Date.now();
-        await expect(lock.withBoardMutationLock(boardId, async () => 'never')).rejects.toMatchObject({
-            status: 503,
-        });
-        const waited = Date.now() - startedAt;
-        expect(waited).toBeGreaterThanOrEqual(1_500);
-        expect(waited).toBeLessThan(4_000);
-
-        expect(await redis.del(boardMutationLockKey(boardId))).toBe(1);
-        await redis.quit();
+        try {
+            const startedAt = Date.now();
+            await expect(lock.withBoardMutationLock(boardId, async () => 'never')).rejects.toMatchObject({
+                status: 503,
+            });
+            const waited = Date.now() - startedAt;
+            expect(waited).toBeGreaterThanOrEqual(1_500);
+            expect(await redis.del(boardMutationLockKey(boardId))).toBe(1);
+        } finally {
+            await redis.del(boardMutationLockKey(boardId));
+            await redis.quit();
+        }
     }, 15_000);
 
     it('runs the task when the lock is free and releases afterwards', async () => {

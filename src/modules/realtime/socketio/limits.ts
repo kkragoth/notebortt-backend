@@ -16,9 +16,20 @@ export const SOCKET_EVENT_BYTE_CAPS = {
     [SOCKET_CLIENT_EVENTS.BOARD_JOIN]: 4 * 1024,
 } as const satisfies Partial<Record<string, number>>;
 
-/** Per-socket token bucket applied to every client event. */
-export const SOCKET_EVENT_BUCKET_CAPACITY = 120;
-export const SOCKET_EVENT_REFILL_PER_SECOND = 30;
+/**
+ * Per-socket token bucket applied to every client event. Sized for real
+ * interaction traffic — cursor/tick streams run 30-60 Hz per client, so the
+ * steady-state refill must sit comfortably above that or legitimate sessions
+ * drain the bucket mid-edit.
+ */
+export const SOCKET_EVENT_BUCKET_CAPACITY = 240;
+export const SOCKET_EVENT_REFILL_PER_SECOND = 120;
+/**
+ * Minimum spacing between throttle SYNC_ERROR notices on one connection.
+ * Dropping frames is silent except for this bounded signal so a flood cannot
+ * amplify into an outbound error storm.
+ */
+export const SOCKET_THROTTLE_ERROR_SPACING_MS = 1_000;
 
 /** Upper bound of simultaneous participants in one board room. */
 export const SOCKET_ROOM_CONNECTION_CAP = 50;

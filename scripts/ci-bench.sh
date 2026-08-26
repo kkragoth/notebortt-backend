@@ -12,9 +12,19 @@ FIXTURE_OUT="${BENCH_FIXTURE_OUT:-/tmp/bench-fixture.json}"
 PGUSER_DEFAULT=notecanva
 PGPASSWORD_DEFAULT=notecanva
 
-# Idempotent bench-database bootstrap (CREATE fails harmlessly when it exists).
-PGPASSWORD="$PGPASSWORD_DEFAULT" psql -h localhost -U "$PGUSER_DEFAULT" -d notecanva_test \
-    -c 'CREATE DATABASE notecanva_bench;' 2>/dev/null || true
+# Idempotent bench-database bootstrap. Only "already exists" is tolerated;
+# auth/connection failures must fail loudly instead of surfacing later as a
+# confusing migrate error.
+create_out="$(PGPASSWORD="$PGPASSWORD_DEFAULT" psql -h localhost -U "$PGUSER_DEFAULT" -d notecanva_test \
+    -c 'CREATE DATABASE notecanva_bench;' 2>&1)" || {
+    case "$create_out" in
+        *"already exists"*) ;;
+        *)
+            echo "ci-bench: CREATE DATABASE failed: $create_out" >&2
+            exit 1
+            ;;
+    esac
+}
 
 export DATABASE_URL="postgres://$PGUSER_DEFAULT:$PGPASSWORD_DEFAULT@localhost:5432/notecanva_bench"
 

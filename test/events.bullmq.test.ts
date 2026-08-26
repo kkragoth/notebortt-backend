@@ -25,16 +25,23 @@ const connections: Redis[] = [];
 const queues: Queue[] = [];
 const buses: AppEventBus[] = [];
 
+// Each harness gets its own sub-prefix so tests never share queue state:
+// an earlier test's waiting/completed jobs cannot leak into a later test's
+// strict assertions. Everything stays nested under PREFIX for the final sweep.
+let harnessSeq = 0;
+let lastPrefix = '';
+let current: { mutations: Queue<DomainEventJobData>; controlEvents: Queue<DomainEventJobData>; dlq: Queue<DeadLetterRecord> };
+
 function makeConnection(): Redis {
     const connection = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
     connections.push(connection);
     return connection;
 }
 
-function makeQueue<TData>(name: string, defaultJobOptions: Record<string, unknown>): Queue<TData> {
+function makeQueue<TData>(name: string, defaultJobOptions: Record<string, unknown>, prefix: string): Queue<TData> {
     const queue = new Queue<TData>(name, {
         connection: makeConnection(),
-        prefix: PREFIX,
+        prefix,
         defaultJobOptions,
     });
     queues.push(queue);
@@ -46,22 +53,29 @@ interface BusHarnessOptions {
     onJobFailed?: (info: { queue: string; jobId: string | undefined }) => void
 }
 
-function makeBus({ onEnqueueFailed, onJobFailed }: BusHarnessOptions = {}): AppEventBus {
-    // Each bus re-opens the named queues under the run prefix; producers and
-    // consumers in these tests share one redis like one deployment would.
+/**
+ * Builds a bus on a fresh per-test prefix. Producer/consumer pairs within one
+ * test must share keys like one deployment would: pass sharePrefix=true on
+ * the SECOND bus of the pair.
+ */
+function makeBus({ onEnqueueFailed, onJobFailed }: BusHarnessOptions = {}, sharePrefix = false): AppEventBus {
+    const prefix = sharePrefix && lastPrefix ? lastPrefix : `${PREFIX}:h${harnessSeq += 1}`;
+    lastPrefix = prefix;
+    const harnessQueues = {
+        mutations: makeQueue<DomainEventJobData>('board-mutations', FAST_JOB_DEFAULTS, prefix),
+        controlEvents: makeQueue<DomainEventJobData>('board-control-events', FAST_JOB_DEFAULTS, prefix),
+        dlq: makeQueue<DeadLetterRecord>('domain-events-dlq', {
+            attempts: 1,
+            removeOnComplete: { age: 60 },
+            removeOnFail: { age: 60 },
+        }, prefix),
+    };
+    current = harnessQueues;
     const bus = createAppEventBus({
         transport: 'bullmq',
         connection: makeConnection(),
-        prefix: PREFIX,
-        queues: {
-            mutations: makeQueue<DomainEventJobData>('board-mutations', FAST_JOB_DEFAULTS),
-            controlEvents: makeQueue<DomainEventJobData>('board-control-events', FAST_JOB_DEFAULTS),
-            dlq: makeQueue<DeadLetterRecord>('domain-events-dlq', {
-                attempts: 1,
-                removeOnComplete: { age: 60 },
-                removeOnFail: { age: 60 },
-            }),
-        },
+        prefix,
+        queues: harnessQueues,
         producerId: 'test-producer',
         consumerConcurrency: 5,
         ...(onEnqueueFailed ? { onEnqueueFailed } : {}),
@@ -73,11 +87,7 @@ function makeBus({ onEnqueueFailed, onJobFailed }: BusHarnessOptions = {}): AppE
 }
 
 async function dlqRecords(): Promise<Array<Record<string, unknown>>> {
-    const dlq = queues.find((queue) => queue.name === 'domain-events-dlq') as Queue<DeadLetterRecord> | undefined;
-    if (!dlq) {
-        return [];
-    }
-    const jobs = await dlq.getJobs(['completed', 'waiting']);
+    const jobs = await current.dlq.getJobs(['completed', 'waiting']);
     return jobs.filter(Boolean).map((job) => job.data as unknown as Record<string, unknown>);
 }
 
@@ -104,7 +114,7 @@ afterAll(async () => {
 describe('bullmq-backed app event bus', () => {
     it('delivers emitted events to a subscriber registered on another bus instance', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         const handler = vi.fn().mockResolvedValue(undefined);
         consumer.on(APP_EVENTS.BOARD_MUTATED, handler);
 
@@ -117,7 +127,7 @@ describe('bullmq-backed app event bus', () => {
 
     it('fans out one delivery to every handler registered on the same bus', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         const first = vi.fn().mockResolvedValue(undefined);
         const second = vi.fn().mockResolvedValue(undefined);
         consumer.on(APP_EVENTS.BOARD_EDITORS_LEFT, first);
@@ -135,7 +145,7 @@ describe('bullmq-backed app event bus', () => {
         const producer = makeBus();
         const consumer = makeBus({
             onJobFailed: vi.fn(),
-        });
+        }, true);
         let failures = 2;
         const flaky = vi.fn(async () => {
             if (failures > 0) {
@@ -156,7 +166,7 @@ describe('bullmq-backed app event bus', () => {
 
     it('processes control events even while a mutation batch is still in flight', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
 
         let releaseSlowMutation: (() => void) | undefined;
         const slowGate = new Promise<void>((resolve) => {
@@ -186,11 +196,11 @@ describe('bullmq-backed app event bus', () => {
 
     it('parks undecodable envelopes on the DLQ instead of retrying them', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         const handler = vi.fn().mockResolvedValue(undefined);
         consumer.on(APP_EVENTS.BOARD_MUTATED, handler);
 
-        const mutationsQueue = queues.find((queue) => queue.name === 'board-mutations') as Queue<DomainEventJobData>;
+        const { mutations: mutationsQueue } = current;
         await mutationsQueue.add(APP_EVENTS.BOARD_MUTATED, {
             event: APP_EVENTS.BOARD_MUTATED,
             envelope: { schemaVersion: 1 },
@@ -207,11 +217,11 @@ describe('bullmq-backed app event bus', () => {
 
     it('parks envelopes with an unsupported schemaVersion on the DLQ', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         const handler = vi.fn().mockResolvedValue(undefined);
         consumer.on(APP_EVENTS.BOARD_MUTATED, handler);
 
-        const mutationsQueue = queues.find((queue) => queue.name === 'board-mutations') as Queue<DomainEventJobData>;
+        const { mutations: mutationsQueue } = current;
         await mutationsQueue.add(APP_EVENTS.BOARD_MUTATED, {
             event: APP_EVENTS.BOARD_MUTATED,
             envelope: {
@@ -232,10 +242,10 @@ describe('bullmq-backed app event bus', () => {
 
     it('records DLQ jobs under the dead-letter job name without retrying them', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         consumer.on(APP_EVENTS.BOARD_EDITORS_LEFT, vi.fn().mockResolvedValue(undefined));
 
-        const controlQueue = queues.find((queue) => queue.name === 'board-control-events') as Queue<DomainEventJobData>;
+        const { controlEvents: controlQueue } = current;
         await controlQueue.add('not-an-event', {
             event: 'not-an-event',
             envelope: { schemaVersion: 1, producerId: 'x', timestamp: Date.now(), data: {} },
@@ -246,7 +256,7 @@ describe('bullmq-backed app event bus', () => {
             expect(records.filter((record) => record.reason === 'unknown_event')).toHaveLength(1);
         }, { timeout: 15_000 });
 
-        const dlq = queues.find((queue) => queue.name === 'domain-events-dlq') as Queue<DeadLetterRecord>;
+        const { dlq } = current;
         const jobs = await dlq.getJobs(['completed']);
         expect(jobs.every((job) => job.name === DOMAIN_EVENTS_DLQ_JOB_NAME)).toBe(true);
     });
@@ -280,7 +290,7 @@ describe('bullmq-backed app event bus', () => {
 
     it('coalesces bursts of identical triggers into one queued job per dedup window', async () => {
         const producer = makeBus();
-        const consumer = makeBus();
+        const consumer = makeBus(undefined, true);
         const handler = vi.fn().mockResolvedValue(undefined);
         consumer.on(APP_EVENTS.BOARD_MUTATED, handler);
 
@@ -290,7 +300,7 @@ describe('bullmq-backed app event bus', () => {
             producer.emit(APP_EVENTS.BOARD_MUTATED, { boardId: 'b-burst' }),
         ]);
 
-        const mutationsQueue = queues.find((queue) => queue.name === 'board-mutations') as Queue<DomainEventJobData>;
+        const { mutations: mutationsQueue } = current;
         await vi.waitFor(() => {
             expect(handler).toHaveBeenCalledTimes(1);
         }, { timeout: 15_000 });

@@ -37,10 +37,11 @@ function percentile(result, key) {
     return typeof value === 'number' ? Math.round(value * 100) / 100 : null;
 }
 
-// Short runs may not populate every percentile bucket; fall down the tail
-// so the gate always has a comparable number.
+// Short runs may not populate every tail bucket; fall p95 → p99 (never to a
+// LOWER tail like p90 — recording a smaller number into latencyP95Ms would
+// bias the history/gate downward exactly when tails go missing).
 function tailPercentile(result) {
-    return percentile(result, 'p95') ?? percentile(result, 'p90') ?? percentile(result, 'p99');
+    return percentile(result, 'p95') ?? percentile(result, 'p99');
 }
 
 async function runRestBench(fixture) {
@@ -105,9 +106,12 @@ async function writeBaseline(results) {
         '',
         '## Socket.IO frames (realtime:tick)',
         '',
-        `- Emit rate: **${results.socket.emitFramesPerSecond} frames/s** (${results.socket.framesEmitted} emitted)`,
-        `- Broadcast realtime:tick frames seen by observer socket: **${results.socket.broadcastTicksReceived}** (~${results.socket.observedBroadcastPerSecond}/s)`,
-        '- Rate: 500 frames/s burst refill every 1s',
+        // emitFramesPerSecond counts client-side sends; the server-side token
+        // bucket drops frames above its refill rate, so observedBroadcastPerSecond
+        // is the honest throughput signal.
+        `- Client emit rate: **${results.socket.emitFramesPerSecond} frames/s** (${results.socket.framesEmitted} sent)`,
+        `- Broadcast realtime:tick frames seen by observer socket: **${results.socket.broadcastTicksReceived}** (~${results.socket.observedBroadcastPerSecond}/s, server-observed)`,
+        `- Rate: ${SOCKET_RATE_PER_SECOND} frames/s burst refill every 1s (BENCH_SOCKET_RATE)`,
         '',
         'Regenerate with `UPDATE_BASELINE=true just bench`. The CI perf gate compares',
         'against the rolling median of bench-history.json (last 10 runs); >10% p95',
@@ -174,12 +178,18 @@ async function main() {
 
     const median = medianP95(history.slice(0, -1));
     console.log(JSON.stringify(results, null, 2));
-    if (median !== null && process.env.BENCH_GATE === 'true') {
-        const threshold = median * (1 + P95_REGRESSION_TOLERANCE);
-        console.error(`[Bench] gate: current p95=${rest.latencyP95Ms}ms vs rolling median=${median}ms (fail above ${threshold}ms)`);
-        if (rest.latencyP95Ms > threshold) {
-            console.error('[Bench] GATE FAILED: p95 regression beyond tolerance');
+    if (process.env.BENCH_GATE === 'true') {
+        if (median === null) {
+            // A gate run with no comparable history must not silently pass.
+            console.error('[Bench] GATE FAILED: no bench history to compare against');
             process.exitCode = 1;
+        } else {
+            const threshold = median * (1 + P95_REGRESSION_TOLERANCE);
+            console.error(`[Bench] gate: current p95=${rest.latencyP95Ms}ms vs rolling median=${median}ms (fail above ${threshold}ms)`);
+            if (rest.latencyP95Ms > threshold) {
+                console.error('[Bench] GATE FAILED: p95 regression beyond tolerance');
+                process.exitCode = 1;
+            }
         }
     } else if (median !== null) {
         console.error(`[Bench] informational: p95=${rest.latencyP95Ms}ms vs rolling median=${median}ms`);

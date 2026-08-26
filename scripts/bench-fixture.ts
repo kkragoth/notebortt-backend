@@ -95,7 +95,8 @@ async function ensureFixture() {
         apiPathPrefix: '/api/v1',
     };
 
-    await writeFile(FIXTURE_OUTPUT_PATH, JSON.stringify(fixture, null, 2));
+    // 0o600: the fixture embeds a live access token; never world-readable.
+    await writeFile(FIXTURE_OUTPUT_PATH, JSON.stringify(fixture, null, 2), { mode: 0o600 });
     logger.info({ path: FIXTURE_OUTPUT_PATH }, '[BenchFixture] fixture ready');
 }
 

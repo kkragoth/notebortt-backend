@@ -16,23 +16,26 @@ const redisUrl = process.env.REDIS_REALTIME_URL ?? process.env.REDIS_URL ?? 'red
 const redis = new Redis(redisUrl);
 
 try {
-    try {
-        await redis.xgroup('DESTROY', ORPHANED_STREAM_KEY, ORPHANED_CONSUMER_GROUP);
-        console.log(`destroyed consumer group ${ORPHANED_CONSUMER_GROUP} on ${ORPHANED_STREAM_KEY}`);
-    } catch (error) {
-        if (!(error instanceof Error && error.message.includes('NOGROUP'))) {
-            throw error;
-        }
-        console.log(`no consumer group ${ORPHANED_CONSUMER_GROUP} on ${ORPHANED_STREAM_KEY}`);
-    }
+    // xgroup DESTROY resolves 0 when the key exists but the group does not
+    // (and throws NOGROUP when the key itself is gone) — report both honestly.
+    const destroyed = await redis.xgroup('DESTROY', ORPHANED_STREAM_KEY, ORPHANED_CONSUMER_GROUP);
+    console.log(destroyed === 1
+        ? `destroyed consumer group ${ORPHANED_CONSUMER_GROUP} on ${ORPHANED_STREAM_KEY}`
+        : `no consumer group ${ORPHANED_CONSUMER_GROUP} on ${ORPHANED_STREAM_KEY}`);
 
     const removed = await redis.del(ORPHANED_STREAM_KEY);
     console.log(`${removed > 0 ? 'deleted' : 'no'} stream key ${ORPHANED_STREAM_KEY}`);
 
     // Sweep any test-namespaced leftovers from the old suite key pattern.
-    const stale = await redis.keys(`${ORPHANED_STREAM_KEY}:test:*`);
-    for (const key of stale) {
-        await redis.del(key);
+    let stale: string[] = [];
+    let cursor = '0';
+    do {
+        const [nextCursor, found] = await redis.scan(cursor, 'MATCH', `${ORPHANED_STREAM_KEY}:test:*`, 'COUNT', 100);
+        cursor = nextCursor;
+        stale = [...stale, ...found];
+    } while (cursor !== '0');
+    if (stale.length > 0) {
+        await redis.del(...stale);
     }
     console.log(`deleted ${stale.length} stale test stream key(s)`);
 } finally {

@@ -109,10 +109,10 @@ describe('billing webhook domain', () => {
             'buyer@example.com',
         );
 
-        // Replay of the same Stripe event id is a no-op.
+        // Replay of the same Stripe event id is a no-op (signedBody keeps
+        // event.id, so both deliveries share the same dedupe key).
         const replay = signedBody(event);
-        replay.id = '';
-        await expect(domain.handleWebhook(Buffer.from(replay.body.replace(`"evt_dedupe_${Date.now()}"`, `"${eventId}"`).slice(0)), replay.signature))
+        await expect(domain.handleWebhook(Buffer.from(replay.body), replay.signature))
             .resolves.toEqual({ duplicate: true });
         expect(upsertCustomerLink).toHaveBeenCalledTimes(1);
     });

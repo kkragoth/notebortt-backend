@@ -7,9 +7,13 @@ on:
     - cron: "0 4 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   restore-validation:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -44,9 +48,13 @@ jobs:
 
       - name: Restore into a throwaway database and assert row counts
         run: |
+          DUMP=$(ls -t backups/pg-*.dump | head -n1)
+          echo "restoring $DUMP"
           PGPASSWORD=notecanva createdb -h localhost -U notecanva notecanva_restore_check
+          # Restore exactly the newest dump: a glob would replay every match
+          # (e.g. a leftover partial) into the check database.
           PGPASSWORD=notecanva pg_restore -h localhost -U notecanva \
-            -d notecanva_restore_check --no-owner backups/pg-*.dump
+            -d notecanva_restore_check --no-owner "$DUMP"
           COUNT=$(PGPASSWORD=notecanva psql -h localhost -U notecanva -d notecanva_restore_check \
             -tAc "select count(*) from restore_probe")
           echo "restored rows: $COUNT"

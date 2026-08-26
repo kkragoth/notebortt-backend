@@ -7,6 +7,7 @@ import type { BoardStateService } from '@/modules/collaboration/index.js';
 import { sendBadRequest } from '@/shared/http.js';
 import { parseWithSchema } from '@/shared/validation.js';
 import { debugStateQuerySchema } from '@/shared/openapi/schemas.js';
+import { boardClientsKey, boardElementsKey, boardLastActiveKey, boardSeqKey } from '@/modules/collaboration/index.js';
 
 const MAX_REDIS_KEYS = 100;
 const DEFAULT_BOARD_SCAN_LIMIT = 20;
@@ -42,10 +43,10 @@ async function getRedisInfo(redis: Redis, boardId?: string) {
 
     const boardState = boardId
         ? {
-            sequence: await redis.get(`board:${boardId}:seq`),
-            clientCount: await redis.scard(`board:${boardId}:clients`),
-            elementCount: await redis.hlen(`board:${boardId}:elements`),
-            lastActive: await redis.get(`board:${boardId}:last_active`),
+            sequence: await redis.get(boardSeqKey(boardId)),
+            clientCount: await redis.scard(boardClientsKey(boardId)),
+            elementCount: await redis.hlen(boardElementsKey(boardId)),
+            lastActive: await redis.get(boardLastActiveKey(boardId)),
         }
         : null;
 

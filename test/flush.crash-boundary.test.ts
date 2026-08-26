@@ -1,5 +1,5 @@
 import Redis from 'ioredis';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { beginRollbackTx, closeFixtures } from './helpers/fixtures.js';
 import type { RollbackTxHandle } from './helpers/fixtures.js';
 import { createBoardPersistenceDomain } from '@/modules/collaboration/board-state/persistence-domain.js';
@@ -32,11 +32,20 @@ const metricsStub = {
     logStructured: () => undefined,
     registerCollector: () => undefined,
     scrape: async () => ({ contentType: 'text/plain', body: '' }),
-    getPromRegistry: () => ({} as never),
 };
 
 let redis: Redis;
 const createdKeys: string[] = [];
+const dirtyBoardsToClean: string[] = [];
+// Tracked so afterEach can abort the transaction even when an assertion
+// fails mid-test (rollback is idempotent).
+let openTx: RollbackTxHandle | null = null;
+
+afterEach(async () => {
+    const tx = openTx;
+    openTx = null;
+    await tx?.rollback();
+});
 
 function trackKey(key: string): string {
     createdKeys.push(key);
@@ -52,6 +61,7 @@ function seedBoardState(boardId: string): void {
     void trackKey(boardDirtySinceKey(boardId));
     void trackKey(boardDirtyElementIdsKey(boardId));
     void trackKey(boardDeletedElementIdsKey(boardId));
+    dirtyBoardsToClean.push(boardId);
 
     redis.pipeline()
         .set(boardSeqKey(boardId), '7')
@@ -113,6 +123,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
     if (redis) {
+        // The shared dirty set/zset are global indexes: phantom board ids
+        // left behind would be picked up by the background flusher.
+        if (dirtyBoardsToClean.length > 0) {
+            await redis.srem(DIRTY_BOARDS_KEY, ...dirtyBoardsToClean);
+            await redis.zrem(DIRTY_BOARDS_BY_AGE_KEY, ...dirtyBoardsToClean);
+        }
         await redis.del(...createdKeys);
         await redis.quit();
     }
@@ -121,7 +137,7 @@ afterAll(async () => {
 
 describe('flush crash boundaries', () => {
     it('keeps dirty markers when the flush crashes mid-write', async () => {
-        const tx = await beginRollbackTx();
+        const tx = openTx = await beginRollbackTx();
         const [user] = await tx.db.insert(users).values({
             email: `crash-${Date.now()}@example.com`,
             name: 'Crash Test',
@@ -175,7 +191,7 @@ describe('flush crash boundaries', () => {
     }, 30_000);
 
     it('rejects marker clears whose dirty epoch moved during the flush', async () => {
-        const tx = await beginRollbackTx();
+        const tx = openTx = await beginRollbackTx();
         const [user] = await tx.db.insert(users).values({
             email: `epoch-${Date.now()}@example.com`,
             name: 'Epoch Test',

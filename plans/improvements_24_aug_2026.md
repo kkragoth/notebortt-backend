@@ -219,8 +219,8 @@ Tick a box only when verified. Phases in order; P2a+P2b is one release unit.
     `bench-history.json`, failing on >10% p95 regression.
 - [x] **1.7** Legacy-request and fragment-token usage counters (consumed by the P3 gate).
 - [x] **1.8** Dev logs: pino-pretty in `development`, raw JSON in containers.
-- [x] **1.9** Governance: global vitest DB cleanup hooks (beforeEach/afterEach); update
-  `AGENTS.md` with verification commands and boundary rules.
+- [x] **1.9** Governance: global vitest DB cleanup hook (opt-in `afterEach` truncate via
+  `TEST_DB_GLOBAL_CLEANUP=true`); update `AGENTS.md` with verification commands and boundary rules.
 - [ ] **1.10** Notify monitoring owners that metric names change (renames are breaking for
   existing scrapers/dashboards) and ship the dashboard/alert migration alongside P1.
   *(Migration doc shipped: `docs/metrics-migration.md`; owner notification pending — human step.)*
@@ -415,12 +415,13 @@ verified by test; `just test` green.
   recovery with a minimized loss window — never an SLA (items 13/18).
 - [x] **6.2** Backup/restore: `scripts/pg-backup.sh`, `scripts/redis-backup.sh` + `backup`
   compose profile; CI validates a restore (dump into throwaway DB, assert row counts) (item 66).
-- [x] **6.3** Epoch-boundary crash test (item 21, part 2): kill the Node runner mid-flush; verify
-  Postgres epoch boundaries — no partial flush, no lost epoch guard.
+- [x] **6.3** Epoch-boundary crash test (item 21, part 2): simulate a writer crash mid-flush
+  (db proxy throwing inside the flush transaction); verify Postgres epoch boundaries — no
+  partial flush, no lost epoch guard.
 - [x] **6.4** Compose/ops: uniform HEALTHCHECKs via `curl`/healthz on all three apps (item 68);
   migrations stay in the standalone `migrator`/CI step (item 69); `--max-old-space-size=512` in
   Docker CMD (item 73).
-- [x] **6.5** Composite index `board_elements(board_id, updated_at)` via **`CREATE INDEX
+- [x] **6.5** Composite index `elements(board_id, updated_at)` via **`CREATE INDEX
   CONCURRENTLY`** (hot table — avoid locks; item 90); down-migration policy per Drizzle change
   (item 98); exhaustive `.env.example` (item 99).
 - [x] **6.6** Multi-stage Dockerfile packaging only the target app's entrypoint (item 67).

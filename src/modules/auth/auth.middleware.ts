@@ -1,28 +1,7 @@
+import { ACCESS_TOKEN_COOKIE_NAMES } from './routes/constants.js';
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthService } from './/auth.service.js';
-
-// Production cookies carry the __Host- prefix; dev keeps the plain name.
-const ACCESS_TOKEN_COOKIE_NAMES = ['__Host-accessToken', 'accessToken'];
-
-function readAccessTokenFromCookieHeader(rawCookieHeader: string | undefined): string | null {
-    if (!rawCookieHeader) {
-        return null;
-    }
-
-    for (const part of rawCookieHeader.split(';')) {
-        const [rawKey, ...rawValue] = part.split('=');
-        if (!rawKey || rawValue.length === 0) {
-            continue;
-        }
-        if (!ACCESS_TOKEN_COOKIE_NAMES.includes(rawKey.trim())) {
-            continue;
-        }
-        const value = rawValue.join('=').trim();
-        return value.length > 0 ? decodeURIComponent(value) : null;
-    }
-
-    return null;
-}
+import { parseCookieHeader } from '@/shared/cookies.js';
 
 function readAccessToken(req: Request): string | null {
     const header = req.headers.authorization;
@@ -37,8 +16,19 @@ function readAccessToken(req: Request): string | null {
         }
     }
 
+    // Fallback for handlers that run before cookie-parser (defensive).
     const rawCookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie[0] : req.headers.cookie;
-    return readAccessTokenFromCookieHeader(rawCookieHeader);
+    if (!rawCookieHeader) {
+        return null;
+    }
+    const cookies = parseCookieHeader(rawCookieHeader);
+    for (const name of ACCESS_TOKEN_COOKIE_NAMES) {
+        const token = cookies[name];
+        if (typeof token === 'string' && token.length > 0) {
+            return token;
+        }
+    }
+    return null;
 }
 
 export function createAuthMiddleware(authService: AuthService) {

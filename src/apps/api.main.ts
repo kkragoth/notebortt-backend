@@ -1,16 +1,7 @@
 import 'dotenv/config';
-import type { Server } from 'node:http';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
 import { setupTracing } from '@/platform/observability/tracing.js';
-import { createApp } from '@/app/create-app.js';
-import {
-    registerBoardDirtyCollectors,
-    registerDbPoolCollectors,
-    registerQueueCollectors,
-} from '@/app/metrics-collectors.js';
-import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
 
 /**
  * REST API app. Owns HTTP concerns only: routes, rate limiting, health and
@@ -19,8 +10,21 @@ import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
  */
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+// Tracing must start before the app graph loads: the OpenTelemetry
+// instrumentations hook module loading, so express/pg/ioredis have to be
+// imported AFTER sdk.start() or their spans are silently dead. Everything
+// below is therefore dynamically imported.
 const tracing = await setupTracing('api');
 const config = loadConfig();
+
+const [{ createAppRuntime }, { createApp }, { registerBoardDirtyCollectors, registerDbPoolCollectors, registerQueueCollectors }, { runAppShell, shutdownInfra }] =
+    await Promise.all([
+        import('@/app/runtime.js'),
+        import('@/app/create-app.js'),
+        import('@/app/metrics-collectors.js'),
+        import('@/apps/app-shell.js'),
+    ]);
+
 const runtime = createAppRuntime(config, { app: 'api' });
 
 registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
@@ -29,7 +33,7 @@ registerDbPoolCollectors(runtime.metrics, runtime.db, config.dbPoolMax);
 
 const app = createApp(runtime);
 
-let server: Server | undefined;
+let server: import('node:http').Server | undefined;
 
 runAppShell({
     name: 'API',
@@ -53,8 +57,10 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
+        // Infra teardown first, tracing last: spans emitted while Redis/PG
+        // drain (and the close operations themselves) must still flush.
+        await shutdownInfra(runtime);
         await runtime.events.close();
         await tracing.shutdown();
-        await shutdownInfra(runtime);
     },
 });

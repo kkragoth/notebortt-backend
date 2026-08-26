@@ -4,9 +4,8 @@ import { createCrdtRoomStore } from '../socketio/crdt-room.js';
 import { createParticipantsStore } from '../socketio/participants.js';
 import { createTickPersistenceManager } from '../socketio/tick-persistence.js';
 import {
-    ACCESS_TOKEN_COOKIE_NAME,
     SOCKET_CLIENT_EVENTS,
-    SOCKET_RESERVED_EVENTS, SOCKET_SERVER_EVENTS 
+    SOCKET_RESERVED_EVENTS, SOCKET_SERVER_EVENTS
 } from '../socketio/constants.js';
 import { createBoardJoinHandler } from '../socketio/handlers/join.handler.js';
 import { createMutationBatchHandler } from '../socketio/handlers/mutation-batch.handler.js';
@@ -19,7 +18,6 @@ import {
     getOpenSocketIoConnections,
     incrementOpenSocketIoConnections,
 } from '../socketio/stats.js';
-import { parseCookieHeader } from '../socketio/identity.js';
 import {
     SOCKET_EVENT_BUCKET_CAPACITY,
     SOCKET_EVENT_BYTE_CAPS,
@@ -27,6 +25,7 @@ import {
     SOCKET_MAX_HTTP_BUFFER_BYTES,
     SOCKET_PING_INTERVAL_MS,
     SOCKET_PING_TIMEOUT_MS,
+    SOCKET_THROTTLE_ERROR_SPACING_MS,
 } from '../socketio/limits.js';
 import type { ContextSnapshot, SocketIoHandlerRuntime } from '../socketio/handlers/runtime.js';
 import type {
@@ -37,6 +36,9 @@ import type {
     SocketIoRealtimeServerOptions,
 } from '../socketio/types.js';
 import type { Server as HttpServer } from 'node:http';
+import { parseCookieHeader } from '@/shared/cookies.js';
+import { isValidLinkShareToken } from '@/modules/boards/index.js';
+import { ACCESS_TOKEN_COOKIE_NAMES } from '@/modules/auth/index.js';
 
 import { logger } from '@/shared/logger.js';
 import { parseAllowedOrigins } from '@/shared/cors.js';
@@ -45,6 +47,9 @@ const DEFAULT_ACTIVITY_WRITE_THROTTLE_MS = 3_000;
 const DEFAULT_ACTIVITY_WRITE_JITTER_MS = 400;
 // Well under the participants store TTL so three missed beats still survive.
 const DEFAULT_PARTICIPANT_HEARTBEAT_MS = 30_000;
+// Depth/size bounds for the wire-size estimate; real payloads never come close.
+const MAX_MEASURE_DEPTH = 8;
+const MAX_MEASURE_DEPTH_BYTES = 8;
 
 export function createSocketIoRealtimeServer(
     httpServer: HttpServer,
@@ -70,9 +75,9 @@ export function createSocketIoRealtimeServer(
     io.adapter(createAdapter(deps.pubRedis, deps.subRedis));
 
     // Handshake auth gate: a socket must present a valid JWT (auth payload,
-    // Authorization header, or access-token cookie) or an explicit anonymous
-    // opt-in via shareToken. Per-board access is still re-verified on every
-    // join — this gate only fails fast on credential-less connections.
+    // Authorization header, or access-token cookie) or a structurally valid
+    // link-share token. Per-board access is still re-verified on every join —
+    // this gate only fails fast on credential-less connections.
     io.use(async (socket, next) => {
         try {
             const headers = socket.request?.headers ?? {};
@@ -84,8 +89,7 @@ export function createSocketIoRealtimeServer(
             const candidates = [
                 authToken,
                 bearerToken,
-                cookies[`__Host-${ACCESS_TOKEN_COOKIE_NAME}`],
-                cookies[ACCESS_TOKEN_COOKIE_NAME],
+                ...ACCESS_TOKEN_COOKIE_NAMES.map((name) => cookies[name]),
             ].filter((token): token is string => typeof token === 'string' && token.length > 0);
 
             for (const token of candidates) {
@@ -98,10 +102,13 @@ export function createSocketIoRealtimeServer(
                 }
             }
 
+            // Anonymous visitors may connect with only a share link, but the
+            // token must look like one this service issued — otherwise the
+            // "gate" admits any credential-less client that sends junk.
             const shareToken = typeof socket.handshake.query.shareToken === 'string'
                 ? socket.handshake.query.shareToken
                 : (socket.handshake.auth as { shareToken?: unknown } | undefined)?.shareToken;
-            if (typeof shareToken === 'string' && shareToken.trim().length > 0) {
+            if (isValidLinkShareToken(shareToken)) {
                 next();
                 return;
             }
@@ -165,19 +172,64 @@ export function createSocketIoRealtimeServer(
             return true;
         }
 
+        /**
+         * Wire-size estimate for a payload. Binary CRDT updates arrive as
+         * Buffer/Uint8Array — JSON.stringify would inflate them ~4-5x
+         * ({type:'Buffer',data:[...]}) and reject legitimate snapshots, so
+         * binary values are measured by their actual byte length.
+         */
+        function measurePayloadBytes(value: unknown, depth = 0): number {
+            if (value === null || value === undefined) {
+                return 4;
+            }
+            if (typeof value === 'string') {
+                return Buffer.byteLength(value) + 2;
+            }
+            if (typeof value === 'number') {
+                return String(value).length;
+            }
+            if (typeof value === 'boolean') {
+                return value ? 4 : 5;
+            }
+            if (value instanceof Uint8Array) {
+                return value.byteLength;
+            }
+            if (depth >= MAX_MEASURE_DEPTH) {
+                return MAX_MEASURE_DEPTH_BYTES;
+            }
+            if (Array.isArray(value)) {
+                let total = 2;
+                for (const item of value) {
+                    total += measurePayloadBytes(item, depth + 1) + 1;
+                }
+                return total;
+            }
+            if (typeof value === 'object') {
+                let total = 2;
+                for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+                    total += Buffer.byteLength(key) + 4 + measurePayloadBytes(item, depth + 1);
+                }
+                return total;
+            }
+            return 8;
+        }
+
         function payloadExceedsCap(event: SocketServerEvent, payload: unknown): boolean {
             const cap = (SOCKET_EVENT_BYTE_CAPS as Record<string, number | undefined>)[event];
             if (cap === undefined) {
                 return false;
             }
             try {
-                return Buffer.byteLength(JSON.stringify(payload ?? null)) > cap;
+                return measurePayloadBytes(payload) > cap;
             } catch {
                 return true;
             }
         }
-        const lastActivityWriteAtBySocketId = new Map<string, number>();
-        const activityJitterBySocketId = new Map<string, number>();
+        // Throttle window + jitter are per-connection state; socket.id is
+        // constant for the lifetime of this closure, so plain variables
+        // suffice (no maps needed).
+        let lastActivityWriteAt = 0;
+        let activityJitterMs: number | undefined;
         // Keeps the redis participant entry alive even for idle-but-connected
         // sockets: activity-based refresh alone would expire quiet users after
         // PARTICIPANT_TTL_MS and corrupt rosters / room-size checks. Started
@@ -189,7 +241,11 @@ export function createSocketIoRealtimeServer(
             }
             participantHeartbeat = setInterval(() => {
                 if (boardContext && socket.connected) {
-                    void participantsStore.touchParticipant(boardContext.boardId, socket.id);
+                    // A rejected heartbeat promise would crash the process as
+                    // an unhandled rejection; a missed beat is harmless (the
+                    // entry simply ages out of the TTL window).
+                    participantsStore.touchParticipant(boardContext.boardId, socket.id)
+                        .catch((err) => logger.warn({ err, socketId: socket.id }, '[socketio] participant heartbeat failed'));
                 } else if (!boardContext) {
                     stopParticipantHeartbeat();
                 }
@@ -267,14 +323,13 @@ export function createSocketIoRealtimeServer(
 
         function shouldWriteActivity(): boolean {
             const now = Date.now();
-            const lastWriteAt = lastActivityWriteAtBySocketId.get(socket.id) ?? 0;
-            const jitter = activityJitterBySocketId.get(socket.id)
-        ?? Math.floor(Math.random() * (activityWriteJitterMs + 1));
-            activityJitterBySocketId.set(socket.id, jitter);
+            const jitter = activityJitterMs
+                ?? Math.floor(Math.random() * (activityWriteJitterMs + 1));
+            activityJitterMs = jitter;
             const effectiveWindow = Math.max(0, activityWriteThrottleMs + jitter);
 
-            if ((now - lastWriteAt) >= effectiveWindow) {
-                lastActivityWriteAtBySocketId.set(socket.id, now);
+            if ((now - lastActivityWriteAt) >= effectiveWindow) {
+                lastActivityWriteAt = now;
                 return true;
             }
 
@@ -332,8 +387,8 @@ export function createSocketIoRealtimeServer(
         }
 
         function cleanupConnectionState(): void {
-            lastActivityWriteAtBySocketId.delete(socket.id);
-            activityJitterBySocketId.delete(socket.id);
+            lastActivityWriteAt = 0;
+            activityJitterMs = undefined;
             stopParticipantHeartbeat();
         }
 
@@ -379,6 +434,11 @@ export function createSocketIoRealtimeServer(
             }
         }
 
+        // Throttle drops on high-frequency streams (ticks/presence) must not
+        // amplify into an outbound error storm: the client learns about
+        // throttling at most once per spacing window.
+        let lastThrottleNoticeAt = 0;
+
         function registerHandler(event: SocketServerEvent, handler: (payload: unknown) => Promise<void>): void {
             if (event === SOCKET_RESERVED_EVENTS.DISCONNECT) {
                 socket.on(event, (payload: unknown) => {
@@ -398,7 +458,11 @@ export function createSocketIoRealtimeServer(
 
                 if (!consumeEventToken()) {
                     deps.metrics?.incrementCounter('socketio_throttled_events_total', 1, { event });
-                    safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Too many realtime events' });
+                    const now = Date.now();
+                    if (now - lastThrottleNoticeAt >= SOCKET_THROTTLE_ERROR_SPACING_MS) {
+                        lastThrottleNoticeAt = now;
+                        safeEmitToSelf(SOCKET_SERVER_EVENTS.SYNC_ERROR, { message: 'Too many realtime events' });
+                    }
                     return;
                 }
 

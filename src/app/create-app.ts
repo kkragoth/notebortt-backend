@@ -32,6 +32,14 @@ const PROBE_RATE_LIMIT_MAX = 240;
 const PROBE_RATE_LIMIT_WINDOW_MS = 60_000;
 const JSON_BODY_LIMIT = '1mb';
 
+/** Redis key prefixes for the shared rate-limit counters; distinct per
+ * limiter so budgets never drain each other. */
+export const RATE_LIMIT_STORE_PREFIXES = {
+    global: 'rl:',
+    auth: 'rl:auth:',
+    probe: 'rl:probe:',
+} as const;
+
 export const API_V1_PREFIX = '/api/v1';
 
 // Ops/infra surfaces stay unversioned; only the product API is versioned.
@@ -108,9 +116,9 @@ export function createApp(runtime: AppRuntime) {
     // entirely instead of tuning budgets, so production limits stay honest.
     const rateLimitingEnabled = !runtime.config.rateLimitDisabled;
 
-    const globalRateLimitStore = createRateLimitStore('rl:');
-    const authRateLimitStore = createRateLimitStore('rl:auth:');
-    const probeRateLimitStore = createRateLimitStore('rl:probe:');
+    const globalRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.global);
+    const authRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.auth);
+    const probeRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.probe);
 
     const globalLimiter = rateLimit({
         windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -174,7 +182,14 @@ export function createApp(runtime: AppRuntime) {
     app.get('/health', ...probeGuards, healthRoute(runtime.db, runtime.redis));
     app.get('/metrics', ...probeGuards, createMetricsRoute(runtime.metrics));
 
-    app.use('/debug', createDebugRouter(runtime));
+    app.use('/debug', ...probeGuards, createDebugRouter(runtime));
+    // The contract/UI surfaces are unauthenticated; they get probe-budget
+    // throttling like /health and /metrics instead of the global limiter's
+    // skip, so they cannot be hammered for free.
+    if (rateLimitingEnabled) {
+        app.use(['/openapi', '/openapi.json'], probeLimiter);
+        app.use('/swagger', probeLimiter);
+    }
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));
 
@@ -189,18 +204,27 @@ export function createApp(runtime: AppRuntime) {
         events: runtime.events,
     };
 
-    function mountModuleRouters(parent: express.Router) {
-        parent.use('/auth', ...(rateLimitingEnabled ? [authLimiter] : []), createAuthRouter(
+    function mountModuleRouters(parent: express.Router, countLegacyRequest?: () => void) {
+        // Router-scoped counter: only requests that actually enter a legacy
+        // product mount are counted (an app-level fall-through middleware
+        // would also count 404s and versioned method misses).
+        const legacyCounter: express.RequestHandler[] = countLegacyRequest
+            ? [(_req, _res, next) => {
+                countLegacyRequest();
+                next();
+            }]
+            : [];
+        parent.use('/auth', ...legacyCounter, ...(rateLimitingEnabled ? [authLimiter] : []), createAuthRouter(
             runtime.config,
             runtime.authService,
             runtime.userService,
             runtime.db,
             runtime.metrics,
         ));
-        parent.use('/users', createUserRouter(runtime.userService, runtime.authMiddleware));
-        parent.use('/', createBillingRouter(runtime.billingService, runtime.authMiddleware));
-        parent.use('/', createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware));
-        parent.use('/', createBoardRouter(boardDeps));
+        parent.use('/users', ...legacyCounter, createUserRouter(runtime.userService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createBillingRouter(runtime.billingService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createBoardRouter(boardDeps));
     }
 
     const apiV1 = express.Router();
@@ -210,12 +234,9 @@ export function createApp(runtime: AppRuntime) {
     if (runtime.config.enableLegacyApiRoutes) {
         logger.info('[API] legacy unversioned routes enabled (ENABLE_LEGACY_API_ROUTES=true)');
         // P3 gate input: measures real production reliance on the unversioned
-        // surface before the default flips to false.
-        app.use((req, res, next) => {
-            runtime.metrics.incrementCounter('legacy_requests_total');
-            next();
-        });
-        mountModuleRouters(app);
+        // surface before the default flips to false. Counting happens inside
+        // the mounts, so only matched legacy routes increment.
+        mountModuleRouters(app, () => runtime.metrics.incrementCounter('legacy_requests_total'));
     }
 
     app.use(jsonNotFoundHandler);

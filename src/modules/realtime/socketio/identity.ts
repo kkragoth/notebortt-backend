@@ -1,25 +1,7 @@
-import { ACCESS_TOKEN_COOKIE_NAME } from '../socketio/constants.js';
 import type { Socket } from 'socket.io';
 import type { SocketIdentity, SocketIoRealtimeDependencies } from '../socketio/types.js';
-
-// Production sets the access token under a __Host- prefixed cookie.
-const ACCESS_TOKEN_COOKIE_NAMES = [`__Host-${ACCESS_TOKEN_COOKIE_NAME}`, ACCESS_TOKEN_COOKIE_NAME];
-
-export function parseCookieHeader(raw: string | undefined): Record<string, string> {
-    if (!raw) {
-        return {};
-    }
-
-    const cookies: Record<string, string> = {};
-    for (const segment of raw.split(';')) {
-        const [name, ...rest] = segment.trim().split('=');
-        if (!name || rest.length === 0) {
-            continue;
-        }
-        cookies[name] = decodeURIComponent(rest.join('='));
-    }
-    return cookies;
-}
+import { ACCESS_TOKEN_COOKIE_NAMES } from '@/modules/auth/index.js';
+import { parseCookieHeader } from '@/shared/cookies.js';
 
 function readCookieToken(cookies: Record<string, string>): string | undefined {
     for (const name of ACCESS_TOKEN_COOKIE_NAMES) {

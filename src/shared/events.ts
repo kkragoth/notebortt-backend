@@ -93,6 +93,10 @@ export interface DeadLetterRecord {
     envelope: unknown
 }
 
+/**
+ * The full queue set (single source of truth for the shape — constructed in
+ * @/platform/jobs/queues.js, which imports the event types from here).
+ */
 export interface DomainEventQueueSet {
     mutations: Queue<DomainEventJobData>
     controlEvents: Queue<DomainEventJobData>
@@ -165,6 +169,14 @@ function createInProcessAppEventBus(): AppEventBus {
 
 const DEFAULT_CONSUMER_CONCURRENCY = 5;
 const DEFAULT_DLQ_SUMMARY_INTERVAL_MS = 60_000;
+/**
+ * Upper bound on a BullMQ enqueue. The jobs connection retries indefinitely
+ * (maxRetriesPerRequest:null is required by BullMQ), so without this an emit
+ * during a Redis outage would hang every producer — REST mutation handlers
+ * and socket tick/disconnect paths all await emit. Timing out here routes the
+ * failure through the normal degraded-delivery path instead.
+ */
+const DEFAULT_EMIT_TIMEOUT_MS = 5_000;
 
 /**
  * Fixed-window coalescing keyed on event+boardId: bursts collapse into one
@@ -180,6 +192,26 @@ const DEDUP_TTL_MS = {
 export interface AppEventEmitFailureInfo {
     event: AppEventName
     producerId: string
+}
+
+/** Bounds a promise so an indefinitely-retrying Redis cannot hang emit(). */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref();
+        promise.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
 }
 
 export interface AppEventJobFailureInfo {
@@ -201,6 +233,8 @@ export type AppEventBusOptions = {
     producerId: string
     /** Per-queue worker concurrency; pools stay isolated per queue. */
     consumerConcurrency?: number
+    /** Upper bound on one enqueue before it degrades to a failed delivery. */
+    emitTimeoutMs?: number
     onEnqueueFailed?: (error: Error, info: AppEventEmitFailureInfo) => void
     onJobFailed?: (info: AppEventJobFailureInfo) => void
     dlqSummaryIntervalMs?: number
@@ -215,6 +249,7 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
     const { connection, prefix, producerId, queues } = options;
     const concurrency = options.consumerConcurrency ?? DEFAULT_CONSUMER_CONCURRENCY;
     const dlqSummaryIntervalMs = options.dlqSummaryIntervalMs ?? DEFAULT_DLQ_SUMMARY_INTERVAL_MS;
+    const emitTimeoutMs = options.emitTimeoutMs ?? DEFAULT_EMIT_TIMEOUT_MS;
 
     const handlersByEvent = new Map<string, Set<(payload: unknown) => void | Promise<void>>>();
     const workers: Array<Worker<DomainEventJobData> | Worker<DeadLetterRecord>> = [];
@@ -304,14 +339,18 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
         const results = await Promise.allSettled(
             [...handlers].map((handler) => Promise.resolve(handler(payload))),
         );
-        for (const result of results) {
-            if (result.status === 'rejected') {
-                logger.error({ err: result.reason, event }, '[EventBus] handler failed');
-                // Throw after fanning out to every handler so one failing
-                // subscriber cannot starve the others; redelivery relies on
-                // idempotent handlers (same contract as the previous bus).
-                throw result.reason;
-            }
+        // Throw after fanning out to every handler so one failing subscriber
+        // cannot starve the others; redelivery relies on idempotent handlers
+        // (same contract as the previous bus). Every failure lands in the
+        // AggregateError so job-failure logs name all offending subscribers.
+        const failures = results
+            .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+            .map((result) => result.reason);
+        for (const failure of failures) {
+            logger.error({ err: failure, event }, '[EventBus] handler failed');
+        }
+        if (failures.length > 0) {
+            throw new AggregateError(failures, `[EventBus] ${failures.length} handler(s) failed for ${event}`);
         }
     }
 
@@ -403,12 +442,20 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
                 data: payload,
             };
             try {
-                await queue.add(event, { event, envelope, traceparent: injectTraceparent() } satisfies DomainEventJobData, {
-                    deduplication: {
-                        id: deduplicationId(event, payload),
-                        ttl: DEDUP_TTL_MS[event],
-                    },
-                });
+                await withTimeout(
+                    queue.add(
+                        event,
+                        { event, envelope, traceparent: injectTraceparent() } satisfies DomainEventJobData,
+                        {
+                            deduplication: {
+                                id: deduplicationId(event, payload),
+                                ttl: DEDUP_TTL_MS[event],
+                            },
+                        },
+                    ),
+                    emitTimeoutMs,
+                    `[EventBus] enqueue ${event}`,
+                );
             } catch (error) {
                 const err = error instanceof Error ? error : new Error(String(error));
                 logger.error({ err, event, producerId, queue: queue.name }, '[EventBus] enqueue failed (delivery degraded)');
@@ -432,6 +479,9 @@ function createBullMqAppEventBus(options: Extract<AppEventBusOptions, { transpor
             flushDlqSummary();
             const closing = workers.splice(0).map((worker) => worker.close());
             await Promise.all(closing);
+            // Allow a later `on()` to start fresh consumers instead of
+            // silently registering handlers with no worker behind them.
+            consumersStarted = false;
         },
     };
 }

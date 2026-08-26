@@ -10,14 +10,19 @@ RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
 mkdir -p "$BACKUP_DIR"
 OUT="$BACKUP_DIR/pg-$STAMP.dump"
+# Dump to a hidden temp name first: a mid-write failure leaves a partial
+# file that must never be restorable-looking (or match the pg-*.dump glob).
+TMP="$BACKUP_DIR/.pg-$STAMP.dump.partial"
+trap 'rm -f "$TMP"' EXIT INT TERM
 
 PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
     -h "${POSTGRES_HOST:-postgres}" \
     -U "${POSTGRES_USER:-notecanva}" \
     -d "${POSTGRES_DB:-notecanva}" \
     -Fc \
-    -f "$OUT"
+    -f "$TMP"
 
+mv "$TMP" "$OUT"
 echo "wrote $OUT"
 
 # Bound local retention so the disk cannot fill silently.

@@ -1,5 +1,6 @@
 import client from 'prom-client';
 import { logger } from '@/shared/logger.js';
+import { JOB_QUEUES } from '@/platform/jobs/queues.js';
 
 /**
  * Fixed, pre-registered Prometheus metrics with static label names.
@@ -31,13 +32,15 @@ const HISTOGRAM_HANDLER_BUCKETS = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0
 
 // Queues that exist today plus the P2a transport queues; depth/age gauges
 // pre-register every entry so dashboards see the full series set from day one.
-export const KNOWN_QUEUES = [
-    'board-persist-flush',
-    'board-maintenance',
-    'board-preview',
-    'board-mutations',
-    'board-control-events',
-] as const;
+// Names are referenced from JOB_QUEUES (the single owner of queue-name
+// literals); the DLQ is excluded — dlq_depth covers it separately.
+export const KNOWN_QUEUES: readonly string[] = [
+    JOB_QUEUES.boardPersistFlush,
+    JOB_QUEUES.boardMaintenance,
+    JOB_QUEUES.boardPreview,
+    JOB_QUEUES.domainEvents,
+    JOB_QUEUES.domainControlEvents,
+];
 
 export const METRIC_CATALOG = {
     redis_commands_total: {
@@ -174,7 +177,6 @@ export interface RuntimeMetrics {
     /** Registers an async sampler executed once per scrape before serialization. */
     registerCollector: (collector: () => Promise<void> | void) => void
     scrape: () => Promise<ScrapeResult>
-    getPromRegistry: () => client.Registry
 }
 
 type CounterSpec = Extract<MetricSpec, { type: 'counter' }>
@@ -215,6 +217,9 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
 
     // Per-app prefix isolates node/process metrics when several app registries
     // are scraped into one Prometheus; business metric names stay canonical.
+    // (collectDefaultMetrics starts its own internal sampling timer — this is
+    // standard prom-client process-metric behavior and exempt from the
+    // "no background timers for metrics" rule, which targets custom gauges.)
     if (options.app) {
         client.collectDefaultMetrics({ register: registry, prefix: `${options.app}_` });
     } else if (process.env.NODE_ENV !== 'test') {
@@ -241,19 +246,22 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
         name: MetricName,
         allowed: readonly string[] | undefined,
         labels?: MetricLabels,
-    ): Record<string, string> | undefined {
+    ): { drop: true } | { drop: false; labels?: Record<string, string> } {
         if (!allowed || allowed.length === 0) {
             if (labels && Object.keys(labels).length > 0) {
                 warnOnce(`metric ${name} declares no labels; dropping supplied labels`);
             }
-            return undefined;
+            return { drop: false };
         }
         const sanitized: Record<string, string> = {};
         for (const key of allowed) {
             const value = labels?.[key];
             if (value === undefined) {
-                warnOnce(`metric ${name} missing declared label "${key}"`);
-                return undefined;
+                // A missing declared label must DROP the update: falling back
+                // to the unlabeled series would register a phantom aggregate
+                // next to the labeled ones.
+                warnOnce(`metric ${name} missing declared label "${key}"; update dropped`);
+                return { drop: true };
             }
             sanitized[key] = String(value);
         }
@@ -262,7 +270,7 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
                 warnOnce(`metric ${name} got undeclared label "${key}"; stripped`);
             }
         }
-        return sanitized;
+        return { drop: false, labels: sanitized };
     }
 
     function promCounter(name: MetricName): client.Counter<string> {
@@ -325,8 +333,11 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
     function incrementCounter(name: MetricName, value = 1, labels?: MetricLabels): void {
         try {
             const sanitized = sanitizeLabels(name, counterSpec(name).labelNames, labels);
-            if (sanitized) {
-                promCounter(name).inc(sanitized, value);
+            if (sanitized.drop) {
+                return;
+            }
+            if (sanitized.labels) {
+                promCounter(name).inc(sanitized.labels, value);
             } else {
                 promCounter(name).inc(value);
             }
@@ -346,8 +357,11 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
     function observeDuration(name: HistogramMetricName, seconds: number, labels?: MetricLabels): void {
         try {
             const sanitized = sanitizeLabels(name, histogramSpec(name).labelNames, labels);
-            if (sanitized) {
-                promHistogram(name).observe(sanitized, seconds);
+            if (sanitized.drop) {
+                return;
+            }
+            if (sanitized.labels) {
+                promHistogram(name).observe(sanitized.labels, seconds);
             } else {
                 promHistogram(name).observe(seconds);
             }
@@ -359,8 +373,11 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
     function setGauge(name: GaugeMetricName, value: number, labels?: MetricLabels): void {
         try {
             const sanitized = sanitizeLabels(name, gaugeSpec(name).labelNames, labels);
-            if (sanitized) {
-                promGauge(name).set(sanitized, value);
+            if (sanitized.drop) {
+                return;
+            }
+            if (sanitized.labels) {
+                promGauge(name).set(sanitized.labels, value);
             } else {
                 promGauge(name).set(value);
             }
@@ -378,7 +395,9 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
     }
 
     async function scrape(): Promise<ScrapeResult> {
-        const results = await Promise.allSettled(collectors.map((collector) => collector()));
+        // Promise.resolve().then(...) keeps a synchronously-throwing
+        // collector inside allSettled instead of failing the whole scrape.
+        const results = await Promise.allSettled(collectors.map((collector) => Promise.resolve().then(collector)));
         results.forEach((result, index) => {
             if (result.status === 'rejected') {
                 logger.warn({ err: result.reason, collectorIndex: index }, '[Metrics] collector failed');
@@ -406,6 +425,5 @@ export function createRuntimeMetrics(options: RuntimeMetricsOptions = {}): Runti
         logStructured,
         registerCollector,
         scrape,
-        getPromRegistry: () => registry,
     };
 }

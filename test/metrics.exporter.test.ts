@@ -39,6 +39,19 @@ describe('metrics exporter', () => {
         expect(body).toContain('flush_rows_persisted_total 3');
     });
 
+    it('drops updates with a missing declared label instead of registering an unlabeled series', async () => {
+        const metrics = createRuntimeMetrics();
+        // bullmq_jobs_failed_total declares { queue }; omitting it must not
+        // produce a phantom unlabeled aggregate next to labeled series.
+        metrics.incrementCounter('bullmq_jobs_failed_total', 5);
+        metrics.incrementCounter('bullmq_jobs_failed_total', 2, { queue: 'board-preview' });
+
+        const { body } = await metrics.scrape();
+        const lines = body.split('\n').filter((line) => line.startsWith('bullmq_jobs_failed_total{'));
+        expect(lines).toEqual(['bullmq_jobs_failed_total{queue="board-preview"} 2']);
+        expect(body).toContain('bullmq_jobs_failed_total{queue="board-preview"} 2');
+    });
+
     it('records summaries, histograms and gauges through the fixed catalog', async () => {
         const metrics = createRuntimeMetrics();
 

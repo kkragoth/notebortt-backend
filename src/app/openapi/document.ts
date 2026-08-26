@@ -1,6 +1,6 @@
-import { createDocument  } from 'zod-openapi';
+import { createDocument } from 'zod-openapi';
 import { z } from 'zod';
-import type {oas31} from 'zod-openapi';
+import type { oas31 } from 'zod-openapi';
 import {
     authCallbackQuerySchema,
     boardAccessQuerySchema,
@@ -29,32 +29,6 @@ export const healthResponseSchema = z.object({
         timeSinceLastDirtyMs: z.number().int().nonnegative().nullable().meta({ example: null }),
     }),
 }).meta({ id: 'HealthResponse' });
-
-const debugStateResponseSchema = z.object({
-    nodeEnv: z.enum(['development', 'production', 'test']),
-    postgres: z.object({
-        counts: z.object({
-            users: z.number().int(),
-            workspaces: z.number().int(),
-            boards: z.number().int(),
-            elements: z.number().int(),
-            mutations: z.number().int(),
-        }).nullable(),
-        recentBoards: z.array(z.record(z.string(), z.unknown())),
-    }),
-    redis: z.object({
-        dbSize: z.number().int(),
-        keyPattern: z.string(),
-        sampledKeys: z.array(z.string()),
-        boardState: z.object({
-            sequence: z.string().nullable(),
-            clientCount: z.number().int(),
-            elementCount: z.number().int(),
-            lastActive: z.string().nullable(),
-        }).nullable(),
-        memory: z.array(z.string()),
-    }),
-}).meta({ id: 'DebugStateResponse' });
 
 const userProfileSchema = z.object({
     id: z.string(),
@@ -90,6 +64,16 @@ const invitesListSchema = z.object({
 const boardsListSchema = z.object({
     boards: z.array(boardResponseSchema),
 });
+
+const workspacesListSchema = z.object({
+    workspaces: z.record(z.string(), z.unknown()),
+}).meta({ id: 'WorkspacesList' });
+
+const workspaceBoardsSchema = z.object({
+    boards: z.record(z.string(), z.unknown()),
+}).meta({ id: 'WorkspaceBoards' });
+
+const boardMemberSchema = z.record(z.string(), z.unknown()).meta({ id: 'BoardMember' });
 
 /** Provider-shaped payloads (Stripe session URLs, portal redirects). */
 const providerPayloadSchema = z.record(z.string(), z.unknown());
@@ -135,6 +119,15 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                 },
             },
             '/workspaces': {
+                get: {
+                    summary: 'List workspaces for the authenticated user',
+                    responses: {
+                        '200': {
+                            description: 'Workspace records keyed by id',
+                            content: { 'application/json': { schema: workspacesListSchema } },
+                        },
+                    },
+                },
                 post: {
                     summary: 'Create workspace',
                     requestBody: {
@@ -198,6 +191,15 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                     requestParams: {
                         cookie: refreshTokenCookieSchema,
                     },
+                    requestBody: {
+                        // Cookie-less clients (native apps) may present the
+                        // refresh token in the JSON body instead.
+                        content: {
+                            'application/json': {
+                                schema: z.object({ refreshToken: z.string().min(1).optional() }),
+                            },
+                        },
+                    },
                     responses: {
                         '200': { description: 'Rotates auth cookies' },
                         '401': { description: 'Missing or invalid refresh token' },
@@ -216,6 +218,23 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                 },
             },
             '/workspaces/{wid}/invitations': {
+                get: {
+                    summary: 'List workspace invitations',
+                    requestParams: {
+                        path: z.object({
+                            wid: z.string().meta({
+                                description: 'Workspace id',
+                                example: 'workspace-123',
+                            }),
+                        }),
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Invitation records keyed by id',
+                            content: { 'application/json': { schema: invitesListSchema } },
+                        },
+                    },
+                },
                 post: {
                     summary: 'Invite a workspace member',
                     requestParams: {
@@ -237,6 +256,24 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                 },
             },
             '/workspaces/{wid}/boards': {
+                get: {
+                    summary: 'List boards in a workspace',
+                    requestParams: {
+                        path: z.object({
+                            wid: z.string().meta({
+                                description: 'Workspace id',
+                                example: 'workspace-123',
+                            }),
+                        }),
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Board records keyed by id',
+                            content: { 'application/json': { schema: workspaceBoardsSchema } },
+                        },
+                        '403': { description: 'Not a workspace member' },
+                    },
+                },
                 post: {
                     summary: 'Create board',
                     requestParams: {
@@ -277,6 +314,39 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         '404': { description: 'Board not found' },
                     },
                 },
+                patch: {
+                    summary: 'Rename a board',
+                    requestParams: {
+                        path: z.object({
+                            id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+                        }),
+                    },
+                    requestBody: {
+                        content: {
+                            'application/json': { schema: createBoardBodySchema },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Renamed board',
+                            content: { 'application/json': { schema: boardResponseSchema } },
+                        },
+                        '403': { description: 'Insufficient workspace role' },
+                        '404': { description: 'Board not found' },
+                    },
+                },
+                delete: {
+                    summary: 'Delete a board and flush its realtime state',
+                    requestParams: {
+                        path: z.object({
+                            id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+                        }),
+                    },
+                    responses: {
+                        '204': { description: 'Board deleted' },
+                        '403': { description: 'Insufficient workspace role' },
+                    },
+                },
             },
             '/boards/{id}/invites': {
                 post: {
@@ -315,6 +385,19 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                     },
                     responses: {
                         '204': { description: 'Member updated' },
+                    },
+                },
+                delete: {
+                    summary: 'Remove a board member',
+                    requestParams: {
+                        path: z.object({
+                            id: z.string().meta({ description: 'Board id', example: 'board-123' }),
+                            memberId: z.string().meta({ description: 'Board member id', example: 'member-123' }),
+                        }),
+                    },
+                    responses: {
+                        '204': { description: 'Member removed' },
+                        '403': { description: 'Insufficient workspace role' },
                     },
                 },
             },
@@ -431,7 +514,8 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ wid: z.string().uuid(), memberId: z.string().uuid() }),
                     },
                     responses: {
-                        '200': { description: 'Member removed' },
+                        '204': { description: 'Member removed' },
+                        '404': { description: 'Member not found' },
                     },
                 },
             },
@@ -466,9 +550,9 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
             '/boards': {
                 get: {
                     summary: 'List boards visible to the authenticated user',
-                    requestParams: {
-                        query: boardAccessQuerySchema,
-                    },
+                    // The handler parses no query today; documenting
+                    // boardAccessQuerySchema here advertised shareToken support
+                    // that does not exist on this route.
                     responses: {
                         '200': {
                             description: 'Board list',
@@ -569,12 +653,10 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                     summary: 'Report presence state for a viewer session',
                     requestParams: {
                         path: z.object({ id: z.string() }),
+                        query: boardAccessQuerySchema,
                     },
                     responses: {
-                        '200': {
-                            description: 'Presence accepted',
-                            content: { 'application/json': { schema: z.record(z.string(), z.unknown()) } },
-                        },
+                        '204': { description: 'Presence accepted' },
                     },
                 },
             },
@@ -583,9 +665,10 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                     summary: 'End a viewer presence session',
                     requestParams: {
                         path: z.object({ id: z.string(), sessionId: z.string() }),
+                        query: boardAccessQuerySchema,
                     },
                     responses: {
-                        '200': { description: 'Presence session removed' },
+                        '204': { description: 'Presence session removed' },
                     },
                 },
             },
@@ -610,7 +693,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ id: z.string() }),
                     },
                     responses: {
-                        '200': {
+                        '201': {
                             description: 'The duplicated board',
                             content: { 'application/json': { schema: boardResponseSchema } },
                         },
@@ -650,10 +733,8 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ id: z.string() }),
                     },
                     responses: {
-                        '200': {
-                            description: 'Leave confirmation',
-                            content: { 'application/json': { schema: z.record(z.string(), z.unknown()) } },
-                        },
+                        '204': { description: 'Left the board' },
+                        '400': { description: 'Workspace members leave via workspace membership instead' },
                     },
                 },
             },
@@ -679,9 +760,9 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         content: { 'application/json': { schema: updateBoardMemberPermissionBodySchema } },
                     },
                     responses: {
-                        '200': {
-                            description: 'Board member records after add',
-                            content: { 'application/json': { schema: membersListSchema } },
+                        '201': {
+                            description: 'The created board member',
+                            content: { 'application/json': { schema: boardMemberSchema } },
                         },
                     },
                 },
@@ -693,10 +774,8 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ token: z.string().min(1) }),
                     },
                     responses: {
-                        '200': {
-                            description: 'Accepted board invite result',
-                            content: { 'application/json': { schema: z.record(z.string(), z.unknown()) } },
-                        },
+                        '204': { description: 'Invite accepted' },
+                        '404': { description: 'Invitation not found' },
                     },
                 },
             },
@@ -721,7 +800,8 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ token: z.string().min(1) }),
                     },
                     responses: {
-                        '200': { description: 'Invite removed' },
+                        '204': { description: 'Invite removed' },
+                        '404': { description: 'Invitation not found' },
                     },
                 },
             },
@@ -732,7 +812,7 @@ export function createOpenApiDocument(): oas31.OpenAPIObject {
                         path: z.object({ id: z.string(), inviteId: z.string() }),
                     },
                     responses: {
-                        '200': { description: 'Invite revoked' },
+                        '204': { description: 'Invite revoked' },
                     },
                 },
             },

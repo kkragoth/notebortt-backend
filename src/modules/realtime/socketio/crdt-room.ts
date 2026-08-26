@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
+import { SYSTEM_ACTOR_IDS } from '../socketio/constants.js';
 import type { BoardStateService, Mutation, MutationProcessor , PersistedElementChange  } from '@/modules/collaboration/index.js';
 import { MutationType } from '@/modules/collaboration/index.js';
+import { logger } from '@/shared/logger.js';
 
 const DEFAULT_CRDT_DEBOUNCE_MS = 400;
 const DEFAULT_CRDT_MAX_WAIT_MS = 1600;
@@ -46,7 +48,7 @@ export function createCrdtRoomStore(
             debounceTimer: null,
             maxWaitTimer: null,
             flushStartedAt: null,
-            lastEditorUserId: 'system:socketio',
+            lastEditorUserId: SYSTEM_ACTOR_IDS.crdt,
         };
 
         moves.observe((event) => {
@@ -121,16 +123,18 @@ export function createCrdtRoomStore(
             clearTimeout(room.debounceTimer);
         }
 
+        // Timer callbacks run detached: log rejections instead of letting
+        // them crash the process as unhandled rejections.
         room.debounceTimer = setTimeout(() => {
             room.debounceTimer = null;
-            void flush(boardId);
+            flush(boardId).catch((err) => logger.error({ err, boardId }, '[CrdtRoom] flush failed'));
         }, debounceMs);
 
         if (!room.maxWaitTimer) {
             room.flushStartedAt = Date.now();
             room.maxWaitTimer = setTimeout(() => {
                 room.maxWaitTimer = null;
-                void flush(boardId);
+                flush(boardId).catch((err) => logger.error({ err, boardId }, '[CrdtRoom] max-wait flush failed'));
             }, maxWaitMs);
         }
     }

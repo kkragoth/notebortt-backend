@@ -29,10 +29,25 @@ afterAll(async () => {
     await closeFixtures();
 });
 
+const HTTP_OPERATION_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
+
+/** Flattens an OpenAPI document into a `METHOD /path` set (method-aware). */
+function documentedOperations(document: ReturnType<typeof createOpenApiDocument>): Set<string> {
+    const operations = new Set<string>();
+    for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
+        for (const method of Object.keys(pathItem)) {
+            if (HTTP_OPERATION_METHODS.has(method)) {
+                operations.add(`${method.toUpperCase()} ${path}`);
+            }
+        }
+    }
+    return operations;
+}
+
 describe('openapi contract', () => {
     it('documents every live product route and vice versa', () => {
         const document = createOpenApiDocument();
-        const documentedPaths = new Set(Object.keys(document.paths ?? {}));
+        const documentedOps = documentedOperations(document);
 
         // The legacy unversioned mirror mounts the same product routes a
         // second time without the prefix; contract-check the canonical one.
@@ -46,14 +61,19 @@ describe('openapi contract', () => {
 
         expect(canonicalProductRoutes.length).toBeGreaterThan(20);
 
-        const undocumented = canonicalProductRoutes.filter((route) => !documentedPaths.has(route.path));
+        // Method-aware: a GET on a path must not satisfy a missing PATCH.
+        const undocumented = canonicalProductRoutes.filter(
+            (route) => !documentedOps.has(`${route.method} ${route.path}`),
+        );
 
-        const deadDocumented = [...documentedPaths].filter((path) => {
-            if (INTERNAL_ROUTE_PATHS.has(path)) {
+        const liveOperationKeys = new Set(allLiveRoutes.map((route) => `${route.method} ${route.path}`));
+        const deadDocumented = [...documentedOps].filter((op) => {
+            const opPath = op.slice(op.indexOf(' ') + 1);
+            if (INTERNAL_ROUTE_PATHS.has(opPath)) {
                 return false;
             }
             // Documented ops surfaces (/health) mount outside /api/v1.
-            return !allLiveRoutes.some((route) => route.path === path);
+            return !liveOperationKeys.has(op);
         });
 
         expect(

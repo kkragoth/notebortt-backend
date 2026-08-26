@@ -44,6 +44,15 @@ const SCHEMAS = [
     ['authCallbackQuerySchema', authCallbackQuerySchema],
 ] as const;
 
+// Inputs no valid schema can meaningfully accept; asserted one by one.
+// (Extra-key objects are excluded: lenient object schemas legitimately strip
+// unknown keys rather than rejecting.)
+const CLEAR_CUT_GARBAGE: Array<() => unknown> = [
+    () => null,
+    () => undefined,
+    () => 'x'.repeat(64 * 1024),
+];
+
 describe('schema boundary fuzzing', () => {
     for (const [name, schema] of SCHEMAS) {
         it(`rejects hostile inputs without throwing: ${name}`, () => {
@@ -61,6 +70,17 @@ describe('schema boundary fuzzing', () => {
             }
             // Every schema must reject the clear-cut garbage at minimum.
             expect(rejected).toBeGreaterThan(0);
+
+            // Individually assert the unambiguous rejects so a schema that
+            // accepts most of the barrage cannot ride in on the aggregate.
+            for (const produce of CLEAR_CUT_GARBAGE) {
+                const result = parseWithSchema(schema, produce());
+                if (!result.success) {
+                    expect(result.error.error.length).toBeGreaterThan(0);
+                } else {
+                    throw new Error(`${name} accepted clear-cut garbage: ${JSON.stringify(String(produce()))}`);
+                }
+            }
         });
     }
 
