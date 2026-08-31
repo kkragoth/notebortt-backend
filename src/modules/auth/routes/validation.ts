@@ -1,12 +1,15 @@
-import {  z } from 'zod';
+import { z } from 'zod';
 import type {ZodTypeAny} from 'zod';
 import type { Request, Response } from 'express';
 import { sendBadRequest } from '@/shared/http.js';
 import { parseWithSchema } from '@/shared/validation.js';
 
-const emptyParamsSchema = z.object({}).passthrough();
-const emptyQuerySchema = z.object({}).passthrough();
-const emptyBodySchema = z.object({}).passthrough();
+// Strict empty schemas: "validated" routes reject unexpected params/query/
+// body fields instead of letting them pass through untouched. Shared so the
+// per-route modules do not re-declare drifting copies.
+export const emptyParamsSchema = z.object({}).strict();
+export const emptyQuerySchema = z.object({}).strict();
+export const emptyBodySchema = z.object({}).strict();
 
 interface ValidationSchemas {
   params?: ZodTypeAny

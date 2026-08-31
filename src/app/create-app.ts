@@ -5,10 +5,10 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { pinoHttp } from 'pino-http';
 import { RedisStore } from 'rate-limit-redis';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import type { RedisReply, SendCommandFn } from 'rate-limit-redis';
-import type { Queue } from 'bullmq';
 import type { AppRuntime } from '@/app/runtime.js';
-import { createCorsMiddleware } from '@/shared/cors.js';
+import { createCorsMiddleware, parseAllowedOrigins } from '@/shared/cors.js';
 import { logger } from '@/shared/logger.js';
 import { createAuthRouter } from '@/modules/auth/index.js';
 import { createUserRouter } from '@/modules/users/index.js';
@@ -18,7 +18,6 @@ import { createBillingRouter, createBillingWebhookRouter } from '@/modules/billi
 import { createDebugRouter } from '@/app/debug.routes.js';
 import { healthRoute, livenessRoute } from '@/app/health.routes.js';
 import { createMetricsRoute } from '@/app/metrics.routes.js';
-import { BULL_BOARD_BASE_PATH, createBasicAuthGate, createBullBoardRouter } from '@/app/bull-board.routes.js';
 import { createOpenApiRouter } from '@/app/openapi.routes.js';
 import { createSwaggerRouter } from '@/app/swagger.routes.js';
 import { errorHandler, jsonNotFoundHandler } from '@/shared/errors.js';
@@ -27,12 +26,26 @@ const GLOBAL_RATE_LIMIT_MAX = 300;
 const GLOBAL_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+// Generous on purpose: orchestrator probes (15s HEALTHCHECK cadence) must
+// never be throttled, while abusive loops stay bounded.
+const PROBE_RATE_LIMIT_MAX = 240;
+const PROBE_RATE_LIMIT_WINDOW_MS = 60_000;
 const JSON_BODY_LIMIT = '1mb';
+
+/** Redis key prefixes for the shared rate-limit counters; distinct per
+ * limiter so budgets never drain each other. */
+export const RATE_LIMIT_STORE_PREFIXES = {
+    global: 'rl:',
+    auth: 'rl:auth:',
+    probe: 'rl:probe:',
+} as const;
 
 export const API_V1_PREFIX = '/api/v1';
 
 // Ops/infra surfaces stay unversioned; only the product API is versioned.
 const UNVERSIONED_PATHS = ['/health', '/metrics', '/debug', '/openapi', '/swagger'];
+
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function shouldLogRequest(url: string | undefined): boolean {
     if (!url) return false;
@@ -40,12 +53,7 @@ function shouldLogRequest(url: string | undefined): boolean {
     return !UNVERSIONED_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-export interface CreateAppOptions {
-    /** Lazily resolved queues to render on Bull Board alongside the preview queue. */
-    bullBoardQueues?: () => Queue[]
-}
-
-export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
+export function createApp(runtime: AppRuntime) {
     const app = express();
 
     app.disable('x-powered-by');
@@ -77,6 +85,17 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
     app.use(createCorsMiddleware(runtime.config.corsOrigin));
     app.use(cookieParser());
 
+    // Correlate the pino request id onto the active trace span (5.4) so
+    // logs and traces line up even when no traceparent was inbound.
+    app.use((req, res, next) => {
+        const span = trace.getSpan(otelContext.active());
+        const requestId = res.getHeader('x-request-id');
+        if (span && typeof requestId === 'string') {
+            span.setAttribute('x-request-id', requestId);
+        }
+        next();
+    });
+
     const rateLimitSendCommand: SendCommandFn = (...args: string[]) =>
         runtime.redis.call(...(args as [string, ...string[]])) as Promise<RedisReply>;
 
@@ -93,8 +112,13 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
             : undefined;
     }
 
-    const globalRateLimitStore = createRateLimitStore('rl:');
-    const authRateLimitStore = createRateLimitStore('rl:auth:');
+    // Bench/load-test escape hatch (RATE_LIMIT_DISABLED): skip both limiters
+    // entirely instead of tuning budgets, so production limits stay honest.
+    const rateLimitingEnabled = !runtime.config.rateLimitDisabled;
+
+    const globalRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.global);
+    const authRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.auth);
+    const probeRateLimitStore = createRateLimitStore(RATE_LIMIT_STORE_PREFIXES.probe);
 
     const globalLimiter = rateLimit({
         windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -116,40 +140,56 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
         passOnStoreError: true,
         ...(authRateLimitStore ? { store: authRateLimitStore } : {}),
     });
+    const probeLimiter = rateLimit({
+        windowMs: PROBE_RATE_LIMIT_WINDOW_MS,
+        limit: PROBE_RATE_LIMIT_MAX,
+        standardHeaders: 'draft-8',
+        legacyHeaders: false,
+        passOnStoreError: true,
+        ...(probeRateLimitStore ? { store: probeRateLimitStore } : {}),
+    });
 
-    app.use(globalLimiter);
+    // CSRF defense-in-depth for cookie-authenticated state changes: browsers
+    // always attach Origin on cross-site POST/PUT/PATCH/DELETE, so a forged
+    // request from a foreign origin is rejected even if cookies ride along.
+    // Non-browser clients (curl, probes) send no Origin and pass through.
+    const originCheck = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        const origin = req.headers.origin;
+        if (origin !== undefined && STATE_CHANGING_METHODS.has(req.method)) {
+            const allowedOrigins = parseAllowedOrigins(runtime.config.corsOrigin);
+            if (!allowedOrigins.includes(origin)) {
+                res.status(403).json({ error: 'Untrusted origin' });
+                return;
+            }
+        }
+        next();
+    };
+    app.use(originCheck);
+
+    if (rateLimitingEnabled) {
+        app.use(globalLimiter);
+    }
 
     // Stripe webhook must see the raw body, so it stays before express.json().
     // It also stays unversioned: the URL is registered in the Stripe dashboard.
     app.use('/', createBillingWebhookRouter(runtime.billingService));
     app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-    app.get('/health/live', livenessRoute);
-    app.get('/health/ready', healthRoute(runtime.db, runtime.redis));
+    const probeGuards = rateLimitingEnabled ? [probeLimiter] : [];
+    app.get('/health/live', ...probeGuards, livenessRoute);
+    app.get('/health/ready', ...probeGuards, healthRoute(runtime.db, runtime.redis));
     // Back-compat alias used by Docker HEALTHCHECK and existing probes.
-    app.get('/health', healthRoute(runtime.db, runtime.redis));
-    app.get('/metrics', createMetricsRoute(runtime.metrics));
+    app.get('/health', ...probeGuards, healthRoute(runtime.db, runtime.redis));
+    app.get('/metrics', ...probeGuards, createMetricsRoute(runtime.metrics));
 
-    if (runtime.config.enableBullBoard) {
-        const { bullBoardUsername, bullBoardPassword, nodeEnv } = runtime.config;
-        const queues = () => [
-            runtime.previewJobService.getQueue(),
-            ...(options.bullBoardQueues?.() ?? []),
-        ];
-        if (bullBoardPassword) {
-            app.use(
-                BULL_BOARD_BASE_PATH,
-                createBasicAuthGate(bullBoardUsername, bullBoardPassword),
-                createBullBoardRouter(queues()),
-            );
-        } else if (nodeEnv === 'production') {
-            logger.error('[BullBoard] enabled in production without BULL_BOARD_PASSWORD — refusing to mount');
-        } else {
-            logger.warn('[BullBoard] mounted WITHOUT auth: set BULL_BOARD_PASSWORD to lock it down');
-            app.use(BULL_BOARD_BASE_PATH, createBullBoardRouter(queues()));
-        }
+    app.use('/debug', ...probeGuards, createDebugRouter(runtime));
+    // The contract/UI surfaces are unauthenticated; they get probe-budget
+    // throttling like /health and /metrics instead of the global limiter's
+    // skip, so they cannot be hammered for free.
+    if (rateLimitingEnabled) {
+        app.use(['/openapi', '/openapi.json'], probeLimiter);
+        app.use('/swagger', probeLimiter);
     }
-    app.use('/debug', createDebugRouter(runtime));
     app.use('/', createOpenApiRouter(runtime.config));
     app.use('/swagger', createSwaggerRouter(runtime.config));
 
@@ -164,17 +204,27 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
         events: runtime.events,
     };
 
-    function mountModuleRouters(parent: express.Router) {
-        parent.use('/auth', authLimiter, createAuthRouter(
+    function mountModuleRouters(parent: express.Router, countLegacyRequest?: () => void) {
+        // Router-scoped counter: only requests that actually enter a legacy
+        // product mount are counted (an app-level fall-through middleware
+        // would also count 404s and versioned method misses).
+        const legacyCounter: express.RequestHandler[] = countLegacyRequest
+            ? [(_req, _res, next) => {
+                countLegacyRequest();
+                next();
+            }]
+            : [];
+        parent.use('/auth', ...legacyCounter, ...(rateLimitingEnabled ? [authLimiter] : []), createAuthRouter(
             runtime.config,
             runtime.authService,
             runtime.userService,
             runtime.db,
+            runtime.metrics,
         ));
-        parent.use('/users', createUserRouter(runtime.userService, runtime.authMiddleware));
-        parent.use('/', createBillingRouter(runtime.billingService, runtime.authMiddleware));
-        parent.use('/', createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware));
-        parent.use('/', createBoardRouter(boardDeps));
+        parent.use('/users', ...legacyCounter, createUserRouter(runtime.userService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createBillingRouter(runtime.billingService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createWorkspaceRouter(runtime.workspaceService, runtime.authMiddleware));
+        parent.use('/', ...legacyCounter, createBoardRouter(boardDeps));
     }
 
     const apiV1 = express.Router();
@@ -183,7 +233,10 @@ export function createApp(runtime: AppRuntime, options: CreateAppOptions = {}) {
 
     if (runtime.config.enableLegacyApiRoutes) {
         logger.info('[API] legacy unversioned routes enabled (ENABLE_LEGACY_API_ROUTES=true)');
-        mountModuleRouters(app);
+        // P3 gate input: measures real production reliance on the unversioned
+        // surface before the default flips to false. Counting happens inside
+        // the mounts, so only matched legacy routes increment.
+        mountModuleRouters(app, () => runtime.metrics.incrementCounter('legacy_requests_total'));
     }
 
     app.use(jsonNotFoundHandler);

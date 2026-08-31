@@ -82,7 +82,16 @@ async function createHarness(): Promise<Harness> {
     };
 
     createSocketIoRealtimeServer(server, {
-        authService: { verifyAccessToken: vi.fn() } as any,
+        // Realistic gate stub: only 'test-token' verifies; anything else
+        // throws so the handshake cannot silently admit every credential.
+        authService: {
+            verifyAccessToken: vi.fn((token: string) => {
+                if (token === 'test-token') {
+                    return { sub: 'user-1' };
+                }
+                throw new Error('invalid token');
+            }),
+        } as any,
         userService: { getUserById: vi.fn() } as any,
         boardService: boardService as any,
         boardStateService: boardStateService as any,
@@ -90,6 +99,7 @@ async function createHarness(): Promise<Harness> {
         events: {
             emit: vi.fn(),
             on: vi.fn().mockReturnValue(() => undefined),
+            close: vi.fn().mockResolvedValue(undefined),
         },
         pubRedis,
         subRedis,
@@ -126,10 +136,11 @@ async function createHarness(): Promise<Harness> {
     };
 }
 
-async function connectSocket(harness: Harness): Promise<Socket> {
+async function connectSocket(harness: Harness, auth: Record<string, unknown> = { token: 'test-token' }): Promise<Socket> {
     const socket = ioClient(harness.origin, {
         transports: ['websocket'],
         extraHeaders: { origin: 'http://localhost:3000' },
+        auth,
     });
     harness.sockets.push(socket);
     await once(socket, SOCKET_RESERVED_EVENTS.CONNECT);
@@ -216,19 +227,19 @@ describe('createSocketIoRealtimeServer', () => {
         activeHarness = await createHarness();
         const first = await connectSocket(activeHarness);
 
-        first.emit('board:join', { boardId: 'board-3', lastSequence: 0, sessionId: 'session-old' });
-        await once(first, 'board:snapshot');
+        first.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-3', lastSequence: 0, sessionId: 'session-old' });
+        await once(first, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
 
-        const userLeftPromise = once(first, 'disconnect');
+        const userLeftPromise = once(first, SOCKET_RESERVED_EVENTS.DISCONNECT);
         first.disconnect();
         await userLeftPromise;
 
         const next = await connectSocket(activeHarness);
         const unexpectedJoined = vi.fn();
 
-        next.on('USER_JOINED', unexpectedJoined);
-        next.emit('board:join', { boardId: 'board-3', lastSequence: 0, sessionId: 'session-new' });
-        await once(next, 'board:snapshot');
+        next.on(SOCKET_SERVER_EVENTS.USER_JOINED, unexpectedJoined);
+        next.emit(SOCKET_CLIENT_EVENTS.BOARD_JOIN, { boardId: 'board-3', lastSequence: 0, sessionId: 'session-new' });
+        await once(next, SOCKET_SERVER_EVENTS.BOARD_SNAPSHOT);
         await new Promise((resolve) => setTimeout(resolve, 25));
 
         expect(unexpectedJoined).not.toHaveBeenCalled();

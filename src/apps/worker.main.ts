@@ -1,49 +1,86 @@
 import 'dotenv/config';
 import http from 'node:http';
 import { loadConfig } from '@/shared/config.js';
-import { createBackgroundJobs } from '@/app/background-jobs.js';
-import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
-import { APP_EVENTS } from '@/shared/events.js';
 import { logger } from '@/shared/logger.js';
+import { setupTracing } from '@/platform/observability/tracing.js';
 
 /**
  * Worker app. Owns all BullMQ processing (repeatable board persistence +
- * cleanup schedules, preview rendering) and consumes cross-process domain
- * events so preview enqueues react to mutations emitted by api/realtime.
+ * cleanup schedules, preview rendering) and consumes the cross-app domain
+ * event queues so preview enqueues react to mutations emitted by
+ * api/realtime. The Bull Board dashboard lives here too — this is the only
+ * app allowed to open handles to worker-owned queues.
  *
- * Requires EVENT_BUS_MODE=stream: the runtime's event bus then publishes and
- * consumes over a Redis Stream instead of in-process callbacks.
+ * Requires EVENT_BUS_TRANSPORT=bullmq: the runtime's event bus then emits
+ * and consumes over dedicated queues instead of in-process callbacks.
  *
- * Serves a metrics-only HTTP surface (METRICS_PORT, default 3002) so
- * Prometheus can scrape it and compose has a healthcheck target.
+ * Serves a metrics-only HTTP surface (METRICS_PORT) so Prometheus can scrape
+ * it and compose has a healthcheck target; Bull Board rides the same surface
+ * at /admin/queues when enabled.
  */
-const WORKER_METRICS_DEFAULT_PORT = 3002;
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+// Tracing must start before the app graph loads: the OpenTelemetry
+// instrumentations hook module loading, so express/ioredis/bullmq have to be
+// imported AFTER sdk.start() or their spans are silently dead.
+const tracing = await setupTracing('worker');
 const config = loadConfig();
-if (!config.eventBusStreamEnabled) {
-    logger.warn('[Worker] EVENT_BUS_MODE != "stream": cross-app preview triggers are inactive');
+
+if (config.eventBusTransport !== 'bullmq') {
+    logger.warn('[Worker] EVENT_BUS_TRANSPORT != "bullmq": cross-app preview triggers are inactive');
 }
 
-const runtime = createAppRuntime(config);
+const [
+    { createAppRuntime },
+    { createBackgroundJobs },
+    { registerBoardDirtyCollectors, registerDlqDepthCollector, registerQueueCollectors },
+    { mountBullBoard },
+    { runAppShell, shutdownInfra },
+    { APP_EVENTS },
+] = await Promise.all([
+    import('@/app/runtime.js'),
+    import('@/app/background-jobs.js'),
+    import('@/app/metrics-collectors.js'),
+    import('@/app/bull-board.routes.js'),
+    import('@/apps/app-shell.js'),
+    import('@/shared/events.js'),
+]);
 
-const metricsServer = http.createServer((req, res) => {
-    if (req.url === '/metrics' || req.url === '/healthz') {
-        void runtime.metrics.getPromRegistry().metrics().then((body) => {
-            res.setHeader('Content-Type', runtime.metrics.getPromRegistry().contentType);
-            res.end(req.url === '/healthz' ? 'ok\n' : body);
-        }, () => {
-            res.statusCode = 500;
-            res.end('metrics collection failed');
-        });
-        return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', app: 'worker' }));
-});
+const runtime = createAppRuntime(config, { app: 'worker' });
 
 const backgroundJobs = createBackgroundJobs(runtime);
+
+registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+registerQueueCollectors(runtime.metrics, () => [
+    runtime.previewJobService.getQueue(),
+    ...backgroundJobs.getQueues(),
+    ...Object.values(runtime.eventQueues ?? {}),
+]);
+registerDlqDepthCollector(runtime.metrics, () => runtime.eventQueues?.dlq);
+
+// express is loaded after tracing starts (dynamic import above would be
+// cleaner but bull-board's adapter pulls it transitively; keep one static
+// import site for the metrics surface).
+const { default: express } = await import('express');
+
+const metricsApp = express();
+metricsApp.disable('x-powered-by');
+metricsApp.get('/healthz', (_req, res) => {
+    res.type('text/plain').send('ok\n');
+});
+metricsApp.get('/metrics', async (_req, res) => {
+    try {
+        const { contentType, body } = await runtime.metrics.scrape();
+        res.setHeader('Content-Type', contentType);
+        res.send(body);
+    } catch {
+        res.statusCode = 500;
+        res.send('metrics collection failed');
+    }
+});
+
+const metricsServer = http.createServer(metricsApp);
+
 let stopPreviewWorker: (() => Promise<void>) | undefined;
 
 runAppShell({
@@ -60,13 +97,27 @@ runAppShell({
             });
         });
 
-        stopPreviewWorker = runtime.previewJobService.startWorker();
+        stopPreviewWorker = await runtime.previewJobService.startWorker();
         await backgroundJobs.start();
 
-        const metricsPort = Number(process.env.METRICS_PORT ?? WORKER_METRICS_DEFAULT_PORT);
-        await new Promise<void>((resolve) => {
-            metricsServer.listen(metricsPort, () => {
-                logger.info({ port: metricsPort, env: config.nodeEnv }, '[Worker] Metrics listening');
+        // Mounted after the queues exist; express accepts late routes until
+        // the server starts listening below.
+        if (config.enableBullBoard) {
+            mountBullBoard(metricsApp, [
+                runtime.previewJobService.getQueue(),
+                ...backgroundJobs.getQueues(),
+                ...Object.values(runtime.eventQueues ?? {}),
+            ], config);
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            // Listen errors (EADDRINUSE...) surface asynchronously; without
+            // this handler they escape the app shell as uncaught exceptions.
+            const onListenError = (err: Error) => reject(err);
+            metricsServer.once('error', onListenError);
+            metricsServer.listen(config.metricsPort, () => {
+                metricsServer.off('error', onListenError);
+                logger.info({ port: config.metricsPort, env: config.nodeEnv }, '[Worker] Metrics listening');
                 resolve();
             });
         });
@@ -75,6 +126,7 @@ runAppShell({
     async shutdown() {
         await backgroundJobs.stop();
         await stopPreviewWorker?.();
+        await runtime.events.close();
 
         await new Promise<void>((resolve) => {
             metricsServer.close(() => resolve());
@@ -84,5 +136,6 @@ runAppShell({
         });
 
         await shutdownInfra(runtime);
+        await tracing.shutdown();
     },
 });

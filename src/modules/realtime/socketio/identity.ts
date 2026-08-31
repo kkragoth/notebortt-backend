@@ -1,27 +1,22 @@
-import { ACCESS_TOKEN_COOKIE_NAME } from '../socketio/constants.js';
 import type { Socket } from 'socket.io';
 import type { SocketIdentity, SocketIoRealtimeDependencies } from '../socketio/types.js';
+import { ACCESS_TOKEN_COOKIE_NAMES } from '@/modules/auth/index.js';
+import { parseCookieHeader } from '@/shared/cookies.js';
 
-function parseCookieHeader(raw: string | undefined): Record<string, string> {
-    if (!raw) {
-        return {};
-    }
-
-    const cookies: Record<string, string> = {};
-    for (const segment of raw.split(';')) {
-        const [name, ...rest] = segment.trim().split('=');
-        if (!name || rest.length === 0) {
-            continue;
+function readCookieToken(cookies: Record<string, string>): string | undefined {
+    for (const name of ACCESS_TOKEN_COOKIE_NAMES) {
+        const token = cookies[name];
+        if (token) {
+            return token;
         }
-        cookies[name] = decodeURIComponent(rest.join('='));
     }
-    return cookies;
+    return undefined;
 }
 
 export async function resolveSocketIdentity(socket: Socket, deps: SocketIoRealtimeDependencies): Promise<SocketIdentity> {
     const headers = socket.request?.headers ?? {};
     const cookies = parseCookieHeader(headers.cookie);
-    const cookieToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+    const cookieToken = readCookieToken(cookies);
     const authHeader = typeof headers.authorization === 'string' ? headers.authorization : '';
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     const authToken = (socket.handshake?.auth as { token?: string } | undefined)?.token;

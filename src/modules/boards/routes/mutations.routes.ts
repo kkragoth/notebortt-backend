@@ -35,7 +35,9 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
         const results = await deps.mutationProcessor.processBatch(mutations, anonymousActorId(req, body.sessionId));
         const latest = [...results].reverse().find((result) => result.status === 'applied') ?? results.at(-1);
 
-        deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: params.id });
+        // Awaited so the trigger is durably queued before the response goes
+        // out; emit itself never rejects (delivery degrades, result stands).
+        await deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: params.id });
 
         res.json({
             ok: true,
@@ -58,7 +60,7 @@ export function createBoardMutationRoutes(deps: BoardRouteDeps) {
 
         await deps.boardStateService.loadBoard(params.id);
         const results = await deps.mutationProcessor.processBatch(body.mutations, anonymousActorId(req, body.sessionId));
-        deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: params.id });
+        await deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId: params.id });
         res.json({ results });
     });
 

@@ -1,35 +1,39 @@
 import 'dotenv/config';
-import type { Server } from 'node:http';
-import type Redis from 'ioredis';
 import { loadConfig } from '@/shared/config.js';
 import { logger } from '@/shared/logger.js';
-import { createApp } from '@/app/create-app.js';
-import { createAppRuntime } from '@/app/runtime.js';
-import { runAppShell, shutdownInfra } from '@/apps/app-shell.js';
-import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
+import { setupTracing } from '@/platform/observability/tracing.js';
 
 /**
- * REST API app. Owns HTTP concerns only: routes, rate limiting, health,
- * metrics and the Bull Board dashboard (read-only view over the job queues
- * the worker app processes).
+ * REST API app. Owns HTTP concerns only: routes, rate limiting, health and
+ * metrics. Bull Board lives on the worker app — the api never opens handles
+ * to worker-owned queues.
  */
 const KEEP_ALIVE_GRACE_MS = 2_000;
 
+// Tracing must start before the app graph loads: the OpenTelemetry
+// instrumentations hook module loading, so express/pg/ioredis have to be
+// imported AFTER sdk.start() or their spans are silently dead. Everything
+// below is therefore dynamically imported.
+const tracing = await setupTracing('api');
 const config = loadConfig();
-const runtime = createAppRuntime(config);
 
-// Read-only Bull Board views over the worker-owned queues. Kept by handle so
-// shutdown can close them (they wrap jobsRedis).
-const displayQueues = [
-    createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardPersistFlush),
-    createJobsQueue(runtime.jobsRedis, JOB_QUEUES.boardMaintenance),
-];
+const [{ createAppRuntime }, { createApp }, { registerBoardDirtyCollectors, registerDbPoolCollectors, registerQueueCollectors }, { runAppShell, shutdownInfra }] =
+    await Promise.all([
+        import('@/app/runtime.js'),
+        import('@/app/create-app.js'),
+        import('@/app/metrics-collectors.js'),
+        import('@/apps/app-shell.js'),
+    ]);
 
-const app = createApp(runtime, {
-    bullBoardQueues: () => displayQueues,
-});
+const runtime = createAppRuntime(config, { app: 'api' });
 
-let server: Server | undefined;
+registerBoardDirtyCollectors(runtime.metrics, () => runtime.redis);
+registerQueueCollectors(runtime.metrics, () => [...Object.values(runtime.eventQueues ?? {})]);
+registerDbPoolCollectors(runtime.metrics, runtime.db, config.dbPoolMax);
+
+const app = createApp(runtime);
+
+let server: import('node:http').Server | undefined;
 
 runAppShell({
     name: 'API',
@@ -53,7 +57,10 @@ runAppShell({
             }, KEEP_ALIVE_GRACE_MS).unref();
         });
 
-        await Promise.all(displayQueues.map((queue) => queue.close()));
+        // Infra teardown first, tracing last: spans emitted while Redis/PG
+        // drain (and the close operations themselves) must still flush.
         await shutdownInfra(runtime);
+        await runtime.events.close();
+        await tracing.shutdown();
     },
 });

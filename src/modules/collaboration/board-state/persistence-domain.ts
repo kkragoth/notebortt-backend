@@ -240,7 +240,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
             redis.smembers(dirtyElementIdsKey),
             redis.smembers(deletedElementIdsKey),
         ]);
-        metrics.incrementCounter('redis.commands', 2, { category: 'state', command: 'smembers' });
+        metrics.incrementCounter('redis_commands_total', 2, { category: 'state', command: 'smembers' });
 
         if (dirtyIds.length === 0 && deletedIds.length === 0) {
             return { upserts: 0, deletes: 0 };
@@ -250,7 +250,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
             ? await redis.hmget(boardElementsKey(boardId), ...dirtyIds)
             : [];
         if (dirtyIds.length > 0) {
-            metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'hmget' });
+            metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'hmget' });
         }
 
         const upserts: ReturnType<typeof toElementRow>[] = [];
@@ -390,11 +390,11 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
                 (flushCompletedAt - flushStartedAt).toString(),
                 enableIncrementalPersistence ? '1' : '0',
             );
-            metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'eval' });
+            metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'eval' });
 
             if (Number(cleared) === 1) {
-                metrics.observeTiming('flush.duration_ms', flushCompletedAt - flushStartedAt);
-                metrics.incrementCounter('flush.rows_persisted', persistedCounts.upserts + persistedCounts.deletes);
+                metrics.observeTiming('flush_duration_ms', flushCompletedAt - flushStartedAt);
+                metrics.incrementCounter('flush_rows_persisted_total', persistedCounts.upserts + persistedCounts.deletes);
                 metrics.logStructured('board.flush', {
                     boardId,
                     sequence: snapshotSequence,
@@ -464,7 +464,7 @@ export function createBoardPersistenceDomain(redis: Redis, db: Database, deps: P
         const now = Date.now();
         const maxScore = minDirtyAgeMs > 0 ? (now - minDirtyAgeMs).toString() : '+inf';
         const boardIds = await redis.zrangebyscore(DIRTY_BOARDS_BY_AGE_KEY, '-inf', maxScore, 'LIMIT', 0, limit);
-        metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'zrangebyscore' });
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'zrangebyscore' });
         const persisted: string[] = [];
 
         for (const boardId of boardIds) {

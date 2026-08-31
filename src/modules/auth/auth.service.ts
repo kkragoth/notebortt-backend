@@ -29,7 +29,14 @@ export function createAuthService(config: Pick<AppConfig, 'jwtSecret' | 'jwtExpi
     }
 
     function verifyRefreshToken(token: string, hash: string): boolean {
-        return hashRefreshToken(token) === hash;
+        // Both sides are sha256 hex of equal length, so timingSafeEqual is
+        // safe here; the comparison must not short-circuit on the raw token.
+        const candidate = Buffer.from(hashRefreshToken(token), 'hex');
+        const expected = Buffer.from(hash, 'hex');
+        if (candidate.length !== expected.length) {
+            return false;
+        }
+        return crypto.timingSafeEqual(candidate, expected);
     }
 
     return { generateAccessToken, verifyAccessToken, generateRefreshToken, hashRefreshToken, verifyRefreshToken };

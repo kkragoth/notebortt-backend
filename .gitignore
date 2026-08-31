@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .DS_Store
+bench/results-latest.json
+bench/bench-history.json
+
+backups/

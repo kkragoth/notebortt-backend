@@ -1,13 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import {
+    BOARD_MUTATION_LOCK_ACQUIRE_TIMEOUT_MS,
     BOARD_MUTATION_LOCK_POLL_MS,
     BOARD_MUTATION_LOCK_TTL_MS,
     boardMutationLockKey,
     sleep,
 } from '../board-state/keys.js';
 import type Redis from 'ioredis';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
+import { AppError } from '@/shared/errors.js';
 
-export function createBoardMutationLockDomain(redis: Redis) {
+export function createBoardMutationLockDomain(
+    redis: Redis,
+    deps: { metrics?: RuntimeMetrics } = {},
+) {
+    const { metrics } = deps;
     const localLocks = new Map<string, Promise<void>>();
 
     async function withLocalLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
@@ -31,21 +38,31 @@ export function createBoardMutationLockDomain(redis: Redis) {
     }
 
     async function acquireMutationLock(boardId: string): Promise<string> {
-        while (true) {
-            const token = randomUUID();
-            const acquired = await redis.set(
-                boardMutationLockKey(boardId),
-                token,
-                'PX',
-                BOARD_MUTATION_LOCK_TTL_MS,
-                'NX',
-            );
+        const startedAt = Date.now();
+        const deadline = startedAt + BOARD_MUTATION_LOCK_ACQUIRE_TIMEOUT_MS;
+        try {
+            while (true) {
+                const token = randomUUID();
+                const acquired = await redis.set(
+                    boardMutationLockKey(boardId),
+                    token,
+                    'PX',
+                    BOARD_MUTATION_LOCK_TTL_MS,
+                    'NX',
+                );
 
-            if (acquired === 'OK') {
-                return token;
+                if (acquired === 'OK') {
+                    return token;
+                }
+
+                if (Date.now() >= deadline) {
+                    throw new AppError(503, 'Board is busy, try again shortly');
+                }
+
+                await sleep(BOARD_MUTATION_LOCK_POLL_MS);
             }
-
-            await sleep(BOARD_MUTATION_LOCK_POLL_MS);
+        } finally {
+            metrics?.observeDuration('mutation_lock_acquisition_duration_seconds', (Date.now() - startedAt) / 1000);
         }
     }
 

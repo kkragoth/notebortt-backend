@@ -1,10 +1,20 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { OAUTH_COOKIE_MAX_AGE_MS } from '../routes/constants.js';
+import { ACCESS_TOKEN_COOKIE_NAME, OAUTH_COOKIE_MAX_AGE_MS } from '../routes/constants.js';
 import type { AppConfig } from '@/shared/config.js';
 import { parseAllowedOrigins } from '@/shared/cors.js';
 
 export function isProduction(config: Pick<AppConfig, 'nodeEnv'>): boolean {
     return config.nodeEnv === 'production';
+}
+
+/**
+ * Name under which the access-token cookie is WRITTEN: `__Host-` prefixed in
+ * production (requires Secure, Path=/ and no Domain — satisfied by the
+ * access-token cookie options there). Dev keeps the plain name so http://
+ * origins keep working.
+ */
+export function accessTokenCookieName(config: Pick<AppConfig, 'nodeEnv'>): string {
+    return isProduction(config) ? `__Host-${ACCESS_TOKEN_COOKIE_NAME}` : ACCESS_TOKEN_COOKIE_NAME;
 }
 
 export function buildCookieSecurityOptions(config: Pick<AppConfig, 'nodeEnv'>) {
@@ -24,6 +34,22 @@ export function buildCookieSecurityOptions(config: Pick<AppConfig, 'nodeEnv'>) {
 export function resolveFrontendOrigin(corsOrigin: string): string {
     const allowedOrigins = parseAllowedOrigins(corsOrigin);
     return allowedOrigins.find((origin) => origin.startsWith('https://')) ?? allowedOrigins[0] ?? corsOrigin;
+}
+
+/**
+ * Post-login redirect target. With several configured frontend origins the
+ * first-https heuristic would send users of frontend B to frontend A; when
+ * the flow start recorded the initiating origin (see OAUTH_ORIGIN_COOKIE_NAME)
+ * and it is still allow-listed, prefer it.
+ */
+export function resolveFrontendOriginForRequest(
+    config: Pick<AppConfig, 'corsOrigin'>,
+    requestOrigin: string | undefined,
+): string {
+    if (requestOrigin && isAllowedOrigin(config, requestOrigin)) {
+        return requestOrigin;
+    }
+    return resolveFrontendOrigin(config.corsOrigin);
 }
 
 export function isAllowedOrigin(config: Pick<AppConfig, 'corsOrigin'>, origin: string | undefined): boolean {

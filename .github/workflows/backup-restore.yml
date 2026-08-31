@@ -1,0 +1,65 @@
+name: backup-restore
+
+# P6.2: proves the backup scripts produce restorable artifacts. Runs on the
+# nightly gate so a broken dump is caught within a day, not at 3am.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notecanva
+          POSTGRES_PASSWORD: notecanva
+          POSTGRES_DB: notecanva
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U notecanva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Seed a known row count
+        run: |
+          PGPASSWORD=notecanva psql -h localhost -U notecanva -d notecanva -c \
+            "create table if not exists restore_probe (id int primary key, note text);
+             insert into restore_probe values (1,'a'),(2,'b'),(3,'c');"
+
+      - name: Run pg-backup script
+        run: ./scripts/pg-backup.sh
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_USER: notecanva
+          POSTGRES_PASSWORD: notecanva
+          POSTGRES_DB: notecanva
+          BACKUP_DIR: ./backups
+
+      - name: Restore into a throwaway database and assert row counts
+        run: |
+          DUMP=$(ls -t backups/pg-*.dump | head -n1)
+          echo "restoring $DUMP"
+          PGPASSWORD=notecanva createdb -h localhost -U notecanva notecanva_restore_check
+          # Restore exactly the newest dump: a glob would replay every match
+          # (e.g. a leftover partial) into the check database.
+          PGPASSWORD=notecanva pg_restore -h localhost -U notecanva \
+            -d notecanva_restore_check --no-owner "$DUMP"
+          COUNT=$(PGPASSWORD=notecanva psql -h localhost -U notecanva -d notecanva_restore_check \
+            -tAc "select count(*) from restore_probe")
+          echo "restored rows: $COUNT"
+          [ "$COUNT" = "3" ]
+
+      - name: Cleanup local artifacts
+        if: always()
+        run: rm -rf backups

@@ -1,0 +1,182 @@
+name: bench
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Nightly perf gate on the default branch.
+    - cron: '0 4 * * *'
+
+# Read-only token + bounded runtime for an unattended scheduled workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-pr:
+    # Informational only on PRs/dispatches: results are recorded and compared
+    # against the rolling median, but never gate the build.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notecanva
+          POSTGRES_PASSWORD: notecanva
+          POSTGRES_DB: notecanva_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notecanva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://notecanva:notecanva@localhost:5432/notecanva_bench
+      REDIS_URL: redis://localhost:6379
+      REDIS_REALTIME_URL: redis://localhost:6379
+      REDIS_JOBS_URL: redis://localhost:6379
+      GOOGLE_CLIENT_ID: ci-placeholder
+      GOOGLE_CLIENT_SECRET: ci-placeholder
+      GOOGLE_REDIRECT_URI: http://localhost:3000/auth/callback
+      JWT_SECRET: ci-secret-ci-secret-ci-secret
+      LOG_LEVEL: warn
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore bench history
+        # History is segregated per event family: shared-runner PR hardware
+        # would otherwise pollute the nightly gate's rolling median.
+        uses: actions/cache/restore@v4
+        with:
+          path: bench/bench-history.json
+          key: bench-history-pr-${{ github.run_id }}
+          restore-keys: bench-history-pr-
+
+      - name: Run benchmark (informational)
+        run: ./scripts/ci-bench.sh informational
+
+      - name: Save bench history
+        if: always()
+        # save-always: persist even when the bench step failed, so the
+        # history keeps flowing across runs.
+        uses: actions/cache/save@v4
+        with:
+          path: bench/bench-history.json
+          key: bench-history-pr-${{ github.run_id }}
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-pr-${{ github.run_id }}
+          path: |
+            bench/results-latest.json
+            bench/bench-history.json
+          retention-days: 30
+
+  bench-gate:
+    # Nightly hard gate: fails on >10% p95 regression vs the rolling median
+    # of the last nightly runs. Move to a dedicated `perf` runner by changing runs-on.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notecanva
+          POSTGRES_PASSWORD: notecanva
+          POSTGRES_DB: notecanva_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notecanva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://notecanva:notecanva@localhost:5432/notecanva_bench
+      REDIS_URL: redis://localhost:6379
+      REDIS_REALTIME_URL: redis://localhost:6379
+      REDIS_JOBS_URL: redis://localhost:6379
+      GOOGLE_CLIENT_ID: ci-placeholder
+      GOOGLE_CLIENT_SECRET: ci-placeholder
+      GOOGLE_REDIRECT_URI: http://localhost:3000/auth/callback
+      JWT_SECRET: ci-secret-ci-secret-ci-secret
+      LOG_LEVEL: warn
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore bench history
+        uses: actions/cache/restore@v4
+        with:
+          path: bench/bench-history.json
+          key: bench-history-nightly-${{ github.run_id }}
+          restore-keys: bench-history-nightly-
+
+      - name: Run benchmark (hard gate)
+        run: ./scripts/ci-bench.sh gate
+      - name: Save bench history
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bench/bench-history.json
+          key: bench-history-nightly-${{ github.run_id }}
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-nightly-${{ github.run_id }}
+          path: |
+            bench/results-latest.json
+            bench/bench-history.json
+          retention-days: 90

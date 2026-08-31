@@ -1,16 +1,14 @@
 import type { Queue } from 'bullmq';
 import type Redis from 'ioredis';
 import type { AppRuntime } from '@/app/runtime.js';
-import type {JobQueueName, JobsWorkerHandle} from '@/platform/jobs/queues.js';
+import type { JobQueueName, JobsWorkerHandle } from '@/platform/jobs/queues.js';
 import {
     BOARD_CLEANUP_JOB,
     BOARD_PERSIST_FLUSH_JOB,
     JOB_QUEUES,
-    
-    
     createJobsQueue,
     createRepeatableWorker,
-    upsertRepeatableJob
+    upsertRepeatableJob,
 } from '@/platform/jobs/queues.js';
 
 export interface BackgroundJobs {
@@ -22,15 +20,18 @@ export interface BackgroundJobs {
 export function createBackgroundJobs(
     runtime: Pick<
         AppRuntime,
-        'config' | 'jobsRedis' | 'boardPersistenceService' | 'redisCleanupService'
+        'config' | 'jobsRedis' | 'boardPersistenceService' | 'redisCleanupService' | 'metrics'
     >,
 ): BackgroundJobs {
     const connection: Redis = runtime.jobsRedis;
+    // Per-deployable namespace; must match the domain-event/preview queues so
+    // every producer/consumer in a shared-Redis deployment agrees.
+    const queueOptions = { prefix: runtime.config.queueRedisPrefix ?? undefined };
     const workers: JobsWorkerHandle[] = [];
     const queues: Queue[] = [];
 
     function registerQueue(name: JobQueueName): Queue {
-        const queue = createJobsQueue(connection, name);
+        const queue = createJobsQueue(connection, name, queueOptions);
         queues.push(queue);
         return queue;
     }
@@ -44,7 +45,7 @@ export function createBackgroundJobs(
         );
         workers.push(
             createRepeatableWorker(JOB_QUEUES.boardPersistFlush, BOARD_PERSIST_FLUSH_JOB, async () =>
-                runtime.boardPersistenceService.flushDirtyBoards(), connection),
+                runtime.boardPersistenceService.flushDirtyBoards(), connection, runtime.metrics, queueOptions),
         );
 
         const maintenanceQueue = registerQueue(JOB_QUEUES.boardMaintenance);
@@ -60,7 +61,7 @@ export function createBackgroundJobs(
                     runtime.redisCleanupService.cleanupTransientDataByIdleTime(),
                 ]);
                 return { flushed: flushed.length, transientDeleted: transientDeleted.length };
-            }, connection),
+            }, connection, runtime.metrics, queueOptions),
         );
     }
 

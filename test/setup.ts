@@ -1,5 +1,15 @@
 import 'dotenv/config';
 
+// Global per-test DB cleanup (item: flaky tests from shared DB state).
+// Opt-in via TEST_DB_GLOBAL_CLEANUP=true so suites migrate incrementally;
+// existing suites keep their own fixtures/rollback isolation until then.
+if (process.env.TEST_DB_GLOBAL_CLEANUP === 'true') {
+    const { truncateTestTables } = await import('./helpers/db-cleanup.js');
+    afterEach(async () => {
+        await truncateTestTables();
+    });
+}
+
 /**
  * Integration suites hit live Postgres and Redis. Fail fast with an
  * actionable message instead of cryptic connection timeouts mid-suite.

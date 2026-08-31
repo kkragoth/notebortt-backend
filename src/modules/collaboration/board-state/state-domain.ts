@@ -55,7 +55,7 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
         }
 
         const raw = await redis.hmget(boardElementsKey(boardId), ...elementIds);
-        metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'hmget' });
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'hmget' });
 
         for (let i = 0; i < elementIds.length; i += 1) {
             const elementId = elementIds[i];
@@ -119,7 +119,7 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
         if (changeSet.deletes.length > 0) {
             const cascadeSource = options.baseElementsForCascadeDelete ?? (await getElements(boardId));
             deleteIds = collectCascadeDeleteIds(cascadeSource, changeSet.deletes);
-            metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'hgetall' });
+            metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'hgetall' });
         }
 
         const deletedIdSet = new Set(deleteIds);
@@ -173,8 +173,8 @@ export function createBoardStateDomain(redis: Redis, deps: StateDomainDeps) {
             pipeline.srem(dirtyElementIdsKey, ...persistedChange.deletes);
         }
         await pipeline.exec();
-        metrics.incrementCounter('redis.commands', 1, { category: 'state', command: 'pipeline.exec' });
-        metrics.observeTiming('mutation.apply_change_set_ms', Date.now() - startedAt);
+        metrics.incrementCounter('redis_commands_total', 1, { category: 'state', command: 'pipeline.exec' });
+        metrics.observeTiming('mutation_apply_change_set_duration_ms', Date.now() - startedAt);
         metrics.logStructured('mutation.change_set', {
             boardId,
             upserts: persistedChange.upserts.length,

@@ -2,6 +2,13 @@ import type { Mutation } from '@/modules/collaboration/index.js';
 
 const MAX_MUTATION_BATCH = 100;
 const MAX_BOARD_ID_LENGTH = 200;
+// Per-field cardinality/length bounds; the event byte caps are the coarse
+// limit, these keep individual fields from becoming unbounded Redis members
+// or broadcast fields.
+const MAX_ID_LENGTH = 200;
+const MAX_ID_LIST_LENGTH = 100;
+const MAX_MOVES = 500;
+const MAX_PRESENCE_MESSAGE_LENGTH = 280;
 
 export interface BoardJoinPayload {
   boardId: string
@@ -89,7 +96,16 @@ function parseIdList(value: unknown): string[] {
         return [];
     }
 
-    return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+    const ids: string[] = [];
+    for (const item of value) {
+        if (typeof item === 'string' && item.length > 0 && item.length <= MAX_ID_LENGTH) {
+            ids.push(item);
+            if (ids.length >= MAX_ID_LIST_LENGTH) {
+                break;
+            }
+        }
+    }
+    return ids;
 }
 
 function parseMoves(value: unknown): Array<{ id: string; x: number; y: number }> {
@@ -99,11 +115,20 @@ function parseMoves(value: unknown): Array<{ id: string; x: number; y: number }>
 
     const moves: Array<{ id: string; x: number; y: number }> = [];
     for (const item of value) {
+        if (moves.length >= MAX_MOVES) {
+            break;
+        }
         if (!isRecord(item)) {
             continue;
         }
 
-        if (typeof item.id !== 'string' || !isFiniteNumber(item.x) || !isFiniteNumber(item.y)) {
+        if (
+            typeof item.id !== 'string'
+            || item.id.length === 0
+            || item.id.length > MAX_ID_LENGTH
+            || !isFiniteNumber(item.x)
+            || !isFiniteNumber(item.y)
+        ) {
             continue;
         }
 
@@ -119,7 +144,7 @@ export function parseBoardJoinPayload(payload: unknown): BoardJoinPayload | null
 
     const boardId = asString(payload.boardId);
     const sessionId = asString(payload.sessionId);
-    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH || !sessionId) {
+    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH || !sessionId || sessionId.length > MAX_ID_LENGTH) {
         return null;
     }
 
@@ -142,7 +167,7 @@ export function parseMutationBatchPayload(payload: unknown): MutationBatchPayloa
     }
 
     const boardId = asString(payload.boardId);
-    if (!boardId || !isMutationBatch(payload.mutations)) {
+    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH || !isMutationBatch(payload.mutations)) {
         return null;
     }
 
@@ -159,7 +184,7 @@ export function parseCrdtUpdatePayload(payload: unknown): CrdtUpdatePayload | nu
 
     const boardId = asString(payload.boardId);
     const update = normalizeUpdate(payload.update);
-    if (!boardId || !update || update.length === 0) {
+    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH || !update || update.length === 0) {
         return null;
     }
 
@@ -172,7 +197,7 @@ export function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayl
     }
 
     const boardId = asString(payload.boardId);
-    if (!boardId) {
+    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH) {
         return null;
     }
 
@@ -193,7 +218,11 @@ export function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayl
         cursor,
         selectedIds: parseIdList(payload.selectedIds),
         draggedIds: parseIdList(payload.draggedIds),
-        focusedElementId: typeof payload.focusedElementId === 'string' ? payload.focusedElementId : null,
+        focusedElementId: typeof payload.focusedElementId === 'string'
+            && payload.focusedElementId.length > 0
+            && payload.focusedElementId.length <= MAX_ID_LENGTH
+            ? payload.focusedElementId
+            : null,
         typingField,
     };
 }
@@ -204,7 +233,7 @@ export function parseRealtimeTickPayload(payload: unknown): RealtimeTickPayload 
     }
 
     const boardId = asString(payload.boardId);
-    if (!boardId) {
+    if (!boardId || boardId.length > MAX_BOARD_ID_LENGTH) {
         return null;
     }
 
@@ -223,9 +252,6 @@ export function parseRealtimeTickPayload(payload: unknown): RealtimeTickPayload 
     const presenceState = payload.presenceState === 'away' || payload.presenceState === 'interacting'
         ? payload.presenceState
         : 'active';
-    const presenceMessage = typeof payload.presenceMessage === 'string' && payload.presenceMessage.length > 0
-        ? payload.presenceMessage
-        : null;
 
     return {
         boardId,
@@ -233,10 +259,18 @@ export function parseRealtimeTickPayload(payload: unknown): RealtimeTickPayload 
         cursor,
         selectedIds: parseIdList(payload.selectedIds),
         draggedIds: parseIdList(payload.draggedIds),
-        focusedElementId: typeof payload.focusedElementId === 'string' ? payload.focusedElementId : null,
+        focusedElementId: typeof payload.focusedElementId === 'string'
+            && payload.focusedElementId.length > 0
+            && payload.focusedElementId.length <= MAX_ID_LENGTH
+            ? payload.focusedElementId
+            : null,
         typingField,
         presenceState,
-        presenceMessage,
+        presenceMessage: typeof payload.presenceMessage === 'string'
+            && payload.presenceMessage.length > 0
+            && payload.presenceMessage.length <= MAX_PRESENCE_MESSAGE_LENGTH
+            ? payload.presenceMessage
+            : null,
         moves: parseMoves(payload.moves),
     };
 }

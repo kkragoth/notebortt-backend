@@ -43,9 +43,12 @@ describe('createRedisCleanupService', () => {
         } as any;
 
         const cleanupService = createRedisCleanupService(redis, boardStateService);
-        const flushed = await cleanupService.cleanupInactiveBoards(5_000, 10);
+        // Generous limit: the boards:active set is shared across parallel
+        // suites, so the scan may see foreign entries before ours.
+        const flushed = await cleanupService.cleanupInactiveBoards(5_000, 1_000);
+        const flushedMine = flushed.filter((id) => id.startsWith(TEST_PREFIX));
 
-        expect(flushed).toContain(boardId);
+        expect(flushedMine).toContain(boardId);
         expect(boardStateService.persistBoard).toHaveBeenCalledWith(boardId);
         expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId, { requireIdle: true });
     });
@@ -62,7 +65,8 @@ describe('createRedisCleanupService', () => {
         } as any;
 
         const cleanupService = createRedisCleanupService(redis, boardStateService);
-        const flushed = await cleanupService.cleanupInactiveBoards(5_000, 10);
+        const flushed = await cleanupService.cleanupInactiveBoards(5_000, 1_000);
+        const flushedMine = flushed.filter((id) => id.startsWith(TEST_PREFIX));
 
         expect(flushed).toEqual([]);
         expect(boardStateService.persistBoard).not.toHaveBeenCalled();
@@ -81,9 +85,10 @@ describe('createRedisCleanupService', () => {
         } as any;
 
         const cleanupService = createRedisCleanupService(redis, boardStateService);
-        const flushed = await cleanupService.cleanupInactiveBoards(0, 20);
+        const flushed = await cleanupService.cleanupInactiveBoards(0, 1_000);
+        const flushedMine = flushed.filter((id) => id.startsWith(TEST_PREFIX));
 
-        expect(flushed).toContain(boardId);
+        expect(flushedMine).toContain(boardId);
         expect(boardStateService.persistBoard).toHaveBeenCalledWith(boardId);
         expect(boardStateService.flushBoard).toHaveBeenCalledWith(boardId, { requireIdle: true });
     });

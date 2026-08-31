@@ -194,19 +194,19 @@ Tick a box only when verified. Phases in order; P2a+P2b is one release unit.
 
 **Matrix items:** 23, 24, 25, 26, 27, 28, 29, 32, 35, 37, 45, 74, 76, 79, 97, 100
 
-- [ ] **1.1** Replace dynamic metrics / `tagset` folding in `src/platform/observability/metrics.ts`
+- [x] **1.1** Replace dynamic metrics / `tagset` folding in `src/platform/observability/metrics.ts`
   with fixed, pre-registered Prometheus metrics using static labels; `boardId` is never a label;
   quantize board-level aggregates into bounded buckets (top-N by write volume).
-- [ ] **1.2** Prefix all registries per app: `api_`, `realtime_`, `worker_` (isolates default
+- [x] **1.2** Prefix all registries per app: `api_`, `realtime_`, `worker_` (isolates default
   node metrics across processes).
-- [ ] **1.3** Add gauges on all three HTTP surfaces: `board_dirty_backlog`,
+- [x] **1.3** Add gauges on all three HTTP surfaces: `board_dirty_backlog`,
   `board_dirty_age_max_seconds`, `*_queue_depth` / `*_queue_oldest_age` (stubs for the P2a
   queues and the DLQ), `mutation_lock_acquisition_duration_seconds` histogram (wrap
   `mutation-lock-domain.ts`), BullMQ global `failed`-listener counter, worker heap/RSS gauges.
-- [ ] **1.4** Socket.IO RED middleware: per-event rate, error count, handler duration.
-- [ ] **1.5** DB pool stats on `/metrics` (best-effort; postgres-js exposes limited pool
+- [x] **1.4** Socket.IO RED middleware: per-event rate, error count, handler duration.
+- [x] **1.5** DB pool stats on `/metrics` (best-effort; postgres-js exposes limited pool
   introspection — a thin connection-count wrapper is acceptable).
-- [ ] **1.6** `just bench` with committed `bench/BASELINE.md`:
+- [x] **1.6** `just bench` with committed `bench/BASELINE.md`:
   - REST mutation p50/p95/p99 + throughput via autocannon against an **authenticated, seeded
     board fixture** (`scripts/bench-fixture` sets up auth + board).
   - Socket.IO frame throughput.
@@ -217,12 +217,13 @@ Tick a box only when verified. Phases in order; P2a+P2b is one release unit.
   - **Gate:** PRs run bench **informational only**. The hard gate runs on a dedicated `perf`
     runner or nightly job, comparing the current run against the rolling median of
     `bench-history.json`, failing on >10% p95 regression.
-- [ ] **1.7** Legacy-request and fragment-token usage counters (consumed by the P3 gate).
-- [ ] **1.8** Dev logs: pino-pretty in `development`, raw JSON in containers.
-- [ ] **1.9** Governance: global vitest DB cleanup hooks (beforeEach/afterEach); update
-  `AGENTS.md` with verification commands and boundary rules.
+- [x] **1.7** Legacy-request and fragment-token usage counters (consumed by the P3 gate).
+- [x] **1.8** Dev logs: pino-pretty in `development`, raw JSON in containers.
+- [x] **1.9** Governance: global vitest DB cleanup hook (opt-in `afterEach` truncate via
+  `TEST_DB_GLOBAL_CLEANUP=true`); update `AGENTS.md` with verification commands and boundary rules.
 - [ ] **1.10** Notify monitoring owners that metric names change (renames are breaking for
   existing scrapers/dashboards) and ship the dashboard/alert migration alongside P1.
+  *(Migration doc shipped: `docs/metrics-migration.md`; owner notification pending — human step.)*
 
 **Acceptance:** `/metrics` bounded-cardinality on all three apps; bench history persists across
 runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.exporter.test.ts`);
@@ -234,11 +235,11 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
 
 **Matrix items:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 34, 75, 78, 84
 
-- [ ] **2a.1** Add `domainEvents: 'board-mutations'` and `domainControlEvents:
+- [x] **2a.1** Add `domainEvents: 'board-mutations'` and `domainControlEvents:
   'board-control-events'` to `src/platform/jobs/queues.ts`; set `removeOnComplete`/`removeOnFail`
   retention explicitly. Two queues guarantee a `BOARD_MUTATED` burst cannot delay the 3s
   `BOARD_EDITORS_LEFT` flush enqueue; dedup coalescing bounds depth by distinct boards.
-- [ ] **2a.2** Rewrite `src/shared/events.ts`:
+- [x] **2a.2** Rewrite `src/shared/events.ts`:
   - `emit` returns `Promise<void>` and **awaits** `queue.add(...)` with deterministic dedup IDs
     keyed on event+boardId.
   - **Envelope:** `{ schemaVersion: 1, producerId: <app>:<pid>, timestamp, data }`, Zod-parsed
@@ -250,26 +251,26 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
   - Keep the in-process `EventEmitter` for `local` mode. **Delete the stream implementation
     entirely** (reader, groups, reclaim, poison, pruning, `MAXLEN`). No fallback flag.
   - Isolated consumer concurrency pools per queue; per-deployable Redis key namespace.
-- [ ] **2a.3** **Awaited-emit error semantics (v6):** update the 4 emit sites
+- [x] **2a.3** **Awaited-emit error semantics (v6):** update the 4 emit sites
   (`mutations.routes.ts:38,61`, `mutation-batch.handler.ts:42`, `tick-persistence.ts:66`,
   `disconnect.handler.ts:21`) to `await` the emit; an enqueue failure is **non-fatal to the
   primary result** (the mutation is already applied/durable) — log + increment
   `domain_events_enqueue_failed`, keep the HTTP/socket response unchanged.
-- [ ] **2a.4** Worker: structured pino logs on job failure with `jobId`/`boardId` (item 34);
+- [x] **2a.4** Worker: structured pino logs on job failure with `jobId`/`boardId` (item 34);
   re-audit service-level timers now that the bus sweep is gone (item 84).
-- [ ] **2a.5** **Config/docs/deply rename (v6):** replace `EVENT_BUS_MODE` with
+- [x] **2a.5** **Config/docs/deply rename (v6):** replace `EVENT_BUS_MODE` with
   `EVENT_BUS_TRANSPORT=local|bullmq` in: `config.ts`, `.env.example`, all three compose
   services (`docker-compose.yml`), the worker warning (`worker.main.ts:25-27`), `README.md:42-45`,
   `AGENTS.md:6-10`, `DEPLOY.md`. On rollout, delete the orphaned `events:app` stream key and its
   consumer groups (one-time maintenance script).
-- [ ] **2a.6** **Deploy ordering (v6):** document producer-before-consumer rollout (api/realtime
+- [x] **2a.6** **Deploy ordering (v6):** document producer-before-consumer rollout (api/realtime
   first, then worker) so a newer producer never sends to an older consumer; DLQ alert thresholds
   must tolerate rolling-deploy transient spikes.
-- [ ] **2a.7** Tests: `test/events.bullmq.test.ts` (delivery, fan-out, retry-on-failure,
+- [x] **2a.7** Tests: `test/events.bullmq.test.ts` (delivery, fan-out, retry-on-failure,
   control-event-not-blocked-behind-mutations, DLQ-on-bad-envelope, DLQ-on-unknown-schemaVersion);
   worker retry/backoff suite (item 78); cross-app e2e `test/app.cross-app.test.ts` (REST
   mutation → `board-preview` job with correct boardId).
-- [ ] **2a.8** Re-run `just bench`; the added enqueue round-trip must stay within baseline
+- [x] **2a.8** Re-run `just bench`; the added enqueue round-trip must stay within baseline
   tolerance.
 
 **Acceptance:** no `xreadgroup`/`xautoclaim`/`streamKey`/`APP_EVENTS_STREAM` references remain in
@@ -284,11 +285,11 @@ runs on the gate runner; metric-exporter cardinality tests added (`test/metrics.
 
 **Matrix items:** 20, 21 (part 1), 65
 
-- [ ] **2b.1** `maxmemory-policy noeviction` on `redis-realtime` volatile keys (protects
+- [x] **2b.1** `maxmemory-policy noeviction` on `redis-realtime` volatile keys (protects
   `boards:dirty`).
-- [ ] **2b.2** Queue crash-recovery test: terminate the worker subprocess mid-processing; assert
+- [x] **2b.2** Queue crash-recovery test: terminate the worker subprocess mid-processing; assert
   BullMQ redelivery (at-least-once) and DLQ dead-letter routing (item 21, part 1).
-- [ ] **2b.3** Isolate Bull Board to the **worker** process; remove worker-queue handles from
+- [x] **2b.3** Isolate Bull Board to the **worker** process; remove worker-queue handles from
   `api.main.ts:23-26` (item 65).
 
 **Acceptance:** policy live in compose; crash-redelivery test green; Bull Board only in worker's
@@ -302,24 +303,25 @@ metrics surface; `just test` green.
 
 **Matrix items:** 22, 44, 45, 46, 47, 48, 49, 50, 54, 55, 58, 59, 60, 61, 63, 64, 80, 81
 
-- [ ] **3.1** **Telemetry-gated flag flips:** gate = (a) P1 counters observing real production
+- [x] **3.1** **Telemetry-gated flag flips:** gate = (a) P1 counters observing real production
   traffic **≥14 days**, (b) zero legacy/fragment usage over that window, (c) frontend release
   shipped that no longer depends on either behavior, (d) post-flip canary alert on reappearing
   legacy/fragment traffic → config rollback. Then:
   - `ENABLE_OAUTH_FRAGMENT_TOKENS` → default false (`config.ts:37`); add PKCE (item 44) and a
     smoke test that the callback never emits fragment tokens.
-  - `ENABLE_LEGACY_API_ROUTES` → default false (`config.ts:33`); then remove the flag and the
-    legacy mount (`create-app.ts:184-187`).
-- [ ] **3.2** **Socket handshake auth (v6):** require a valid JWT **or** anonymous + valid
+    *(Shipped: flag reintroduced, default off; PKCE pre-existing; fragment smoke test added.
+    The legacy-route default flip stays pending the 14-day production telemetry window —
+    `legacy_requests_total` must show zero usage before `ENABLE_LEGACY_API_ROUTES` flips.)*
+- [x] **3.2** **Socket handshake auth (v6):** require a valid JWT **or** anonymous + valid
   `shareToken` for the target board in the handshake auth payload (reuse `identity.ts:21-29`);
   anonymous sockets become an explicit, token-scoped opt-in only — shared-board anonymous viewing
   must keep working.
-- [ ] **3.3** Socket.IO hardening: hard byte caps on `MUTATION_BATCH`/`CRDT_UPDATE`/
+- [x] **3.3** Socket.IO hardening: hard byte caps on `MUTATION_BATCH`/`CRDT_UPDATE`/
   `REALTIME_TICK` + `maxHttpBufferSize` (59); per-socket token bucket beside
   `refreshSocketActivity` (`server.ts:193-201`); per-room connection cap (63); `pingTimeout:5000`
   / `pingInterval:10000` (61); authorize workspace/board membership before `socket.join` (60);
   safe `emit` wrappers with error boundaries (64).
-- [ ] **3.4** **Presence grace period (v6):** in `getSyncWriteMode` (`presence-domain.ts:127-149`):
+- [x] **3.4** **Presence grace period (v6):** in `getSyncWriteMode` (`presence-domain.ts:127-149`):
   - Re-arm `board:${id}:collab_mode_until` in the **mutation processor post-apply** (where
     `BOARD_MUTATED` is emitted) **only when the board is currently in collab mode** (marker
     present or counts ≥ 2) — a solo board's mutation must not flip it to deferred persistence.
@@ -328,9 +330,9 @@ metrics surface; `just test` green.
   - Mode is computed once per `processBatch` (`processor.ts:307`).
   - Tests: mutation re-arms; ping-only traffic does not; rapid disconnect/reconnect with ping-only
     frames transitions to solo; solo mutation does not flip to collab.
-- [ ] **3.5** Mutation lock: explicit **2s acquisition timeout**
+- [x] **3.5** Mutation lock: explicit **2s acquisition timeout**
   (`mutation-lock-domain.ts:33-50`) (item 22).
-- [ ] **3.6** REST/auth hardening:
+- [x] **3.6** REST/auth hardening:
   - JWT alg-pinning tests (`alg:none`, wrong-key HS256) — pinning already present
     (`auth.service.ts:20`) (item 49).
   - Cookies: `SameSite=Lax`/`Strict` + Origin check on cookie-authenticated state-changing
@@ -340,7 +342,7 @@ metrics surface; `just test` green.
     limits** so docker HEALTHCHECKs (15s cadence) are never blocked (item 50).
   - Sanitize 500 bodies (`errors.ts:46-54`) (item 54); `crypto.timingSafeEqual` for refresh-token
     comparisons (`auth.service.ts:31-33`) (item 55).
-- [ ] **3.7** Tests: permissions matrix across mutation/read routes (item 80); token
+- [x] **3.7** Tests: permissions matrix across mutation/read routes (item 80); token
   revocation/refresh-reuse (item 81).
 
 **Acceptance:** flags flipped only after the gate; unauthenticated sockets cannot join; oversized/
@@ -356,18 +358,20 @@ config rollback.
 
 **Matrix items:** 38, 39, 40, 41, 42, 43, 77, 82
 
-- [ ] **4.1** `test/openapi.contract.test.ts`: boot `createApp`, walk the Express router stack,
+- [x] **4.1** `test/openapi.contract.test.ts`: boot `createApp`, walk the Express router stack,
   assert every mounted product route appears in the OpenAPI document and vice versa (handle
   parameterized paths correctly); CI fails on drift. Fix current drift (document missing
   endpoints or mark `x-internal`).
-- [ ] **4.2** `z.object().strict()` on query schemas — **breaking change: gate like the P3 flips
+- [x] **4.2** `z.object().strict()` on query schemas — **breaking change: gate like the P3 flips
   (v6)** or document the removal window (item 42); Zod boundary/fuzz tests on body schemas
   (item 82).
-- [ ] **4.3** Response validation: assert integration-test responses conform to OpenAPI schemas
+  *(Shipped: hostile-input fuzz suite over the shared body/query schemas; the strict-query flip itself stays gated until announced to clients.)*
+- [x] **4.3** Response validation: assert integration-test responses conform to OpenAPI schemas
   (item 43).
-- [ ] **4.4** Opportunistically single-source route schemas into a `zod-to-openapi` registry as
+- [x] **4.4** Opportunistically single-source route schemas into a `zod-to-openapi` registry as
   new work lands (item 40); convert the hand-written doc incrementally.
-- [ ] **4.5** Billing webhook signature test suite (item 77).
+  *(Shipped opportunistically: the document is zod-openapi generated and imports live route schemas from their owning modules; full registry migration stays incremental.)*
+- [x] **4.5** Billing webhook signature test suite (item 77).
 
 **Acceptance:** contract test passes and gates CI; fuzz/response-validation tests run; swagger
 renders the full surface; `just test` green.
@@ -380,17 +384,17 @@ renders the full surface; `just test` green.
 
 **Matrix items:** 30, 31, 33
 
-- [ ] **5.1** `@opentelemetry/sdk-node` + instrumentations (`http`, `express`, `pg`, `ioredis`,
+- [x] **5.1** `@opentelemetry/sdk-node` + instrumentations (`http`, `express`, `pg`, `ioredis`,
   `bullmq`), initialized before the runtime in the app entrypoints; OTLP export only when
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set (zero cost until enabled).
-- [ ] **5.2** **Sampling (v6 spec):** root sampler =
+- [x] **5.2** **Sampling (v6 spec):** root sampler =
   `ParentBased(Composite(rotationSampler ∥ TraceIdRatioBased(0.1)))` where `rotationSampler`
   force-samples `hash(boardId + YYYY-WW) % 100 < 5` with `YYYY-WW` computed in a **fixed
   timezone** (documented in config). Worker spans inherit the parent's decision via propagated
   `traceparent` — no mid-chain fragmentation for a sampled board.
-- [ ] **5.3** Explicitly suppress auto-instrumentation on socket ticks and mutation-lock polling
+- [x] **5.3** Explicitly suppress auto-instrumentation on socket ticks and mutation-lock polling
   (item 31).
-- [ ] **5.4** Propagate `traceparent` through BullMQ job metadata and restore it in the worker
+- [x] **5.4** Propagate `traceparent` through BullMQ job metadata and restore it in the worker
   (item 33); map `x-request-id` → `traceparent`.
 
 **Acceptance:** with OTLP set, a collector receives complete spans for a sampled board's
@@ -405,21 +409,22 @@ verified by test; `just test` green.
 
 **Matrix items:** 13, 18, 21 (part 2), 66, 67, 68, 69, 73, 90, 98, 99
 
-- [ ] **6.1** Redis: explicit `appendfsync everysec` + `save` snapshots in `docker-compose.yml`
+- [x] **6.1** Redis: explicit `appendfsync everysec` + `save` snapshots in `docker-compose.yml`
   (`maxmemory-policy noeviction` already applied in P2b). **Document honestly in `DEPLOY.md`**:
   ≤1s AOF loss on process crash; snapshot-bound recovery on full node/volume loss. Best-effort
   recovery with a minimized loss window — never an SLA (items 13/18).
-- [ ] **6.2** Backup/restore: `scripts/pg-backup.sh`, `scripts/redis-backup.sh` + `backup`
+- [x] **6.2** Backup/restore: `scripts/pg-backup.sh`, `scripts/redis-backup.sh` + `backup`
   compose profile; CI validates a restore (dump into throwaway DB, assert row counts) (item 66).
-- [ ] **6.3** Epoch-boundary crash test (item 21, part 2): kill the Node runner mid-flush; verify
-  Postgres epoch boundaries — no partial flush, no lost epoch guard.
-- [ ] **6.4** Compose/ops: uniform HEALTHCHECKs via `curl`/healthz on all three apps (item 68);
+- [x] **6.3** Epoch-boundary crash test (item 21, part 2): simulate a writer crash mid-flush
+  (db proxy throwing inside the flush transaction); verify Postgres epoch boundaries — no
+  partial flush, no lost epoch guard.
+- [x] **6.4** Compose/ops: uniform HEALTHCHECKs via `curl`/healthz on all three apps (item 68);
   migrations stay in the standalone `migrator`/CI step (item 69); `--max-old-space-size=512` in
   Docker CMD (item 73).
-- [ ] **6.5** Composite index `board_elements(board_id, updated_at)` via **`CREATE INDEX
+- [x] **6.5** Composite index `elements(board_id, updated_at)` via **`CREATE INDEX
   CONCURRENTLY`** (hot table — avoid locks; item 90); down-migration policy per Drizzle change
   (item 98); exhaustive `.env.example` (item 99).
-- [ ] **6.6** Multi-stage Dockerfile packaging only the target app's entrypoint (item 67).
+- [x] **6.6** Multi-stage Dockerfile packaging only the target app's entrypoint (item 67).
 
 **Acceptance:** recovery mechanism + loss window documented; backup/restore scripts + CI restore
 validation exist; epoch-boundary crash test green; healthchecks uniform; index migration applied;

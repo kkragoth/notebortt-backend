@@ -21,4 +21,11 @@ export type {
     Operation
 } from './mutations/types.js';
 export { MutationType } from './mutations/types.js';
-export { DIRTY_BOARDS_BY_AGE_KEY } from './board-state/keys.js';
+export {
+    DIRTY_BOARDS_BY_AGE_KEY,
+    DIRTY_BOARDS_KEY,
+    boardClientsKey,
+    boardElementsKey,
+    boardLastActiveKey,
+    boardSeqKey,
+} from './board-state/keys.js';

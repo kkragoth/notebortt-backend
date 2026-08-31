@@ -1,18 +1,15 @@
 import { eq } from 'drizzle-orm';
-import { Queue, Worker } from 'bullmq';
+import { Worker } from 'bullmq';
+import type { Queue } from 'bullmq';
 import type Redis from 'ioredis';
 import type { Database } from '@/platform/db/client.js';
-import type { BoardPreviewRenderer } from './/board-preview.service.js';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
+import type { BoardPreviewRenderer } from './board-preview.service.js';
+import { JOB_QUEUES, createJobsQueue } from '@/platform/jobs/queues.js';
 import { logger } from '@/shared/logger.js';
 import { boards, elements } from '@/platform/db/schema.js';
 
-export const PREVIEW_QUEUE_NAME = 'board-preview';
 export const PREVIEW_JOB_NAME = 'render';
-
-const PREVIEW_JOB_ATTEMPTS = 3;
-const PREVIEW_JOB_BACKOFF_DELAY_MS = 5_000;
-const PREVIEW_REMOVE_ON_COMPLETE_AGE = 24 * 60 * 60;
-const PREVIEW_REMOVE_ON_FAIL_AGE = 7 * 24 * 60 * 60;
 
 export const PREVIEW_DEBOUNCE_WINDOW_MS = 90_000;
 export const PREVIEW_MIN_INTERVAL_MS = 180_000;
@@ -40,23 +37,20 @@ function flushDedupIdFor(boardId: string): string {
     return `preview-flush-${boardId}`;
 }
 
-export function createPreviewJobService(db: Database, connection: Redis, renderer: BoardPreviewRenderer) {
+export function createPreviewJobService(
+    db: Database,
+    connection: Redis,
+    renderer: BoardPreviewRenderer,
+    metrics?: RuntimeMetrics,
+    options: { prefix?: string } = {},
+) {
     let queue: Queue<PreviewJobData> | null = null;
     let worker: Worker<PreviewJobData> | null = null;
 
     function getQueue(): Queue<PreviewJobData> {
         if (!queue) {
-            queue = new Queue<PreviewJobData>(PREVIEW_QUEUE_NAME, {
-                connection,
-                defaultJobOptions: {
-                    attempts: PREVIEW_JOB_ATTEMPTS,
-                    backoff: {
-                        type: 'exponential',
-                        delay: PREVIEW_JOB_BACKOFF_DELAY_MS,
-                    },
-                    removeOnComplete: { age: PREVIEW_REMOVE_ON_COMPLETE_AGE, count: 1_000 },
-                    removeOnFail: { age: PREVIEW_REMOVE_ON_FAIL_AGE },
-                },
+            queue = createJobsQueue<PreviewJobData>(connection, JOB_QUEUES.boardPreview, {
+                prefix: options.prefix,
             });
         }
         return queue;
@@ -187,13 +181,17 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
         return 'updated';
     }
 
-    function startWorker(concurrency = 3): () => Promise<void> {
+    async function startWorker(concurrency = 3): Promise<() => Promise<void>> {
+        // Serialize re-entry: a previous close must finish before a new
+        // Worker attaches to the same queue, and the stopper below must not
+        // race it on the shared state.
         if (worker) {
-            void worker.close();
+            await worker.close();
+            worker = null;
         }
 
         worker = new Worker<PreviewJobData>(
-            PREVIEW_QUEUE_NAME,
+            JOB_QUEUES.boardPreview,
             async (job) => {
                 const result = await processBoardPreview(job.data.boardId, {
                     skipMinInterval: job.data.flush === true,
@@ -203,10 +201,11 @@ export function createPreviewJobService(db: Database, connection: Redis, rendere
                 }
                 return result;
             },
-            { connection, concurrency },
+            { connection, ...(options.prefix ? { prefix: options.prefix } : {}), concurrency },
         );
 
         worker.on('failed', (job, err) => {
+            metrics?.incrementCounter('bullmq_jobs_failed_total', 1, { queue: JOB_QUEUES.boardPreview });
             logger.error({ err, boardId: job?.data.boardId }, '[PreviewJob] job failed');
         });
 

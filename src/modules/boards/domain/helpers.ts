@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 const INVITATION_TOKEN_BYTES = 32;
+const LINK_SHARE_TOKEN_BYTES = 24;
 const INVITATION_EXPIRES_DAYS = 7;
 const POSTGRES_UNDEFINED_TABLE = '42P01';
 const POSTGRES_UNIQUE_VIOLATION = '23505';
@@ -30,5 +31,12 @@ export function generateInvitationToken(): string {
 }
 
 export function generateLinkShareToken(): string {
-    return randomBytes(24).toString('hex');
+    return randomBytes(LINK_SHARE_TOKEN_BYTES).toString('hex');
+}
+
+/** Shape of every link-share token issued by this service (24-byte hex). */
+export const LINK_SHARE_TOKEN_PATTERN = /^[0-9a-f]{48}$/;
+
+export function isValidLinkShareToken(value: unknown): value is string {
+    return typeof value === 'string' && LINK_SHARE_TOKEN_PATTERN.test(value);
 }

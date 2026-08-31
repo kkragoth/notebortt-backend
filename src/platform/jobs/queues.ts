@@ -1,10 +1,20 @@
 import { Queue, Worker } from 'bullmq';
 import type Redis from 'ioredis';
+import type { DeadLetterRecord, DomainEventJobData } from '@/shared/events.js';
+import type { RuntimeMetrics } from '@/platform/observability/metrics.js';
 import { logger } from '@/shared/logger.js';
 
 export const JOB_QUEUES = {
     boardPersistFlush: 'board-persist-flush',
     boardMaintenance: 'board-maintenance',
+    /** High-frequency BOARD_MUTATED triggers (preview enqueue). */
+    domainEvents: 'board-mutations',
+    /** Time-sensitive BOARD_EDITORS_LEFT triggers (flush enqueue). */
+    domainControlEvents: 'board-control-events',
+    /** Preview render jobs (debounced per board). */
+    boardPreview: 'board-preview',
+    /** Parking lot for undecodable domain events; entries are never retried. */
+    domainEventsDlq: 'domain-events-dlq',
 } as const;
 
 export type JobQueueName = (typeof JOB_QUEUES)[keyof typeof JOB_QUEUES];
@@ -16,10 +26,30 @@ const DEFAULT_JOB_ATTEMPTS = 3;
 const DEFAULT_BACKOFF_DELAY_MS = 5_000;
 const REMOVE_ON_COMPLETE_AGE_SECONDS = 24 * 60 * 60;
 const REMOVE_ON_FAIL_AGE_SECONDS = 7 * 24 * 60 * 60;
+// Age-only retention is unbounded in count; the DLQ grows fastest during a
+// poison-message storm, so its completed records also cap by count.
+const DLQ_REMOVE_ON_COMPLETE_COUNT = 10_000;
 
-export function createJobsQueue<TData>(connection: Redis, name: JobQueueName): Queue<TData> {
+/** DLQ records must never re-enter processing. */
+const DLQ_JOB_ATTEMPTS = 1;
+
+export interface CreateJobsQueueOptions {
+    /** Per-deployable key namespace; must match across producers and consumers. */
+    prefix?: string
+}
+
+function queueConnectionOptions(prefix?: string) {
+    return prefix ? { prefix } : {};
+}
+
+export function createJobsQueue<TData>(
+    connection: Redis,
+    name: JobQueueName,
+    options: CreateJobsQueueOptions = {},
+): Queue<TData> {
     return new Queue<TData>(name, {
         connection,
+        ...queueConnectionOptions(options.prefix),
         defaultJobOptions: {
             attempts: DEFAULT_JOB_ATTEMPTS,
             backoff: {
@@ -27,6 +57,25 @@ export function createJobsQueue<TData>(connection: Redis, name: JobQueueName): Q
                 delay: DEFAULT_BACKOFF_DELAY_MS,
             },
             removeOnComplete: { age: REMOVE_ON_COMPLETE_AGE_SECONDS, count: 1_000 },
+            removeOnFail: { age: REMOVE_ON_FAIL_AGE_SECONDS },
+        },
+    });
+}
+
+/**
+ * DLQ entries complete instantly (recorder worker), so the
+ * removeOnComplete window below is what bounds their retention.
+ */
+export function createDomainEventsDlqQueue(
+    connection: Redis,
+    options: CreateJobsQueueOptions = {},
+): Queue<DeadLetterRecord> {
+    return new Queue<DeadLetterRecord>(JOB_QUEUES.domainEventsDlq, {
+        connection,
+        ...queueConnectionOptions(options.prefix),
+        defaultJobOptions: {
+            attempts: DLQ_JOB_ATTEMPTS,
+            removeOnComplete: { age: REMOVE_ON_FAIL_AGE_SECONDS, count: DLQ_REMOVE_ON_COMPLETE_COUNT },
             removeOnFail: { age: REMOVE_ON_FAIL_AGE_SECONDS },
         },
     });
@@ -59,6 +108,8 @@ export function createRepeatableWorker<TData>(
     jobSchedulerId: string,
     processor: (data: TData) => Promise<unknown>,
     connection: Redis,
+    metrics?: RuntimeMetrics,
+    options: CreateJobsQueueOptions = {},
 ): JobsWorkerHandle {
     const worker = new Worker<TData>(
         queueName,
@@ -68,10 +119,11 @@ export function createRepeatableWorker<TData>(
             }
             return processor(job.data);
         },
-        { connection, concurrency: 1 },
+        { connection, ...queueConnectionOptions(options.prefix), concurrency: 1 },
     );
 
     worker.on('failed', (job, err) => {
+        metrics?.incrementCounter('bullmq_jobs_failed_total', 1, { queue: queueName });
         logger.error({ err, queue: queueName, jobId: job?.id }, '[Jobs] repeatable job failed');
     });
     worker.on('error', (err) => {

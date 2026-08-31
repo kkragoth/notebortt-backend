@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+// Boolean env flags must parse "false"/"0" as false. z.coerce.boolean() is
+// Boolean(str) — any non-empty string (including "false") would enable the
+// flag, so flags use stringbool instead.
+const booleanFlag = () => z.stringbool();
+
 const envSchema = z.object({
     DATABASE_URL: z.string().refine(
         (s) => s.startsWith('postgres://') || s.startsWith('postgresql://'),
@@ -13,6 +18,9 @@ const envSchema = z.object({
     REDIS_REALTIME_URL: z.string().optional(),
     REDIS_JOBS_URL: z.string().optional(),
     PORT: z.coerce.number().default(3000),
+    REALTIME_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
+    /** Worker metrics/health surface port. */
+    METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(3002),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     GOOGLE_CLIENT_ID: z.string().min(1),
@@ -21,19 +29,22 @@ const envSchema = z.object({
     JWT_SECRET: z.string().min(16),
     JWT_EXPIRES_IN: z.string().default('15m'),
     REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().default(7),
-    ENABLE_INCREMENTAL_PERSISTENCE: z.coerce.boolean().default(true),
-    ENABLE_TARGETED_MUTATION_READS: z.coerce.boolean().default(true),
+    ENABLE_INCREMENTAL_PERSISTENCE: booleanFlag().default(true),
+    ENABLE_TARGETED_MUTATION_READS: booleanFlag().default(true),
     PRESENCE_WRITE_THROTTLE_MS: z.coerce.number().int().min(0).default(3000),
     PRESENCE_WRITE_JITTER_MS: z.coerce.number().int().min(0).default(400),
-    ENABLE_CLEANUP_ACTIVE_INDEX: z.coerce.boolean().default(true),
-    EVENT_BUS_MODE: z.enum(['local', 'stream']).default('local'),
+    ENABLE_CLEANUP_ACTIVE_INDEX: booleanFlag().default(true),
+    EVENT_BUS_TRANSPORT: z.enum(['local', 'bullmq']).default('local'),
+    QUEUE_REDIS_PREFIX: z.string().min(1).optional(),
+    RATE_LIMIT_DISABLED: booleanFlag().default(false),
     BOARD_PERSIST_INTERVAL_MS: z.coerce.number().int().min(1_000).default(30_000),
     REDIS_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(120_000),
     ENABLE_BULL_BOARD: z.enum(['true', 'false']).optional(),
-    ENABLE_LEGACY_API_ROUTES: z.coerce.boolean().default(true),
+    ENABLE_LEGACY_API_ROUTES: booleanFlag().default(true),
+    ENABLE_OAUTH_FRAGMENT_TOKENS: booleanFlag().default(false),
     BULL_BOARD_USERNAME: z.string().min(1).default('admin'),
     BULL_BOARD_PASSWORD: z.string().min(8).optional(),
-    STRIPE_BILLING_ENABLED: z.coerce.boolean().default(false),
+    STRIPE_BILLING_ENABLED: booleanFlag().default(false),
     STRIPE_SECRET_KEY: z.string().optional(),
     STRIPE_PRICE_STARTUP: z.string().optional(),
     STRIPE_PRICE_BUSINESS: z.string().optional(),
@@ -53,6 +64,8 @@ export interface AppConfig {
   redisRealtimeUrl: string
   redisJobsUrl: string
   port: number
+  realtimePort: number
+  metricsPort: number
   nodeEnv: 'development' | 'production' | 'test'
   corsOrigin: string
   googleClientId: string
@@ -66,11 +79,14 @@ export interface AppConfig {
   presenceWriteThrottleMs: number
   presenceWriteJitterMs: number
   enableCleanupActiveIndex: boolean
-  eventBusStreamEnabled: boolean
+  eventBusTransport: 'local' | 'bullmq'
+  queueRedisPrefix: string | null
+  rateLimitDisabled: boolean
   boardPersistIntervalMs: number
   redisCleanupIntervalMs: number
   enableBullBoard: boolean
   enableLegacyApiRoutes: boolean
+  enableOauthFragmentTokens: boolean
   bullBoardUsername: string
   bullBoardPassword: string | null
   stripeBillingEnabled: boolean
@@ -99,6 +115,8 @@ export function loadConfig(): AppConfig {
         redisRealtimeUrl,
         redisJobsUrl,
         port: parsed.PORT,
+        realtimePort: parsed.REALTIME_PORT,
+        metricsPort: parsed.METRICS_PORT,
         nodeEnv: parsed.NODE_ENV,
         corsOrigin: parsed.CORS_ORIGIN,
         googleClientId: parsed.GOOGLE_CLIENT_ID,
@@ -112,7 +130,11 @@ export function loadConfig(): AppConfig {
         presenceWriteThrottleMs: parsed.PRESENCE_WRITE_THROTTLE_MS,
         presenceWriteJitterMs: parsed.PRESENCE_WRITE_JITTER_MS,
         enableCleanupActiveIndex: parsed.ENABLE_CLEANUP_ACTIVE_INDEX,
-        eventBusStreamEnabled: parsed.EVENT_BUS_MODE === 'stream',
+        eventBusTransport: parsed.EVENT_BUS_TRANSPORT,
+        queueRedisPrefix: parsed.QUEUE_REDIS_PREFIX ?? null,
+        // Load tests / benches from one IP would exhaust the 300/min global
+        // budget in under a second; benchmarks must opt out explicitly.
+        rateLimitDisabled: parsed.RATE_LIMIT_DISABLED,
         boardPersistIntervalMs: parsed.BOARD_PERSIST_INTERVAL_MS,
         redisCleanupIntervalMs: parsed.REDIS_CLEANUP_INTERVAL_MS,
         // Bull Board exposes internal job data; default on outside production.
@@ -120,6 +142,7 @@ export function loadConfig(): AppConfig {
             ? parsed.ENABLE_BULL_BOARD === 'true'
             : parsed.NODE_ENV !== 'production',
         enableLegacyApiRoutes: parsed.ENABLE_LEGACY_API_ROUTES,
+        enableOauthFragmentTokens: parsed.ENABLE_OAUTH_FRAGMENT_TOKENS,
         bullBoardUsername: parsed.BULL_BOARD_USERNAME,
         bullBoardPassword: parsed.BULL_BOARD_PASSWORD ?? null,
         stripeBillingEnabled: parsed.STRIPE_BILLING_ENABLED,

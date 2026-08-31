@@ -1,10 +1,12 @@
 import {
+    SYSTEM_ACTOR_IDS,
     TICK_PERSIST_DEBOUNCE_MS,
     TICK_PERSIST_MAX_WAIT_MS,
 } from '../socketio/constants.js';
 import type { Mutation } from '@/modules/collaboration/index.js';
 import type { SocketIoRealtimeDependencies } from '../socketio/types.js';
 import { APP_EVENTS } from '@/shared/events.js';
+import { logger } from '@/shared/logger.js';
 import { MutationType } from '@/modules/collaboration/index.js';
 
 interface TickPersistenceOptions {
@@ -40,7 +42,7 @@ export function createTickPersistenceManager(
             return;
         }
 
-        const userId = tickPersistUserByBoard.get(boardId) ?? 'system:tick';
+        const userId = tickPersistUserByBoard.get(boardId) ?? SYSTEM_ACTOR_IDS.tick;
         const moves = Array.from(pendingMoves.entries()).map(([elementId, position]) => ({
             elementId,
             x: position.x,
@@ -63,7 +65,7 @@ export function createTickPersistenceManager(
             operation: { type: MutationType.MOVE_ELEMENTS, moves },
         };
         const results = await deps.mutationProcessor.processBatch([mutation], userId);
-        deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
+        await deps.events.emit(APP_EVENTS.BOARD_MUTATED, { boardId });
         for (const result of results) {
             if (result.status === 'applied' && result.change) {
                 await options.onPersistedChange?.(boardId, userId, result.change, `tick:${boardId}`);
@@ -78,15 +80,17 @@ export function createTickPersistenceManager(
             clearTimeout(debounceTimer);
         }
 
+        // Timer callbacks run detached: a rejection here would crash the
+        // realtime process as an unhandled rejection, so failures are logged.
         tickPersistDebounceTimers.set(boardId, setTimeout(() => {
             tickPersistDebounceTimers.delete(boardId);
-            void flushTickMoves(boardId);
+            flushTickMoves(boardId).catch((err) => logger.error({ err, boardId }, '[TickPersistence] flush failed'));
         }, TICK_PERSIST_DEBOUNCE_MS));
 
         if (!tickPersistMaxWaitTimers.has(boardId)) {
             tickPersistMaxWaitTimers.set(boardId, setTimeout(() => {
                 tickPersistMaxWaitTimers.delete(boardId);
-                void flushTickMoves(boardId);
+                flushTickMoves(boardId).catch((err) => logger.error({ err, boardId }, '[TickPersistence] max-wait flush failed'));
             }, TICK_PERSIST_MAX_WAIT_MS));
         }
     }

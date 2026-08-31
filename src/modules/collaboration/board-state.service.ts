@@ -33,7 +33,7 @@ export function createBoardStateService(redis: Redis, db: Database, options: Boa
         waitForBoardLoad: loadDomain.waitForBoardLoad,
         metrics,
     });
-    const mutationLockDomain = createBoardMutationLockDomain(redis);
+    const mutationLockDomain = createBoardMutationLockDomain(redis, { metrics });
     const persistenceDomain = createBoardPersistenceDomain(redis, db, {
         waitForBoardLoad: loadDomain.waitForBoardLoad,
         getElements: stateDomain.getElements,
@@ -69,6 +69,8 @@ export function createBoardStateService(redis: Redis, db: Database, options: Boa
         getBoardMetrics: persistenceDomain.getBoardMetrics,
         getSnapshot: stateDomain.getSnapshot,
         getSyncWriteMode: presenceDomain.getSyncWriteMode,
+        rearmCollabModeIfActive: presenceDomain.rearmCollabModeIfActive,
+        extendCollabMode: presenceDomain.extendCollabMode,
         flushBoard: persistenceDomain.flushBoard,
         metrics,
     };

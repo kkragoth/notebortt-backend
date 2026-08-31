@@ -30,6 +30,20 @@ export const SOCKET_RESERVED_EVENTS = {
     DISCONNECT: 'disconnect',
 } as const;
 
-export const ACCESS_TOKEN_COOKIE_NAME = 'accessToken';
+// Access-token cookie names are owned by the auth module
+// (src/modules/auth/routes/constants.ts); realtime code imports them from
+// '@/modules/auth/index.js' directly.
+
 export const TICK_PERSIST_DEBOUNCE_MS = 400;
 export const TICK_PERSIST_MAX_WAIT_MS = 1500;
+
+/**
+ * Synthetic actor ids recorded on server-generated mutations (tick flushes,
+ * CRDT flushes without an identified editor). They surface in mutation
+ * records and the DB, so they are part of the data contract — not inline
+ * literals.
+ */
+export const SYSTEM_ACTOR_IDS = {
+    tick: 'system:tick',
+    crdt: 'system:socketio',
+} as const;
